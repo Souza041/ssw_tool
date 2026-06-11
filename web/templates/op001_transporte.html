@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <h3>OP001 - Coletas Transporte / Ordem Inversa</h3>
+
+    {% if success %}
+    <div class="success">
+        Planilha processada com sucesso.<br>
+        <a href="{{ download_url }}" download>Baixar resultado</a>
+    </div>
+    {% endif %}
+
+    <form method="post" enctype="multipart/form-data">
+        <label>Planilha Excel/CSV</label>
+        <input type="file" name="arquivo_excel" accept=".xlsx,.xls,.csv,.XLSX,.XLS,.CSV" required>
+
+        <button type="submit">Processar coletas</button>
+    </form>
+
+    <p>Colunas esperadas:</p>
+    <code>CNPJ Desinatario</code><br>
+    <code>Número do Transporte</code><br>
+    <code>Ordem de Venda / Ordem Inversa</code><br>
+    <code>Cliente</code><br>
+    <code>Município Destino</code><br>
+    <code>UF Destino</code>
+
+    <br><br>
+    <a href="/">Voltar</a>
+</div>
+{% endblock %}

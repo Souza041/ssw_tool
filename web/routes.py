@@ -13,6 +13,8 @@ from operations.op001.coleta import OP001Coleta
 from operations.op001.batch import processar_planilha_nfd
 from ssw.client import SSWClient
 
+from operations.op001.batch_transporte import processar_planilha_transporte
+
 router = APIRouter()
 templates = Jinja2Templates(directory="web/templates")
 
@@ -248,6 +250,50 @@ async def op001_run(
 
     return templates.TemplateResponse(
         "op001.html",
+        {
+            "request": request,
+            "success": True,
+            "arquivo": arquivo_saida,
+            "download_url": f"/downloads/{arquivo_saida.name}",
+        },
+    )
+
+@router.get("/op001-transporte", response_class=HTMLResponse)
+def op001_transporte_form(request: Request):
+    return templates.TemplateResponse(
+        "op001_transporte.html",
+        {"request": request},
+    )
+
+
+@router.post("/op001-transporte", response_class=HTMLResponse)
+async def op001_transporte_run(
+    request: Request,
+    arquivo_excel: UploadFile = File(...),
+):
+    uploads_dir = Path("uploads")
+    uploads_dir.mkdir(exist_ok=True)
+
+    input_file = uploads_dir / arquivo_excel.filename
+
+    with input_file.open("wb") as f:
+        f.write(await arquivo_excel.read())
+
+    output_file = Path("downloads") / f"transporte_processado_{arquivo_excel.filename}"
+
+    client = criar_client_logado()
+
+    op001 = OP001Coleta(client)
+    op001.open(unidade="CWB")
+
+    arquivo_saida = processar_planilha_transporte(
+        op001=op001,
+        input_file=input_file,
+        output_file=output_file,
+    )
+
+    return templates.TemplateResponse(
+        "op001_transporte.html",
         {
             "request": request,
             "success": True,
