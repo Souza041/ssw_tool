@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="topbar">
+    <h1>Processamento</h1>
+    <p>Acompanhe a execução em tempo real.</p>
+</div>
+
+<div class="card">
+    <h3>Status do job</h3>
+
+    <pre id="logbox" style="
+        background:#020617;
+        color:#d1fae5;
+        padding:18px;
+        border-radius:14px;
+        min-height:260px;
+        max-height:420px;
+        overflow:auto;
+        font-size:13px;
+        line-height:1.5;
+    "></pre>
+
+    <div id="download-area" style="display:none; margin-top:18px;">
+        <div class="success">
+            Arquivo gerado com sucesso.<br>
+            <a id="download-link" href="#" download>Baixar arquivo</a>
+        </div>
+    </div>
+
+    <a class="back" href="/">← Voltar ao dashboard</a>
+</div>
+
+<script>
+    const jobId = "{{ job_id }}";
+    const logbox = document.getElementById("logbox");
+    const downloadArea = document.getElementById("download-area");
+    const downloadLink = document.getElementById("download-link");
+
+    const evtSource = new EventSource(`/jobs/${jobId}/stream`);
+
+    evtSource.onmessage = function(event) {
+        const data = JSON.parse(event.data);
+
+        if (data.type === "log") {
+            logbox.textContent += data.message + "\n";
+            logbox.scrollTop = logbox.scrollHeight;
+        }
+
+        if (data.type === "done") {
+            logbox.textContent += "\nFinalizado.\n";
+
+            if (data.files && data.files.length > 0) {
+                downloadArea.style.display = "block";
+                downloadArea.innerHTML = "";
+
+                data.files.forEach(file => {
+                    const div = document.createElement("div");
+                    div.className = "success";
+                    div.innerHTML = `
+                        ${file.periodo}<br>
+                        <a href="${file.url}" download>Baixar ${file.name}</a>
+                    `;
+                    downloadArea.appendChild(div);
+                });
+            } else if (data.download_url) {
+                downloadLink.href = data.download_url;
+                downloadArea.style.display = "block";
+            }
+
+            evtSource.close();
+        }
+
+        if (data.type === "error") {
+            logbox.textContent += "\nERRO: " + data.message + "\n";
+            evtSource.close();
+        }
+    };
+</script>
+{% endblock %}

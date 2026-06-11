@@ -1,7 +1,10 @@
+import json
+import time
+
 from pathlib import Path
 
 from fastapi import APIRouter, Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi import UploadFile, File
 
@@ -15,6 +18,8 @@ from ssw.client import SSWClient
 
 from operations.op001.batch_transporte import processar_planilha_transporte
 
+from web.jobs import JOBS, add_log, criar_job, executar_job
+
 router = APIRouter()
 templates = Jinja2Templates(directory="web/templates")
 
@@ -25,24 +30,11 @@ def criar_client_logado() -> SSWClient:
     client.open_menu()
     return client
 
-
-@router.get("/", response_class=HTMLResponse)
-def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
-
-
-@router.get("/op455", response_class=HTMLResponse)
-def op455_form(request: Request):
-    return templates.TemplateResponse("op455.html", {"request": request})
-
-
-@router.post("/op455", response_class=HTMLResponse)
-def op455_run(
-    request: Request,
-    periodos: str = Form(...),
-    timeout: int = Form(300),
-):
+def executar_op455_job(job, periodos: str, timeout: int) -> list[dict]:
+    add_log(job, "Executando login no SSW...")
     client = criar_client_logado()
+    add_log(job, "Login concluído.")
+
     op455 = OP455Report(client)
 
     arquivos = []
@@ -53,7 +45,9 @@ def op455_run(
         if linha.strip()
     ]
 
-    for linha in linhas:
+    add_log(job, f"{len(linhas)} período(s) informado(s).")
+
+    for idx, linha in enumerate(linhas, start=1):
         partes = [
             parte.strip()
             for parte in linha.replace(",", ";").split(";")
@@ -67,6 +61,11 @@ def op455_run(
 
         data_inicial, data_final = partes
 
+        add_log(
+            job,
+            f"Gerando relatório {idx}/{len(linhas)}: {data_inicial} até {data_final}",
+        )
+
         arquivo = op455.gerar_e_baixar_por_datas(
             output_dir=Path("downloads"),
             data_inicial=data_inicial,
@@ -74,23 +73,50 @@ def op455_run(
             timeout_seconds=timeout,
         )
 
+        add_log(job, f"Arquivo gerado: {arquivo.name}")
+
         arquivos.append({
-            "path": arquivo,
             "name": arquivo.name,
             "url": f"/downloads/{arquivo.name}",
             "periodo": f"{data_inicial} até {data_final}",
         })
 
-    return templates.TemplateResponse(
-        "op455.html",
-        {
-            "request": request,
-            "success": True,
-            "arquivos": arquivos,
-            "periodos": periodos,
-        },
+    job.result_file = None
+    job.result_files = arquivos
+
+    return arquivos
+
+
+
+@router.get("/", response_class=HTMLResponse)
+def index(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
+
+
+@router.get("/op455", response_class=HTMLResponse)
+def op455_form(request: Request):
+    return templates.TemplateResponse("op455.html", {"request": request})
+
+@router.post("/op455")
+def op455_run(
+    periodos: str = Form(...),
+    timeout: int = Form(300),
+):
+    job = criar_job()
+
+    add_log(job, "Job criado.")
+
+    executar_job(
+        job,
+        executar_op455_job,
+        periodos,
+        timeout,
     )
 
+    return RedirectResponse(
+        url=f"/jobs/{job.id}",
+        status_code=303,
+    )
 
 @router.get("/op150", response_class=HTMLResponse)
 def op150_form(request: Request):
@@ -300,4 +326,50 @@ async def op001_transporte_run(
             "arquivo": arquivo_saida,
             "download_url": f"/downloads/{arquivo_saida.name}",
         },
+    )
+
+@router.get("/jobs/{job_id}", response_class=HTMLResponse)
+def job_status(request: Request, job_id: str):
+    return templates.TemplateResponse(
+        "job_status.html",
+        {
+            "request": request,
+            "job_id": job_id,
+        },
+    )
+
+@router.get("/jobs/{job_id}/stream")
+def job_stream(job_id: str):
+    def event_generator():
+        job = JOBS.get(job_id)
+
+        if not job:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Job não encontrado.'})}\n\n"
+            return
+        
+        yield f"data: {json.dumps({'type':'log','message':'Conectado ao monitor.'})}\n\n"
+
+        while True:
+            while not job.logs.empty():
+                mensagem = job.logs.get()
+                yield f"data: {json.dumps({'type': 'log', 'message': mensagem})}\n\n"
+
+            if job.status == "done":
+                payload = {
+                    "type": "done",
+                    "files": job.result_files,
+                }
+
+                yield f"data: {json.dumps(payload)}\n\n"
+                return
+
+            if job.status == "error":
+                yield f"data: {json.dumps({'type': 'error', 'message': job.error or 'Erro desconhecido.'})}\n\n"
+                return
+
+            time.sleep(1)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
     )

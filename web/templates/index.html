@@ -1,16 +1,40 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="card">
-    <h3>Automações disponíveis</h3>
+<div class="topbar">
+    <h1>Dashboard</h1>
+    <p>Escolha uma automação para executar relatórios, coletas ou consultas no SSW.</p>
+</div>
 
-    <div class="grid">
-        <a href="/op455">OP455 - Relatório CTRCs</a>
-        <a href="/op150">OP150 - Relatório direto</a>
-        <a href="/op103">OP103 - Coletas devolução/reversa</a>
-        <a href="/op488">OP488 - Despesas</a>
-        <a href="/op001">OP001 - Cadastro de Coletas NFD</a>
-        <a href="/op001-transporte">OP001 - Coletas Transporte</a>
-    </div>
+<div class="grid">
+    <a class="module-card" href="/op001">
+        <strong>OP001 - Coletas NFD</strong>
+        <span>Processa planilha simples com NFD e CNPJ.</span>
+    </a>
+
+    <a class="module-card" href="/op001-transporte">
+        <strong>OP001 - Coletas Transporte</strong>
+        <span>Processa coletas com transporte e ordem inversa.</span>
+    </a>
+
+    <a class="module-card" href="/op103">
+        <strong>OP103 - Devolução/Reversa</strong>
+        <span>Gera relatório de coletas por unidade ou destinatária.</span>
+    </a>
+
+    <a class="module-card" href="/op150">
+        <strong>OP150 - Relatório</strong>
+        <span>Gera arquivo direto por período e unidade.</span>
+    </a>
+
+    <a class="module-card" href="/op455">
+        <strong>OP455 - CTRCs</strong>
+        <span>Gera relatório de fretes expedidos/recebidos.</span>
+    </a>
+
+    <a class="module-card" href="/op488">
+        <strong>OP488 - Despesas</strong>
+        <span>Consulta despesas por evento e competência.</span>
+    </a>
 </div>
 {% endblock %}
