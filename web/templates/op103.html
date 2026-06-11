@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <h3>OP103 - Coletas Devolução/Reversa</h3>
+
+    {% if success %}
+    <div class="success">
+        Arquivo gerado com sucesso.<br>
+        <a href="{{ download_url }}" download>Baixar arquivo</a>
+    </div>
+    {% endif %}
+
+    <form method="post">
+        <label>Data inicial</label>
+        <input name="data_inicial" placeholder="010526" required>
+
+        <label>Data final</label>
+        <input name="data_final" placeholder="010626" required>
+
+        <label>Unidade base</label>
+        <input name="unidade_base" value="CWB">
+
+        <label>Unidade coleta</label>
+        <input name="unidade_coleta" value="CWB">
+
+        <label>Unidade destinatária</label>
+        <input name="unidade_destinataria" value="CWB">
+
+        <label>Tipo consulta</label>
+        <select name="tipo_consulta">
+            <option value="coleta">Unidade de coleta</option>
+            <option value="destinataria">Unidade destinatária</option>
+        </select>
+
+        <button type="submit">Gerar relatório</button>
+    </form>
+
+    <a href="/">Voltar</a>
+</div>
+{% endblock %}

@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <h3>OP001 - Cadastro de Coletas NFD</h3>
+
+    {% if success %}
+    <div class="success">
+        Planilha processada com sucesso.<br>
+        <a href="{{ download_url }}" download>Baixar resultado</a>
+    </div>
+    {% endif %}
+
+    <form method="post" enctype="multipart/form-data">
+        <label>Planilha Excel</label>
+        <input type="file" name="arquivo_excel" accept=".xlsx,.xls,.csv" required>
+
+        <button type="submit">Processar coletas</button>
+    </form>
+
+    <p>A planilha precisa conter apenas as colunas:</p>
+    <code>NFD</code> e <code>CNPJ</code>
+
+    <br><br>
+    <a href="/">Voltar</a>
+</div>
+{% endblock %}

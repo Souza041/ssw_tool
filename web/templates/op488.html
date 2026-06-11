@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <h3>OP488 - Consulta de Despesas</h3>
+
+    {% if success %}
+    <div class="success">
+        Arquivo gerado com sucesso.<br>
+        <a href="{{ download_url }}" download>Baixar arquivo</a>
+    </div>
+    {% endif %}
+
+    <form method="post">
+        <label>Unidade</label>
+        <input name="unidade" value="CWB">
+
+        <label>Código do evento</label>
+        <input name="cod_evento" placeholder="5501" required>
+
+        <label>Evento</label>
+        <input name="evento" placeholder="INDENIZACAO DE MERCADORIAS" required>
+
+        <label>Mês competência</label>
+        <input name="mes_comp" placeholder="0526" required>
+
+        <label>Situação despesa</label>
+        <input name="sit_desp" value="X">
+
+        <label>Situação arquivo</label>
+        <input name="sit_arq" value="T">
+
+        <label>Timeout segundos</label>
+        <input name="timeout" value="300">
+
+        <button type="submit">Gerar relatório</button>
+    </form>
+
+    <a href="/">Voltar</a>
+</div>
+{% endblock %}

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <h3>OP455 - Relatório CTRCs</h3>
+
+    {% if success %}
+    <div class="success">
+        Arquivo gerado com sucesso:
+        <br>
+        <a href="{{ download_url }}" download>Baixar arquivo</a>
+    </div>
+    {% endif %}
+
+    {% if success %}
+    <div class="success">Arquivo baixado: {{ arquivo }}</div>
+    {% endif %}
+
+    <form method="post">
+        <label>Dias do período</label>
+        <input name="dias" value="7" required>
+
+        <label>Timeout segundos</label>
+        <input name="timeout" value="300" required>
+
+        <button type="submit">Gerar relatório</button>
+    </form>
+
+    <a href="/">Voltar</a>
+</div>
+{% endblock %}

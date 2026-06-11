@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <h3>OP150</h3>
+
+    {% if success %}
+    <div class="success">
+        Arquivo gerado com sucesso.<br>
+        <a href="{{ download_url }}" download>Baixar arquivo</a>
+    </div>
+    {% endif %}
+
+    <form method="post">
+        <label>Data inicial</label>
+        <input name="data_inicial" placeholder="010526" required>
+
+        <label>Data final</label>
+        <input name="data_final" placeholder="010626" required>
+
+        <label>Unidade</label>
+        <input name="unidade" value="CWB">
+
+        <label>Nome unidade</label>
+        <input name="nome_unidade" value="RODOBRAS TRANSP RODOVIARIOS">
+
+        <button type="submit">Gerar relatório</button>
+    </form>
+
+    <a href="/">Voltar</a>
+</div>
+{% endblock %}
