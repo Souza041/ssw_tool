@@ -6,24 +6,38 @@
 
     {% if success %}
     <div class="success">
-        Arquivo gerado com sucesso:
-        <br>
-        <a href="{{ download_url }}" download>Baixar arquivo</a>
+        <strong>Relatórios gerados com sucesso:</strong>
+        <ul>
+            {% for arquivo in arquivos %}
+            <li>
+                {{ arquivo.periodo }} —
+                <a href="{{ arquivo.url }}" download>{{ arquivo.name }}</a>
+            </li>
+            {% endfor %}
+        </ul>
     </div>
     {% endif %}
 
-    {% if success %}
-    <div class="success">Arquivo baixado: {{ arquivo }}</div>
-    {% endif %}
-
     <form method="post">
-        <label>Dias do período</label>
-        <input name="dias" value="7" required>
+        <label>Períodos</label>
+        <textarea
+            name="periodos"
+            rows="5"
+            style="width:100%; padding:10px; margin-top:6px; margin-bottom:16px;"
+            placeholder="010526;010626&#10;010426;010526"
+            required>{% if periodos %}{{ periodos }}{% endif %}</textarea>
+
+        <small>
+            Informe um período por linha no formato:
+            <strong>DDMMAA;DDMMAA</strong>
+        </small>
+
+        <br><br>
 
         <label>Timeout segundos</label>
         <input name="timeout" value="300" required>
 
-        <button type="submit">Gerar relatório</button>
+        <button type="submit">Gerar relatório(s)</button>
     </form>
 
     <a href="/">Voltar</a>

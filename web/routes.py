@@ -37,25 +37,55 @@ def op455_form(request: Request):
 @router.post("/op455", response_class=HTMLResponse)
 def op455_run(
     request: Request,
-    dias: int = Form(...),
+    periodos: str = Form(...),
     timeout: int = Form(300),
 ):
     client = criar_client_logado()
     op455 = OP455Report(client)
 
-    arquivo = op455.gerar_e_baixar(
-        output_dir=Path("downloads"),
-        dias_periodo=dias,
-        timeout_seconds=timeout,
-    )
+    arquivos = []
+
+    linhas = [
+        linha.strip()
+        for linha in periodos.splitlines()
+        if linha.strip()
+    ]
+
+    for linha in linhas:
+        partes = [
+            parte.strip()
+            for parte in linha.replace(",", ";").split(";")
+            if parte.strip()
+        ]
+
+        if len(partes) != 2:
+            raise ValueError(
+                f"Período inválido: {linha}. Use o formato: 010526;010626"
+            )
+
+        data_inicial, data_final = partes
+
+        arquivo = op455.gerar_e_baixar_por_datas(
+            output_dir=Path("downloads"),
+            data_inicial=data_inicial,
+            data_final=data_final,
+            timeout_seconds=timeout,
+        )
+
+        arquivos.append({
+            "path": arquivo,
+            "name": arquivo.name,
+            "url": f"/downloads/{arquivo.name}",
+            "periodo": f"{data_inicial} até {data_final}",
+        })
 
     return templates.TemplateResponse(
         "op455.html",
         {
             "request": request,
             "success": True,
-            "arquivo": arquivo,
-            "download_url": f"/downloads/{arquivo.name}",
+            "arquivos": arquivos,
+            "periodos": periodos,
         },
     )
 

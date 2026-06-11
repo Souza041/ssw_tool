@@ -141,4 +141,76 @@ class OP455Report:
             intervalo=5,
         )
     
+    def gerar_e_baixar_por_datas(
+        self,
+        output_dir: Path,
+        data_inicial: str,
+        data_final: str,
+        timeout_seconds: int = 300,
+    ) -> Path:
+        self.open()
+        html = self.gerar_relatorio_por_datas(
+            data_inicial=data_inicial,
+            data_final=data_final,
+        )
+
+        if "Informe a unidade" in html:
+            raise ValueError(
+                "SSW retornou: Informe a unidade. Verifique a unidade usada na OP455."
+            )
+
+        info_direto = self.extrair_arquivo_direto(html)
+
+        if info_direto:
+            return self.baixar_arquivo_direto(
+                info=info_direto,
+                output_dir=output_dir,
+            )
+
+        fila = OP156Queue(self.client)
+
+        return fila.aguardar_e_baixar(
+            output_dir=output_dir,
+            opcao_contains="455 - Fretes Expedidos/Recebidos - CTRCs",
+            unidade="MTZ",
+            timeout_seconds=timeout_seconds,
+            intervalo=5,
+        )
+    
+    def gerar_relatorio_por_datas(
+        self,
+        data_inicial: str,
+        data_final: str,
+    ) -> str:
+        payload = {
+            "act": "E1",
+            "cod_emp_ctb": "00",
+
+            "f9": data_inicial,
+            "f10": data_final,
+
+            "f8": "T",
+            "f18": "T",
+            "f19": "T",
+            "f20": "S",
+            "f21": "X",
+            "f22": "T",
+            "f23": "A",
+            "f25": "T",
+            "f26": "A",
+            "f27": "A",
+            "f28": "T",
+            "ibscbs": "A",
+            "f29": "A",
+            "f30": "A",
+            "f35": "E",
+            "f37": "B",
+            "f38": "F",
+            "basico": "N",
+            "dummy": dummy(),
+        }
+
+        response = self.client.post("/bin/ssw0230", payload)
+        return response.text
+    
         
