@@ -86,7 +86,52 @@ def executar_op455_job(job, periodos: str, timeout: int) -> list[dict]:
 
     return arquivos
 
+def executar_op488_job(
+    job,
+    unidade: str,
+    cod_evento: str,
+    evento: str,
+    mes_comp: str,
+    sit_desp: str,
+    sit_arq: str,
+    timeout: int,
+) -> list[dict]:
+    add_log(job, "Executando login no SSW...")
+    client = criar_client_logado()
+    add_log(job, "Login concluído.")
 
+    add_log(job, "Abrindo OP488...")
+    op488 = OP488Report(client)
+
+    add_log(
+        job,
+        f"Gerando relatório OP488 | evento={cod_evento} | competência={mes_comp}",
+    )
+
+    arquivo = op488.gerar_e_baixar(
+        output_dir=Path("downloads"),
+        unidade=unidade,
+        cod_evento=cod_evento,
+        evento=evento,
+        mes_comp=mes_comp,
+        sit_desp=sit_desp,
+        sit_arq=sit_arq,
+        timeout_seconds=timeout,
+    )
+
+    add_log(job, f"Arquivo gerado: {arquivo.name}")
+
+    arquivos = [
+        {
+            "name": arquivo.name,
+            "url": f"/downloads/{arquivo.name}",
+            "periodo": f"OP488 - {cod_evento} / {mes_comp}",
+        }
+    ]
+
+    job.result_files = arquivos
+
+    return arquivos
 
 @router.get("/", response_class=HTMLResponse)
 def index(request: Request):
@@ -196,9 +241,8 @@ def op103_run(
 def op488_form(request: Request):
     return templates.TemplateResponse("op488.html", {"request": request})
 
-@router.post("/op488", response_class=HTMLResponse)
+@router.post("/op488")
 def op488_run(
-    request: Request,
     unidade: str = Form("CWB"),
     cod_evento: str = Form(...),
     evento: str = Form(...),
@@ -207,29 +251,24 @@ def op488_run(
     sit_arq: str = Form("T"),
     timeout: int = Form(300),
 ):
-    client = criar_client_logado()
+    job = criar_job()
+    add_log(job, "Job criado.")
 
-    op488 = OP488Report(client)
-
-    arquivo = op488.gerar_e_baixar(
-        output_dir=Path("downloads"),
-        unidade=unidade,
-        cod_evento=cod_evento,
-        evento=evento,
-        mes_comp=mes_comp,
-        sit_desp=sit_desp,
-        sit_arq=sit_arq,
-        timeout_seconds=timeout,
+    executar_job(
+        job,
+        executar_op488_job,
+        unidade,
+        cod_evento,
+        evento,
+        mes_comp,
+        sit_desp,
+        sit_arq,
+        timeout,
     )
 
-    return templates.TemplateResponse(
-        "op488.html",
-        {
-            "request": request,
-            "success": True,
-            "arquivo": arquivo,
-            "download_url": f"/downloads/{arquivo.name}",
-        },
+    return RedirectResponse(
+        url=f"/jobs/{job.id}",
+        status_code=303,
     )
 
 @router.get("/op001", response_class=HTMLResponse)
@@ -372,4 +411,9 @@ def job_stream(job_id: str):
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
     )
