@@ -18,7 +18,7 @@ from ssw.client import SSWClient
 
 from operations.op001.batch_transporte import processar_planilha_transporte
 
-from web.jobs import JOBS, add_log, criar_job, executar_job
+from web.jobs import JOBS, add_log, criar_job, executar_job, set_progress
 
 router = APIRouter()
 templates = Jinja2Templates(directory="web/templates")
@@ -96,6 +96,8 @@ def executar_op488_job(
     sit_arq: str,
     timeout: int,
 ) -> list[dict]:
+    set_progress(job, 0, 1)
+
     add_log(job, "Executando login no SSW...")
     client = criar_client_logado()
     add_log(job, "Login concluído.")
@@ -118,6 +120,8 @@ def executar_op488_job(
         sit_arq=sit_arq,
         timeout_seconds=timeout,
     )
+
+    set_progress(job, 1, 1)
 
     add_log(job, f"Arquivo gerado: {arquivo.name}")
 
@@ -168,33 +172,28 @@ def op150_form(request: Request):
     return templates.TemplateResponse("op150.html", {"request": request})
 
 
-@router.post("/op150", response_class=HTMLResponse)
+@router.post("/op150")
 def op150_run(
-    request: Request,
     data_inicial: str = Form(...),
     data_final: str = Form(...),
     unidade: str = Form("CWB"),
     nome_unidade: str = Form("RODOBRAS TRANSP RODOVIARIOS"),
 ):
-    client = criar_client_logado()
-    op150 = OP150Report(client)
+    job = criar_job()
+    add_log(job, "Job criado.")
 
-    arquivo = op150.gerar_e_baixar(
-        output_dir=Path("downloads"),
-        data_inicial=data_inicial,
-        data_final=data_final,
-        unidade=unidade,
-        nome_unidade=nome_unidade,
+    executar_job(
+        job,
+        executar_op150_job,
+        data_inicial,
+        data_final,
+        unidade,
+        nome_unidade,
     )
 
-    return templates.TemplateResponse(
-        "op150.html",
-        {
-            "request": request,
-            "success": True,
-            "arquivo": arquivo,
-            "download_url": f"/downloads/{arquivo.name}",
-        },
+    return RedirectResponse(
+        url=f"/jobs/{job.id}",
+        status_code=303,
     )
 
 
@@ -276,9 +275,8 @@ def op001_form(request: Request):
     return templates.TemplateResponse("op001.html", {"request": request})
 
 
-@router.post("/op001", response_class=HTMLResponse)
+@router.post("/op001")
 async def op001_run(
-    request: Request,
     arquivo_excel: UploadFile = File(...),
 ):
     uploads_dir = Path("uploads")
@@ -286,41 +284,24 @@ async def op001_run(
 
     input_file = uploads_dir / arquivo_excel.filename
 
-    ext = Path(arquivo_excel.filename).suffix.lower()
-
-    if ext not in {
-        ".xlsx",
-        ".xls",
-        ".csv",
-    }:
-        raise ValueError(
-            "Arquivo inválido. Use XLSX, XLS ou CSV."
-        )
-
     with input_file.open("wb") as f:
         f.write(await arquivo_excel.read())
 
     output_file = Path("downloads") / f"processado_{arquivo_excel.filename}"
 
-    client = criar_client_logado()
+    job = criar_job()
+    add_log(job, "Job criado.")
 
-    op001 = OP001Coleta(client)
-    op001.open(unidade="CWB")
-
-    arquivo_saida = processar_planilha_nfd(
-        op001=op001,
-        input_file=input_file,
-        output_file=output_file,
+    executar_job(
+        job,
+        executar_op001_nfd_job,
+        input_file,
+        output_file,
     )
 
-    return templates.TemplateResponse(
-        "op001.html",
-        {
-            "request": request,
-            "success": True,
-            "arquivo": arquivo_saida,
-            "download_url": f"/downloads/{arquivo_saida.name}",
-        },
+    return RedirectResponse(
+        url=f"/jobs/{job.id}",
+        status_code=303,
     )
 
 @router.get("/op001-transporte", response_class=HTMLResponse)
@@ -331,9 +312,8 @@ def op001_transporte_form(request: Request):
     )
 
 
-@router.post("/op001-transporte", response_class=HTMLResponse)
+@router.post("/op001-transporte")
 async def op001_transporte_run(
-    request: Request,
     arquivo_excel: UploadFile = File(...),
 ):
     uploads_dir = Path("uploads")
@@ -346,25 +326,19 @@ async def op001_transporte_run(
 
     output_file = Path("downloads") / f"transporte_processado_{arquivo_excel.filename}"
 
-    client = criar_client_logado()
+    job = criar_job()
+    add_log(job, "Job criado.")
 
-    op001 = OP001Coleta(client)
-    op001.open(unidade="CWB")
-
-    arquivo_saida = processar_planilha_transporte(
-        op001=op001,
-        input_file=input_file,
-        output_file=output_file,
+    executar_job(
+        job,
+        executar_op001_transporte_job,
+        input_file,
+        output_file,
     )
 
-    return templates.TemplateResponse(
-        "op001_transporte.html",
-        {
-            "request": request,
-            "success": True,
-            "arquivo": arquivo_saida,
-            "download_url": f"/downloads/{arquivo_saida.name}",
-        },
+    return RedirectResponse(
+        url=f"/jobs/{job.id}",
+        status_code=303,
     )
 
 @router.get("/jobs/{job_id}", response_class=HTMLResponse)
@@ -393,6 +367,8 @@ def job_stream(job_id: str):
                 mensagem = job.logs.get()
                 yield f"data: {json.dumps({'type': 'log', 'message': mensagem})}\n\n"
 
+                yield f"data: {json.dumps({'type': 'progress', 'progress': job.progress, 'total': job.total})}\n\n"
+
             if job.status == "done":
                 payload = {
                     "type": "done",
@@ -417,3 +393,109 @@ def job_stream(job_id: str):
             "Connection": "keep-alive",
         },
     )
+
+
+def executar_op150_job(
+    job,
+    data_inicial: str,
+    data_final: str,
+    unidade: str,
+    nome_unidade: str,
+) -> list[dict]:
+    set_progress(job, 0, 1)
+
+    add_log(job, "Executando login no SSW...")
+    client = criar_client_logado()
+    add_log(job, "Login concluído.")
+
+    add_log(job, "Abrindo OP150...")
+    op150 = OP150Report(client)
+
+    add_log(job, f"Gerando relatório OP150 | {data_inicial} até {data_final}")
+
+    arquivo = op150.gerar_e_baixar(
+        output_dir=Path("downloads"),
+        data_inicial=data_inicial,
+        data_final=data_final,
+        unidade=unidade,
+        nome_unidade=nome_unidade,
+    )
+
+    set_progress(job, 1, 1)
+
+    add_log(job, f"Arquivo gerado: {arquivo.name}")
+
+    arquivos = [{
+        "name": arquivo.name,
+        "url": f"/downloads/{arquivo.name}",
+        "periodo": f"{data_inicial} até {data_final}",
+    }]
+
+    job.result_files = arquivos
+    return arquivos
+
+def executar_op001_nfd_job(
+    job,
+    input_file: Path,
+    output_file: Path,
+) -> list[dict]:
+    add_log(job, "Executando login no SSW...")
+    client = criar_client_logado()
+    add_log(job, "Login concluído.")
+
+    add_log(job, "Abrindo OP001...")
+    op001 = OP001Coleta(client)
+    op001.open(unidade="CWB")
+
+    add_log(job, "Iniciando processamento da planilha NFD.")
+
+    arquivo_saida = processar_planilha_nfd(
+        op001=op001,
+        input_file=input_file,
+        output_file=output_file,
+        job=job,
+    )
+
+    add_log(job, f"Planilha final gerada: {arquivo_saida.name}")
+
+    arquivos = [{
+        "name": arquivo_saida.name,
+        "url": f"/downloads/{arquivo_saida.name}",
+        "periodo": "OP001 - Coletas NFD",
+    }]
+
+    job.result_files = arquivos
+    return arquivos
+
+def executar_op001_transporte_job(
+    job,
+    input_file: Path,
+    output_file: Path,
+) -> list[dict]:
+    add_log(job, "Executando login no SSW...")
+    client = criar_client_logado()
+    add_log(job, "Login concluído.")
+
+    add_log(job, "Abrindo OP001...")
+    op001 = OP001Coleta(client)
+    op001.open(unidade="CWB")
+
+    add_log(job, "Iniciando processamento da planilha Transporte/Ordem Inversa.")
+
+    arquivo_saida = processar_planilha_transporte(
+        op001=op001,
+        input_file=input_file,
+        output_file=output_file,
+        job=job,
+    )
+
+    add_log(job, f"Planilha final gerada: {arquivo_saida.name}")
+
+    arquivos = [{
+        "name": arquivo_saida.name,
+        "url": f"/downloads/{arquivo_saida.name}",
+        "periodo": "OP001 - Coletas Transporte",
+    }]
+
+    job.result_files = arquivos
+    return arquivos

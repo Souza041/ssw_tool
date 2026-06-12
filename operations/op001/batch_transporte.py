@@ -2,9 +2,13 @@ from pathlib import Path
 
 import pandas as pd
 
+from openpyxl import load_workbook
+
 import unicodedata
 
 from operations.op001.coleta import OP001Coleta
+
+from web.jobs import add_log, set_progress
 
 
 MAPA_COLUNAS = {
@@ -31,6 +35,13 @@ COLUNA_RESULTADO_COLETA = "COLETA_GERADA"
 COLUNA_RESULTADO_SEQ = "SEQ_COLETA"
 COLUNA_RESULTADO_STATUS = "STATUS_BOT"
 COLUNA_RESULTADO_MSG = "MENSAGEM_BOT"
+
+COLUNA_COLETA_EXISTENTE = "UNNAMED: 3"
+COLUNA_TIPO_COLETA = "UNNAMED: 4"
+
+TIPOS_IGNORAR = {
+    "RECUSA",
+}
 
 
 def normalizar_texto(texto: str) -> str:
@@ -66,27 +77,66 @@ def processar_planilha_transporte(
     op001: OP001Coleta,
     input_file: Path,
     output_file: Path,
+    job=None,
 ) -> Path:
     df = pd.read_excel(input_file, dtype=str).fillna("")
     df = normalizar_colunas(df)
-
     df = df.rename(columns=MAPA_COLUNAS)
 
     validar_colunas(df)
 
-    for col in [
-        COLUNA_RESULTADO_COLETA,
-        COLUNA_RESULTADO_SEQ,
-        COLUNA_RESULTADO_STATUS,
-        COLUNA_RESULTADO_MSG,
-    ]:
-        if col not in df.columns:
-            df[col] = ""
+    wb = load_workbook(input_file)
+    ws = wb.active
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
+    total = len(df)
+
+    if job:
+        set_progress(job, 0, total)
+
+    # Cabeçalhos de status no final da planilha
+    ws["AG1"] = "STATUS_BOT"
+    ws["AH1"] = "MENSAGEM_BOT"
+
     for index, row in df.iterrows():
+        linha_excel = index + 2  # linha 1 é cabeçalho
+
+        coleta_existente = str(ws[f"D{linha_excel}"].value or "").strip()
+
+        if coleta_existente:
+            ws[f"AG{linha_excel}"] = "IGNORADO"
+            ws[f"AH{linha_excel}"] = f"Linha ignorada. Coleta já existente: {coleta_existente}"
+
+            if job:
+                add_log(job, f"Linha {index + 1}/{total} ignorada | coleta já existente={coleta_existente}")
+                set_progress(job, index + 1, total)
+
+            wb.save(output_file)
+            continue
+
+        tipo_coleta = str(row.get(COLUNA_TIPO_COLETA, "")).strip().upper()
+
+        if tipo_coleta in TIPOS_IGNORAR:
+            ws[f"AG{linha_excel}"] = "IGNORADO"
+            ws[f"AH{linha_excel}"] = f"Tipo de coleta ignorado: {tipo_coleta}"
+
+            if job:
+                add_log(job, f"Linha {index + 1}/{total} ignorada | tipo={tipo_coleta}")
+                set_progress(job, index + 1, total)
+
+            wb.save(output_file)
+            continue
+
         try:
+            if job:
+                add_log(
+                    job,
+                    f"Processando linha {index + 1}/{total} | "
+                    f"Cliente={row['CLIENTE']} | "
+                    f"Destino={row['MUNICIPIO_DESTINO']}/{row['UF_DESTINO']}"
+                )
+
             resultado = op001.salvar_coleta_transporte(
                 nome_cliente=str(row["CLIENTE"]).strip(),
                 municipio_destino=str(row["MUNICIPIO_DESTINO"]).strip(),
@@ -96,15 +146,30 @@ def processar_planilha_transporte(
                 cnpj_destinatario=str(row["CNPJ_DESTINATARIO"]).strip(),
             )
 
-            df.at[index, COLUNA_RESULTADO_COLETA] = resultado.get("coleta", "")
-            df.at[index, COLUNA_RESULTADO_SEQ] = resultado.get("seq_coleta", "")
-            df.at[index, COLUNA_RESULTADO_STATUS] = "OK" if resultado.get("sucesso") else "ERRO"
-            df.at[index, COLUNA_RESULTADO_MSG] = resultado.get("mensagem", "")
+            coleta_gerada = resultado.get("coleta", "")
+
+            # Coluna D recebe o número da coleta
+            ws[f"D{linha_excel}"] = coleta_gerada
+
+            # Colunas AG/AH recebem status e mensagem
+            ws[f"AG{linha_excel}"] = "OK" if resultado.get("sucesso") else "ERRO"
+            ws[f"AH{linha_excel}"] = resultado.get("mensagem", "")
+
+            if job:
+                add_log(job, f"Coleta gerada: {coleta_gerada}")
 
         except Exception as exc:
-            df.at[index, COLUNA_RESULTADO_STATUS] = "ERRO"
-            df.at[index, COLUNA_RESULTADO_MSG] = str(exc)
+            ws[f"AG{linha_excel}"] = "ERRO"
+            ws[f"AH{linha_excel}"] = str(exc)
 
-        df.to_excel(output_file, index=False)
+            if job:
+                add_log(job, f"Erro na linha {index + 1}: {exc}")
+
+        if job:
+            set_progress(job, index + 1, total)
+
+        wb.save(output_file)
+
+    wb.save(output_file)
 
     return output_file

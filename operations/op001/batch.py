@@ -6,6 +6,8 @@ from operations.op001.coleta import OP001Coleta
 
 from utils.excel import carregar_planilha
 
+from web.jobs import add_log, set_progress
+
 
 COLUNA_NFD = "NFD"
 COLUNA_CNPJ = "CNPJ"
@@ -47,10 +49,16 @@ def processar_planilha_nfd(
     tipo_frete: str = "F",
     cnpj_destinatario: str = "76487032004031",
     hora_limite: str = "1800",
+    job=None,
 ) -> Path:
     df = carregar_planilha(input_file)
     df = normalizar_colunas(df)
     validar_colunas(df)
+
+    total = len(df)
+
+    if job:
+        set_progress(job, 0, total)
 
     for col in [
         COLUNA_RESULTADO_COLETA,
@@ -70,6 +78,11 @@ def processar_planilha_nfd(
         if not nfd or not cnpj:
             df.at[index, COLUNA_RESULTADO_STATUS] = "ERRO"
             df.at[index, COLUNA_RESULTADO_MSG] = "NFD ou CNPJ vazio."
+
+            if job:
+                set_progress(job, index + 1, total)
+                add_log(job, f"Progresso: {index + 1}/{total}")
+
             df.to_excel(output_file, index=False)
             continue
 
@@ -88,9 +101,19 @@ def processar_planilha_nfd(
             df.at[index, COLUNA_RESULTADO_STATUS] = "OK" if resultado.get("sucesso") else "ERRO"
             df.at[index, COLUNA_RESULTADO_MSG] = resultado.get("mensagem", "")
 
+            if job:
+                add_log(job, f"Coleta gerada: {resultado.get('coleta', '')}")
+
         except Exception as exc:
             df.at[index, COLUNA_RESULTADO_STATUS] = "ERRO"
             df.at[index, COLUNA_RESULTADO_MSG] = str(exc)
+
+            if job:
+                add_log(job, f"Erro na linha {index + 1}: {exc}")
+
+        if job:
+            set_progress(job, index + 1, total)
+            add_log(job, f"Progresso: {index + 1}/{total}")
 
         # Salva a cada linha para não perder progresso
         df.to_excel(output_file, index=False)

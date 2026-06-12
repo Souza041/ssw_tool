@@ -14,6 +14,8 @@ class Job:
     logs: queue.Queue = field(default_factory=queue.Queue)
     result_file: Path | None = None
     result_files: list[dict] = field(default_factory=list)
+    progress: int = 0
+    total: int = 0
     error: str | None = None
 
 
@@ -29,6 +31,10 @@ def criar_job() -> Job:
 def add_log(job: Job, mensagem: str) -> None:
     agora = datetime.now().strftime("%H:%M:%S")
     job.logs.put(f"[{agora}] {mensagem}")
+
+def set_progress(job: Job, progress: int, total: int) -> None:
+    job.progress = progress
+    job.total = total
 
 
 def executar_job(job: Job, func: Callable, *args, **kwargs) -> None:

@@ -9,6 +9,16 @@
 <div class="card">
     <h3>Status do job</h3>
 
+    <div style="margin-bottom:16px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+            <strong>Progresso</strong>
+            <span id="progress-text">0/0</span>
+        </div>
+        <div style="background:#e2e8f0;border-radius:999px;height:12px;overflow:hidden;">
+            <div id="progress-bar" style="height:12px;width:0%;background:#2563eb;border-radius:999px;"></div>
+        </div>
+    </div>
+
     <pre id="logbox" style="
         background:#020617;
         color:#d1fae5;
@@ -39,12 +49,25 @@
 
     const evtSource = new EventSource(`/jobs/${jobId}/stream`);
 
+    const progressText = document.getElementById("progress-text");
+    const progressBar = document.getElementById("progress-bar");
+
     evtSource.onmessage = function(event) {
         const data = JSON.parse(event.data);
 
         if (data.type === "log") {
             logbox.textContent += data.message + "\n";
             logbox.scrollTop = logbox.scrollHeight;
+        }
+
+        if (data.type === "progress") {
+            const progress = data.progress || 0;
+            const total = data.total || 0;
+
+            progressText.textContent = `${progress}/${total}`;
+
+            const percent = total > 0 ? Math.round((progress / total) * 100) : 0;
+            progressBar.style.width = `${percent}%`;
         }
 
         if (data.type === "done") {
@@ -75,6 +98,7 @@
             logbox.textContent += "\nERRO: " + data.message + "\n";
             evtSource.close();
         }
+    
     };
 </script>
 {% endblock %}
