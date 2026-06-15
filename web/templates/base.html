@@ -222,6 +222,7 @@
         <div class="brand">SSW Tool</div>
         <div class="subtitle">Automações HTTP Rodobras</div>
 
+        {% if request.session.get("ssw_session_id") %}
         <nav>
             <a href="/">Dashboard</a>
             <a href="/op001">OP001 - Coletas NFD</a>
@@ -231,6 +232,7 @@
             <a href="/op455">OP455 - CTRCs</a>
             <a href="/op488">OP488 - Despesas</a>
         </nav>
+        {% endif %}
     </aside>
 
     <main>

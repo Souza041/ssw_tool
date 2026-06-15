@@ -16,14 +16,19 @@ class SSWSettings:
     unidade: str = os.getenv("SSW_UNIDADE", "CWB")
     timeout: int = int(os.getenv("SSW_TIMEOUT", "60"))
 
-    def validate(self) -> None:
+    def validate(self, required_login, bool = True) -> None:
         required = {
+            "SSW_BASE_URL": self.base_url,
+        }
+        
+        if required_login:
+            required.update({
             "SSW_DOMINIO": self.dominio,
             "SSW_CPF": self.cpf,
             "SSW_USUARIO": self.usuario,
             "SSW_SENHA": self.senha,
             "SSW_UNIDADE": self.unidade,
-        }
+        })
 
         missing = [key for key, value in required.items() if not value]
 

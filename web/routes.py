@@ -20,9 +20,20 @@ from operations.op001.batch_transporte import processar_planilha_transporte
 
 from web.jobs import JOBS, add_log, criar_job, executar_job, set_progress
 
+from web.session_store import criar_sessao, exigir_client, remover_sessao, obter_client
+
 router = APIRouter()
 templates = Jinja2Templates(directory="web/templates")
 
+def validar_login(request: Request):
+    if not request.session.get("ssw_session_id"):
+        return RedirectResponse("/login", status_code=303)
+
+    if not obter_client(request):
+        request.session.clear()
+        return RedirectResponse("/login", status_code=303)
+
+    return None
 
 def criar_client_logado() -> SSWClient:
     client = SSWClient()
@@ -30,10 +41,8 @@ def criar_client_logado() -> SSWClient:
     client.open_menu()
     return client
 
-def executar_op455_job(job, periodos: str, timeout: int) -> list[dict]:
-    add_log(job, "Executando login no SSW...")
-    client = criar_client_logado()
-    add_log(job, "Login concluído.")
+def executar_op455_job(job, client: SSWClient, periodos: str, timeout: int) -> list[dict]:
+    add_log(job, "Sessão SSW carregada.")
 
     op455 = OP455Report(client)
 
@@ -44,6 +53,9 @@ def executar_op455_job(job, periodos: str, timeout: int) -> list[dict]:
         for linha in periodos.splitlines()
         if linha.strip()
     ]
+
+    total = len(linhas)
+    set_progress(job, 0, total)
 
     add_log(job, f"{len(linhas)} período(s) informado(s).")
 
@@ -88,6 +100,7 @@ def executar_op455_job(job, periodos: str, timeout: int) -> list[dict]:
 
 def executar_op488_job(
     job,
+    client: SSWClient,
     unidade: str,
     cod_evento: str,
     evento: str,
@@ -98,9 +111,7 @@ def executar_op488_job(
 ) -> list[dict]:
     set_progress(job, 0, 1)
 
-    add_log(job, "Executando login no SSW...")
-    client = criar_client_logado()
-    add_log(job, "Login concluído.")
+    add_log(job, "Sessão SSW carregada.")
 
     add_log(job, "Abrindo OP488...")
     op488 = OP488Report(client)
@@ -137,27 +148,89 @@ def executar_op488_job(
 
     return arquivos
 
+@router.get("/login", response_class=HTMLResponse)
+def login_form(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
+
+
+@router.post("/login")
+def login_run(
+    request: Request,
+    dominio: str = Form(...),
+    cpf: str = Form(...),
+    usuario: str = Form(...),
+    senha: str = Form(...),
+    unidade: str = Form(...),
+):
+    try:
+        client = SSWClient(
+            dominio=dominio,
+            cpf=cpf,
+            usuario=usuario,
+            senha=senha,
+            unidade=unidade,
+        )
+
+        client.login()
+        client.open_menu()
+
+        session_id = criar_sessao(client)
+        request.session["ssw_session_id"] = session_id
+
+        return RedirectResponse("/", status_code=303)
+
+    except Exception as exc:
+        return templates.TemplateResponse(
+            "login.html",
+            {
+                "request": request,
+                "error": str(exc),
+            },
+        )
+
+
+@router.get("/logout")
+def logout(request: Request):
+    remover_sessao(request)
+    return RedirectResponse("/login", status_code=303)
+
 @router.get("/", response_class=HTMLResponse)
 def index(request: Request):
+    redirect = validar_login(request)
+    if redirect:
+        return redirect
+
     return templates.TemplateResponse("index.html", {"request": request})
 
 
 @router.get("/op455", response_class=HTMLResponse)
 def op455_form(request: Request):
+
+    redirect = validar_login(request)
+    if redirect:
+        return redirect
+    
     return templates.TemplateResponse("op455.html", {"request": request})
 
 @router.post("/op455")
 def op455_run(
+    request: Request,
     periodos: str = Form(...),
     timeout: int = Form(300),
 ):
+    
+    try:
+        client = exigir_client(request)
+    except RuntimeError:
+        return RedirectResponse("/login", status_code=303)
+    
     job = criar_job()
-
     add_log(job, "Job criado.")
 
     executar_job(
         job,
         executar_op455_job,
+        client,
         periodos,
         timeout,
     )
@@ -169,22 +242,34 @@ def op455_run(
 
 @router.get("/op150", response_class=HTMLResponse)
 def op150_form(request: Request):
+
+    redirect = validar_login(request)
+    if redirect:
+        return redirect
+    
     return templates.TemplateResponse("op150.html", {"request": request})
 
 
 @router.post("/op150")
 def op150_run(
+    request: Request,
     data_inicial: str = Form(...),
     data_final: str = Form(...),
     unidade: str = Form("CWB"),
     nome_unidade: str = Form("RODOBRAS TRANSP RODOVIARIOS"),
 ):
+    try:
+        client = exigir_client(request)
+    except RuntimeError:
+            return RedirectResponse("/login", status_code=303)
+
     job = criar_job()
     add_log(job, "Job criado.")
 
     executar_job(
         job,
         executar_op150_job,
+        client,
         data_inicial,
         data_final,
         unidade,
@@ -212,7 +297,11 @@ def op103_run(
     unidade_destinataria: str = Form("CWB"),
     tipo_consulta: str = Form("coleta"),
 ):
-    client = criar_client_logado()
+    try:
+        client = exigir_client(request)
+    except RuntimeError:
+        return RedirectResponse("/login", status_code=303)
+    
     op103 = OP103Report(client)
 
     arquivo = op103.gerar_e_baixar_devolucao(
@@ -238,10 +327,16 @@ def op103_run(
 
 @router.get("/op488", response_class=HTMLResponse)
 def op488_form(request: Request):
+
+    redirect = validar_login(request)
+    if redirect:
+        return redirect
+    
     return templates.TemplateResponse("op488.html", {"request": request})
 
 @router.post("/op488")
 def op488_run(
+    request: Request,
     unidade: str = Form("CWB"),
     cod_evento: str = Form(...),
     evento: str = Form(...),
@@ -250,12 +345,18 @@ def op488_run(
     sit_arq: str = Form("T"),
     timeout: int = Form(300),
 ):
+    try:
+        client = exigir_client(request)
+    except RuntimeError:
+        return RedirectResponse("/login", status_code=303)
+
     job = criar_job()
     add_log(job, "Job criado.")
 
     executar_job(
         job,
         executar_op488_job,
+        client,
         unidade,
         cod_evento,
         evento,
@@ -272,13 +373,24 @@ def op488_run(
 
 @router.get("/op001", response_class=HTMLResponse)
 def op001_form(request: Request):
+
+    redirect = validar_login(request)
+    if redirect:
+        return redirect
+    
     return templates.TemplateResponse("op001.html", {"request": request})
 
 
 @router.post("/op001")
 async def op001_run(
+    request: Request,
     arquivo_excel: UploadFile = File(...),
 ):
+    try:
+        client = exigir_client(request)
+    except RuntimeError:
+        return RedirectResponse("/login", status_code=303)
+
     uploads_dir = Path("uploads")
     uploads_dir.mkdir(exist_ok=True)
 
@@ -295,6 +407,7 @@ async def op001_run(
     executar_job(
         job,
         executar_op001_nfd_job,
+        client,
         input_file,
         output_file,
     )
@@ -306,6 +419,11 @@ async def op001_run(
 
 @router.get("/op001-transporte", response_class=HTMLResponse)
 def op001_transporte_form(request: Request):
+
+    redirect = validar_login(request)
+    if redirect:
+        return redirect
+    
     return templates.TemplateResponse(
         "op001_transporte.html",
         {"request": request},
@@ -314,8 +432,14 @@ def op001_transporte_form(request: Request):
 
 @router.post("/op001-transporte")
 async def op001_transporte_run(
+    request: Request,
     arquivo_excel: UploadFile = File(...),
 ):
+    try:
+        client = exigir_client(request)
+    except RuntimeError:
+        return RedirectResponse("/login", status_code=303)
+
     uploads_dir = Path("uploads")
     uploads_dir.mkdir(exist_ok=True)
 
@@ -332,6 +456,7 @@ async def op001_transporte_run(
     executar_job(
         job,
         executar_op001_transporte_job,
+        client,
         input_file,
         output_file,
     )
@@ -373,6 +498,8 @@ def job_stream(job_id: str):
                 payload = {
                     "type": "done",
                     "files": job.result_files,
+                    "progress": job.progress,
+                    "total": job.total,
                 }
 
                 yield f"data: {json.dumps(payload)}\n\n"
@@ -397,6 +524,7 @@ def job_stream(job_id: str):
 
 def executar_op150_job(
     job,
+    client: SSWClient,
     data_inicial: str,
     data_final: str,
     unidade: str,
@@ -404,9 +532,7 @@ def executar_op150_job(
 ) -> list[dict]:
     set_progress(job, 0, 1)
 
-    add_log(job, "Executando login no SSW...")
-    client = criar_client_logado()
-    add_log(job, "Login concluído.")
+    add_log(job, "Sessão SSW carregada.")
 
     add_log(job, "Abrindo OP150...")
     op150 = OP150Report(client)
@@ -436,12 +562,11 @@ def executar_op150_job(
 
 def executar_op001_nfd_job(
     job,
+    client: SSWClient,
     input_file: Path,
     output_file: Path,
 ) -> list[dict]:
-    add_log(job, "Executando login no SSW...")
-    client = criar_client_logado()
-    add_log(job, "Login concluído.")
+    add_log(job, "Sessão SSW carregada.")
 
     add_log(job, "Abrindo OP001...")
     op001 = OP001Coleta(client)
@@ -469,12 +594,11 @@ def executar_op001_nfd_job(
 
 def executar_op001_transporte_job(
     job,
+    client: SSWClient,
     input_file: Path,
     output_file: Path,
 ) -> list[dict]:
-    add_log(job, "Executando login no SSW...")
-    client = criar_client_logado()
-    add_log(job, "Login concluído.")
+    add_log(job, "Sessão SSW carregada.")
 
     add_log(job, "Abrindo OP001...")
     op001 = OP001Coleta(client)

@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="topbar">
+    <h1>Login SSW</h1>
+    <p>Informe suas credenciais para iniciar uma sessão no SSW.</p>
+</div>
+
+<div class="card">
+    {% if error %}
+    <div class="success" style="background:#fee2e2;color:#991b1b;">
+        {{ error }}
+    </div>
+    {% endif %}
+
+    <form method="post">
+        <label>Domínio</label>
+        <input name="dominio" value="ROD" required>
+
+        <label>CPF</label>
+        <input name="cpf" required>
+
+        <label>Usuário</label>
+        <input name="usuario" required>
+
+        <label>Senha</label>
+        <input name="senha" type="password" required>
+
+        <label>Unidade</label>
+        <input name="unidade" value="CWB" required>
+
+        <button type="submit">Entrar</button>
+    </form>
+</div>
+{% endblock %}

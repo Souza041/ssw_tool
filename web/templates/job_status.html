@@ -71,6 +71,12 @@
         }
 
         if (data.type === "done") {
+            if (data.total && data.total > 0) {
+                progressText.textContent = `${data.progress}/${data.total}`;
+                const percent = Math.round((data.progress / data.total) * 100);
+                progressBar.style.width = `${percent}%`;
+            }
+            
             logbox.textContent += "\nFinalizado.\n";
 
             if (data.files && data.files.length > 0) {

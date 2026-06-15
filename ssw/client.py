@@ -7,12 +7,25 @@ import time
 
 
 class SSWClient:
-    def __init__(self) -> None:
-        settings.validate()
+    def __init__(
+        self,
+        dominio: str | None = None,
+        cpf: str | None = None,
+        usuario: str | None = None,
+        senha: str | None = None,
+        unidade: str | None = None,
+    ) -> None:
+        settings.validate(required_login=False)
 
         self.base_url = settings.base_url.rstrip("/")
         self.timeout = settings.timeout
         self.session = requests.Session()
+
+        self.dominio = dominio or settings.dominio
+        self.cpf = cpf or settings.cpf
+        self.usuario = usuario or settings.usuario
+        self.senha = senha or settings.senha
+        self.unidade = unidade or settings.unidade
 
         self.session.headers.update({
             "User-Agent": (
@@ -83,10 +96,10 @@ class SSWClient:
     def login(self) -> None:
         payload = {
             "act": "L",
-            "f1": settings.dominio,
-            "f2": settings.cpf,
-            "f3": settings.usuario,
-            "f4": settings.senha,
+            "f1": self.dominio,
+            "f2": self.cpf,
+            "f3": self.usuario,
+            "f4": self.senha,
             "f6": "TRUE",
             "dummy": dummy(),
         }
@@ -99,7 +112,7 @@ class SSWClient:
     def open_option(self, option: str, unidade: str | None = None) -> requests.Response:
         payload_menu = {
             "act": "TRO",
-            "f2": unidade or settings.unidade,
+            "f2": unidade or self.unidade,
             "f3": str(option),
             "dummy": dummy(),
         }
