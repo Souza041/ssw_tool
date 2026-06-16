@@ -55,11 +55,11 @@ def processar_instrucoes_gestao(
     filtros: dict[str, pd.DataFrame],
     logger=None,
     job=None,
+    log_func=None,
 ) -> None:
-    lanca_instrucao = to_bool(os.getenv("LANCA_INSTRUCAO_SSW"), False)
-
-    if not lanca_instrucao:
-        msg = "Lançamento de instruções OP101 desativado no .env."
+    def log(msg: str):
+        if log_func:
+            log_func(msg)
 
         if logger:
             logger.info(msg)
@@ -68,6 +68,10 @@ def processar_instrucoes_gestao(
             from web.jobs import add_log
             add_log(job, msg)
 
+    lanca_instrucao = to_bool(os.getenv("LANCA_INSTRUCAO_SSW"), False)
+
+    if not lanca_instrucao:
+        log("Lançamento de instruções OP101 desativado no .env.")
         return
 
     texto_instrucao = os.getenv(
@@ -78,23 +82,10 @@ def processar_instrucoes_gestao(
     ctrcs = obter_ctrcs_para_instrucao(filtros)
 
     if not ctrcs:
-        msg = "Nenhum CTRC encontrado para lançamento de instrução."
-
-        if logger:
-            logger.info(msg)
-
-        if job:
-            from web.jobs import add_log
-            add_log(job, msg)
-
+        log("Nenhum CTRC encontrado para lançamento de instrução.")
         return
 
-    if logger:
-        logger.info("Iniciando lançamento OP101. Total: %s", len(ctrcs))
-
-    if job:
-        from web.jobs import add_log
-        add_log(job, f"Iniciando lançamento OP101. Total: {len(ctrcs)}")
+    log(f"Iniciando lançamento OP101. Total: {len(ctrcs)}")
 
     op101 = OP101Instructions(client)
     op101.open()
@@ -104,9 +95,7 @@ def processar_instrucoes_gestao(
 
     for idx, ctrc in enumerate(ctrcs, start=1):
         try:
-            if job:
-                from web.jobs import add_log
-                add_log(job, f"Lançando instrução {idx}/{len(ctrcs)} | CTRC={ctrc}")
+            log(f"Lançando instrução {idx}/{len(ctrcs)} | CTRC={ctrc}")
 
             op101.lancar_instrucao(
                 serie_numero_ctrc=ctrc,
@@ -114,22 +103,10 @@ def processar_instrucoes_gestao(
             )
 
             sucesso += 1
+            log(f"Instrução lançada com sucesso | CTRC={ctrc}")
 
         except Exception as exc:
             falha += 1
+            log(f"Falha OP101 | CTRC={ctrc} | erro={exc}")
 
-            if logger:
-                logger.exception("Falha ao lançar instrução no CTRC %s: %s", ctrc, exc)
-
-            if job:
-                from web.jobs import add_log
-                add_log(job, f"Falha OP101 | CTRC={ctrc} | erro={exc}")
-
-    msg_final = f"Lançamento OP101 finalizado. Sucesso={sucesso} | Falha={falha}"
-
-    if logger:
-        logger.info(msg_final)
-
-    if job:
-        from web.jobs import add_log
-        add_log(job, msg_final)
+    log(f"Lançamento OP101 finalizado. Sucesso={sucesso} | Falha={falha}")

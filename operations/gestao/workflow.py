@@ -19,7 +19,7 @@ def executar_gestao_op455(
     def log(msg: str):
         if log_func:
             log_func(msg)
-            
+
         if job:
             from web.jobs import add_log
             add_log(job, msg)
@@ -63,6 +63,7 @@ def executar_gestao_op455(
         client=client,
         filtros=filtros,
         job=job,
+        log_func=log_func,
     )
 
     log("Fluxo de gestão finalizado.")
