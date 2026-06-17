@@ -74,6 +74,10 @@ class OP001Coleta:
             "latitude": get("lat"),
             "longitude": get("lng"),
             "complemento": get("comple"),
+            "cidade": get("cid"),
+            "uf": get("uf"),
+            "cidade_uf": f"{get('cid')} / {get('uf')}" if get("cid") and get("uf") else "",
+            "filial": get("fil"),
         }
 
     def salvar_coleta_reversa(
@@ -117,8 +121,8 @@ class OP001Coleta:
             "f44": remetente["cep"],
 
             # Estes vieram do HAR. Depois podemos buscar dinamicamente se necessário.
-            "cid_col": "CANELA / RS",
-            "fil_col": "GMO",
+            "cid_col": remetente.get("cidade_uf") or remetente.get("cidade") or "",
+            "fil_col": remetente.get("filial") or "",
 
             "f48": cnpj_destinatario,
             "_nome_dest": "ELECTROLUX DO BRASI A2",
@@ -135,7 +139,7 @@ class OP001Coleta:
 
             "id_local_entrega": "JOAO LUNARDELLI,2205",
             "vlr_loc": "0,00",
-            "setor": "956",
+            "setor": remetente.get("setor", ""),
             "id_cidade_entrega": "CURITIBA/PR",
             "fil_ent": "CWB",
 

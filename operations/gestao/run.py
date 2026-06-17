@@ -2,6 +2,8 @@ import argparse
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import os
+
 from operations.gestao.workflow import executar_gestao_op455
 
 
@@ -27,7 +29,7 @@ def main() -> None:
 
     parser.add_argument("--data-inicial")
     parser.add_argument("--data-final")
-    parser.add_argument("--dias", type=int, default=7)
+    parser.add_argument("--dias", type=int, default=int(os.getenv("OP455_DIAS_PERIODO", "30")))
     parser.add_argument("--output", default="downloads")
 
     args = parser.parse_args()
