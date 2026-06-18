@@ -201,6 +201,14 @@
             font-size: 13px;
         }
 
+        .logout {
+            color: #ef4444;
+        }
+
+        .logout:hover {
+            background: rgba(239,68,68,.15);
+        }
+
         @media (max-width: 800px) {
             .layout {
                 grid-template-columns: 1fr;
@@ -231,6 +239,7 @@
             <a href="/op150">OP150 - Relatório</a>
             <a href="/op455">OP455 - CTRCs</a>
             <a href="/op488">OP488 - Despesas</a>
+            <a href="/logout" class="menu-item logout">🚪 Sair</a>
         </nav>
         {% endif %}
     </aside>

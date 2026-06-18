@@ -623,3 +623,12 @@ def executar_op001_transporte_job(
 
     job.result_files = arquivos
     return arquivos
+
+@router.get("/logout")
+def logout(request: Request):
+    request.session.clear()
+
+    return RedirectResponse(
+        url="/login",
+        status_code=302,
+    )
