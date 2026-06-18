@@ -52,19 +52,26 @@ def executar_gestao_op455(
 
     log("Enviando alertas por e-mail...")
 
+    emails_enviados = False
+
     try:
         enviar_alertas_por_filial(filtros)
+        emails_enviados = True
         log("Envio de alertas finalizado.")
     except Exception as exc:
-        log(f"Falha no envio de e-mails, continuando fluxo: {exc}")
+        log(f"Falha no envio de e-mails: {exc}")
+        log("OP101 não será processada porque os e-mails não foram enviados.")
 
-    log("Processando instruções OP101...")
-    processar_instrucoes_gestao(
-        client=client,
-        filtros=filtros,
-        job=job,
-        log_func=log_func,
-    )
+    if emails_enviados:
+        log("Processando instruções OP101...")
+        processar_instrucoes_gestao(
+            client=client,
+            filtros=filtros,
+            job=job,
+            log_func=log_func,
+        )
+    else:
+        log("Fluxo encerrado sem lançamento de instruções OP101.")
 
     log("Fluxo de gestão finalizado.")
 
