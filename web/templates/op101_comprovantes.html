@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="topbar">
+    <h1>OP101 - Validar Comprovantes</h1>
+    <p>Consulta notas no SSW e valida se o comprovante subiu via Arquivos EDI.</p>
+</div>
+
+<div class="card">
+    <form method="post" enctype="multipart/form-data">
+        <label>Planilha</label>
+        <input type="file" name="arquivo_excel" accept=".xlsx,.xls,.XLSX,.XLS" required>
+
+        <label>Data inicial</label>
+        <input type="text" name="data_ini" placeholder="Ex: 010626" required>
+
+        <label>Data final</label>
+        <input type="text" name="data_fin" placeholder="Ex: 260626" required>
+
+        <button type="submit">Validar comprovantes</button>
+    </form>
+
+    <p style="margin-top:18px;color:#64748b;font-size:14px;">
+        A planilha deve conter a NF na coluna <strong>B</strong>. O resultado será gravado na coluna <strong>F</strong>.
+    </p>
+
+    <a class="back" href="/">← Voltar ao dashboard</a>
+</div>
+{% endblock %}

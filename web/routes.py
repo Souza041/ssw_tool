@@ -22,6 +22,9 @@ from web.jobs import JOBS, add_log, criar_job, executar_job, set_progress
 
 from web.session_store import criar_sessao, exigir_client, remover_sessao, obter_client
 
+from operations.op101.comprovantes import OP101Comprovantes
+from operations.op101.batch_comprovantes import processar_planilha_comprovantes
+
 router = APIRouter()
 templates = Jinja2Templates(directory="web/templates")
 
@@ -632,3 +635,88 @@ def logout(request: Request):
         url="/login",
         status_code=302,
     )
+
+@router.get("/op101-comprovantes", response_class=HTMLResponse)
+def op101_comprovantes_form(request: Request):
+    redirect = validar_login(request)
+    if redirect:
+        return redirect
+
+    return templates.TemplateResponse(
+        "op101_comprovantes.html",
+        {"request": request},
+    )
+
+
+@router.post("/op101-comprovantes")
+async def op101_comprovantes_run(
+    request: Request,
+    arquivo_excel: UploadFile = File(...),
+    data_ini: str = Form(...),
+    data_fin: str = Form(...),
+):
+    try:
+        client = exigir_client(request)
+    except RuntimeError:
+        return RedirectResponse("/login", status_code=303)
+
+    uploads_dir = Path("uploads")
+    uploads_dir.mkdir(exist_ok=True)
+
+    input_file = uploads_dir / arquivo_excel.filename
+
+    with input_file.open("wb") as f:
+        f.write(await arquivo_excel.read())
+
+    output_file = Path("downloads") / f"comprovantes_processado_{arquivo_excel.filename}"
+
+    job = criar_job()
+    add_log(job, "Job criado.")
+
+    executar_job(
+        job,
+        executar_op101_comprovantes_job,
+        client,
+        input_file,
+        output_file,
+        data_ini,
+        data_fin,
+    )
+
+    return RedirectResponse(
+        url=f"/jobs/{job.id}",
+        status_code=303,
+    )
+
+def executar_op101_comprovantes_job(
+    job,
+    client: SSWClient,
+    input_file: Path,
+    output_file: Path,
+    data_ini: str,
+    data_fin: str,
+) -> list[dict]:
+    add_log(job, "Sessão SSW carregada.")
+    add_log(job, "Iniciando validação de comprovantes OP101.")
+
+    op101 = OP101Comprovantes(client)
+
+    arquivo_saida = processar_planilha_comprovantes(
+        op101=op101,
+        input_file=input_file,
+        output_file=output_file,
+        data_ini=data_ini,
+        data_fin=data_fin,
+        job=job,
+    )
+
+    add_log(job, f"Planilha final gerada: {arquivo_saida.name}")
+
+    arquivos = [{
+        "name": arquivo_saida.name,
+        "url": f"/downloads/{arquivo_saida.name}",
+        "periodo": "OP101 - Validação de Comprovantes",
+    }]
+
+    job.result_files = arquivos
+    return arquivos
