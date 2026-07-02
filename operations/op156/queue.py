@@ -193,3 +193,26 @@ class OP156Queue:
             download_id=download_id,
             output_dir=output_dir,
         )
+    
+    def baixar_por_opcao(
+        self,
+        output_dir: Path,
+        opcao: str,
+        unidade: str | None = None,
+        timeout_seconds: int = 300,
+        intervalo: float = 5,
+    ) -> Path:
+        """
+        Atalho para aguardar um relatório da OP156 e realizar o download.
+        Exemplo:
+            baixar_por_opcao(output_dir, "455")
+            baixar_por_opcao(output_dir, "930")
+            baixar_por_opcao(output_dir, "488")
+        """
+        return self.aguardar_e_baixar(
+            output_dir=output_dir,
+            opcao_contains=opcao,
+            unidade=unidade,
+            timeout_seconds=timeout_seconds,
+            intervalo=intervalo,
+        )

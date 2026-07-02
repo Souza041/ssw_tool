@@ -133,9 +133,9 @@ class OP455Report:
 
         fila = OP156Queue(self.client)
 
-        return fila.aguardar_e_baixar(
+        return fila.baixar_por_opcao(
             output_dir=output_dir,
-            opcao_contains="455 - Fretes Expedidos/Recebidos - CTRCs",
+            opcao="455 - Fretes Expedidos/Recebidos - CTRCs",
             unidade="MTZ",
             timeout_seconds=timeout_seconds,
             intervalo=5,
@@ -169,9 +169,9 @@ class OP455Report:
 
         fila = OP156Queue(self.client)
 
-        return fila.aguardar_e_baixar(
+        return fila.baixar_por_opcao(
             output_dir=output_dir,
-            opcao_contains="455 - Fretes Expedidos/Recebidos - CTRCs",
+            opcao="455 - Fretes Expedidos/Recebidos - CTRCs",
             unidade="MTZ",
             timeout_seconds=timeout_seconds,
             intervalo=5,

@@ -1,6 +1,11 @@
 import json
 import time
 
+import uuid
+import shutil
+
+from tools.renomeador.service import processar_renomeador
+
 from pathlib import Path
 
 from fastapi import APIRouter, Form, Request
@@ -720,3 +725,78 @@ def executar_op101_comprovantes_job(
 
     job.result_files = arquivos
     return arquivos
+
+@router.get("/renomeador", response_class=HTMLResponse)
+def renomeador_form(request: Request):
+    return templates.TemplateResponse(
+        "renomeador.html",
+        {"request": request},
+    )
+
+
+@router.post("/renomeador")
+async def renomeador_run(
+    request: Request,
+    arquivos: list[UploadFile] = File(...),
+):
+    job = criar_job()
+    add_log(job, "Job criado.")
+    add_log(job, "Iniciando renomeador de notas.")
+
+    base_dir = Path("temp") / f"renomeador_{uuid.uuid4().hex}"
+    input_dir = base_dir / "input"
+    output_dir = base_dir / "output"
+
+    input_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for arquivo in arquivos:
+        destino = input_dir / arquivo.filename
+
+        with destino.open("wb") as f:
+            f.write(await arquivo.read())
+
+    zip_path = Path("downloads") / f"renomeador_notas_{job.id}.zip"
+
+    executar_job(
+        job,
+        executar_renomeador_job,
+        input_dir,
+        output_dir,
+        zip_path,
+        base_dir,
+    )
+
+    return RedirectResponse(
+        url=f"/jobs/{job.id}",
+        status_code=303,
+    )
+
+
+def executar_renomeador_job(
+    job,
+    input_dir: Path,
+    output_dir: Path,
+    zip_path: Path,
+    base_dir: Path,
+) -> list[dict]:
+    try:
+        arquivo_zip = processar_renomeador(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            zip_path=zip_path,
+            job=job,
+        )
+
+        arquivos = [{
+            "name": arquivo_zip.name,
+            "url": f"/downloads/{arquivo_zip.name}",
+            "periodo": "Renomeador de Notas",
+        }]
+
+        job.result_files = arquivos
+        return arquivos
+
+    finally:
+        if base_dir.exists():
+            shutil.rmtree(base_dir, ignore_errors=True)

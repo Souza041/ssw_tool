@@ -8,6 +8,7 @@ from web.routes import router
 
 Path("downloads").mkdir(exist_ok=True)
 Path("uploads").mkdir(exist_ok=True)
+Path("temp").mkdir(exist_ok=True)
 
 app = FastAPI(title="SSW Tool")
 
