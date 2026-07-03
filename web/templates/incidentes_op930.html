@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="topbar">
+    <h1>Incidentes OP930</h1>
+    <p>Gera relatórios por grupo de cliente, trata ocorrências e consolida a base para dashboard.</p>
+</div>
+
+<div class="card">
+    <form method="post">
+        <label>Data inicial</label>
+        <input type="text" name="data_inicial" placeholder="Ex: 010626" required>
+
+        <label>Data final</label>
+        <input type="text" name="data_final" placeholder="Ex: 260626" required>
+
+        <label>Timeout OP156 segundos</label>
+        <input type="number" name="timeout" value="300" min="60">
+
+        <button type="submit">Gerar incidentes</button>
+    </form>
+
+    <p style="margin-top:18px;color:#64748b;font-size:14px;">
+        MVP atual: Electrolux, LG e Samsung. Os arquivos serão salvos em
+        <strong>downloads/op930/bruto</strong>,
+        <strong>downloads/op930/tratado</strong> e
+        <strong>downloads/op930/consolidado</strong>.
+    </p>
+
+    <a class="back" href="/">← Voltar ao dashboard</a>
+</div>
+{% endblock %}

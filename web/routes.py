@@ -30,6 +30,8 @@ from web.session_store import criar_sessao, exigir_client, remover_sessao, obter
 from operations.op101.comprovantes import OP101Comprovantes
 from operations.op101.batch_comprovantes import processar_planilha_comprovantes
 
+from operations.incidentes.workflow import executar_incidentes_op930
+
 router = APIRouter()
 templates = Jinja2Templates(directory="web/templates")
 
@@ -800,3 +802,69 @@ def executar_renomeador_job(
     finally:
         if base_dir.exists():
             shutil.rmtree(base_dir, ignore_errors=True)
+
+def executar_incidentes_op930_job(
+    job,
+    data_inicial: str,
+    data_final: str,
+    timeout: int,
+) -> list[dict]:
+    add_log(job, "Iniciando fluxo de Incidentes OP930.")
+
+    arquivo_saida = executar_incidentes_op930(
+        data_inicial=data_inicial,
+        data_final=data_final,
+        output_dir=Path("downloads"),
+        timeout_seconds=timeout,
+        job=job,
+    )
+
+    add_log(job, f"Base consolidada gerada: {arquivo_saida.name}")
+
+    arquivos = [{
+        "name": arquivo_saida.name,
+        "url": f"/downloads/op930/consolidado/{arquivo_saida.name}",
+        "periodo": f"Incidentes OP930 - {data_inicial} até {data_final}",
+    }]
+
+    job.result_files = arquivos
+    return arquivos
+
+@router.get("/incidentes-op930", response_class=HTMLResponse)
+def incidentes_op930_form(request: Request):
+    redirect = validar_login(request)
+    if redirect:
+        return redirect
+
+    return templates.TemplateResponse(
+        "incidentes_op930.html",
+        {"request": request},
+    )
+
+
+@router.post("/incidentes-op930")
+def incidentes_op930_run(
+    request: Request,
+    data_inicial: str = Form(...),
+    data_final: str = Form(...),
+    timeout: int = Form(300),
+):
+    redirect = validar_login(request)
+    if redirect:
+        return redirect
+
+    job = criar_job()
+    add_log(job, "Job criado.")
+
+    executar_job(
+        job,
+        executar_incidentes_op930_job,
+        data_inicial,
+        data_final,
+        timeout,
+    )
+
+    return RedirectResponse(
+        url=f"/jobs/{job.id}",
+        status_code=303,
+    )

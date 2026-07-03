@@ -13,6 +13,7 @@ def executar_incidentes_op930(
     data_final: str,
     output_dir: Path,
     grupos: dict[str, list[str]] | None = None,
+    timeout_seconds: int = 300,
     job=None,
     log_func=None,
 ) -> Path:
@@ -61,15 +62,20 @@ def executar_incidentes_op930(
                 data_final=data_final,
                 cnpj=cnpj,
                 grupo=grupo,
+                timeout_seconds=timeout_seconds,
             )
 
             log(f"Arquivo baixado: {arquivo.name}")
+
+            log(f"Tratando relatório {arquivo.name}...")
 
             base = tratar_op930(
                 file_path=arquivo,
                 grupo=grupo,
                 cnpj=cnpj,
             )
+
+            log(f"Salvando arquivo tratado...")
 
             arquivo_tratado = tratado_dir / f"{arquivo.stem}_TRATADO.xlsx"
 
@@ -90,8 +96,12 @@ def executar_incidentes_op930(
 
     if not bases:
         raise ValueError("Nenhuma base gerada.")
+    
+    log("Consolidando bases...")
 
     base_final = pd.concat(bases, ignore_index=True)
+
+    log(f"Base consolidada: {len(base_final)} registros.")
 
     output_file = consolidado_dir / "incidentes_op930_base.xlsx"
 
