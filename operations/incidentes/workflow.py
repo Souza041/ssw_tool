@@ -9,6 +9,7 @@ from ssw.client import SSWClient
 
 
 def executar_incidentes_op930(
+    client: SSWClient,
     data_inicial: str,
     data_final: str,
     output_dir: Path,
@@ -35,10 +36,6 @@ def executar_incidentes_op930(
     tratado_dir.mkdir(parents=True, exist_ok=True)
     consolidado_dir.mkdir(parents=True, exist_ok=True)
 
-    client = SSWClient()
-    client.login()
-    client.open_menu()
-
     op930 = OP930Report(client)
 
     bases = []
@@ -56,14 +53,24 @@ def executar_incidentes_op930(
 
             log(f"Gerando OP930 {atual}/{total} | {grupo} | {cnpj}")
 
-            arquivo = op930.gerar_e_baixar_por_cnpj(
-                output_dir=bruto_dir,
-                data_inicial=data_inicial,
-                data_final=data_final,
-                cnpj=cnpj,
-                grupo=grupo,
-                timeout_seconds=timeout_seconds,
-            )
+            try:
+                arquivo = op930.gerar_e_baixar_por_cnpj(
+                    output_dir=bruto_dir,
+                    data_inicial=data_inicial,
+                    data_final=data_final,
+                    cnpj=cnpj,
+                    grupo=grupo,
+                    timeout_seconds=timeout_seconds,
+                )
+
+            except TimeoutError:
+                log(f"{grupo}: nenhum relatório encontrado.")
+
+                if job:
+                    from web.jobs import set_progress
+                    set_progress(job, atual, total)
+
+                continue
 
             log(f"Arquivo baixado: {arquivo.name}")
 

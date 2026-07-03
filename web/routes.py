@@ -805,13 +805,16 @@ def executar_renomeador_job(
 
 def executar_incidentes_op930_job(
     job,
+    client: SSWClient,
     data_inicial: str,
     data_final: str,
     timeout: int,
 ) -> list[dict]:
+    add_log(job, "Sessão SSW carregada.")
     add_log(job, "Iniciando fluxo de Incidentes OP930.")
 
     arquivo_saida = executar_incidentes_op930(
+        client=client,
         data_inicial=data_inicial,
         data_final=data_final,
         output_dir=Path("downloads"),
@@ -852,6 +855,11 @@ def incidentes_op930_run(
     redirect = validar_login(request)
     if redirect:
         return redirect
+    
+    try:
+        client = exigir_client(request)
+    except RuntimeError:
+        return RedirectResponse("/login", status_code=303)
 
     job = criar_job()
     add_log(job, "Job criado.")
@@ -859,6 +867,7 @@ def incidentes_op930_run(
     executar_job(
         job,
         executar_incidentes_op930_job,
+        client,
         data_inicial,
         data_final,
         timeout,
