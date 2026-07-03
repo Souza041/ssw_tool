@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from operations.op156.queue import OP156Queue
+from operations.op156.queue import OP156Queue, RelatorioSemDados
 from ssw.client import SSWClient
 from ssw.utils import dummy
 
@@ -60,6 +60,18 @@ class OP930Report:
 
         if not nome_cliente:
             raise ValueError(f"Cliente não encontrado para CNPJ {cnpj}")
+        
+        html_antes = self.op156.abrir_fila()
+
+        jobs_antes = self.op156.extrair_jobs(
+            html=html_antes,
+            opcao_contains="930",
+        )
+
+        ignorar_ids = {
+            job["download_id"]
+            for job in jobs_antes
+        }
 
         self.solicitar_relatorio(
             data_inicial=data_inicial,
@@ -72,6 +84,7 @@ class OP930Report:
             output_dir=output_dir,
             opcao="930",
             timeout_seconds=timeout_seconds,
+            ignorar_ids=ignorar_ids,
         )
 
         novo_nome = output_dir / f"OP930_{grupo}_{cnpj}_{arquivo.name}"

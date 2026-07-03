@@ -8,10 +8,15 @@ from ssw.client import SSWClient
 from ssw.settings import settings
 from ssw.utils import dummy
 
+class RelatorioSemDados(Exception):
+    pass
 
 class OP156Queue:
     def __init__(self, client: SSWClient) -> None:
         self.client = client
+
+    def usuario_atual(self) -> str:
+        return getattr(self.client, "usuario", None) or settings.usuario
 
     def abrir_fila(self) -> str:
         response = self.client.post(
@@ -58,7 +63,9 @@ class OP156Queue:
             if opcao_contains not in opcao:
                 continue
 
-            if settings.usuario.lower() not in usuario.lower():
+            usuario_ref = self.usuario_atual()
+
+            if usuario_ref and usuario_ref.lower() not in usuario.lower():
                 continue
 
             if unidade and unidade_job.upper() != unidade.upper():
@@ -83,9 +90,12 @@ class OP156Queue:
         unidade: str | None = None,
         timeout_seconds: int = 300,
         intervalo: float = 5,
+        ignorar_ids: set[str] | None = None,
     ) -> str:
         deadline = time.time() + timeout_seconds
         tentativa = 0
+
+        ignorar_ids = ignorar_ids or set()
 
         while time.time() < deadline:
             tentativa += 1
@@ -100,14 +110,19 @@ class OP156Queue:
             if tentativa == 1 or tentativa % 5 == 0:
                 print(f"[OP156] Aguardando {opcao_contains}... tentativa={tentativa}")
 
-            if jobs:
-                job = jobs[0]
+            for job in jobs:
+                if job["download_id"] in ignorar_ids:
+                    continue
+
                 situacao = job["situacao"].lower()
                 acao = job["acao"].lower()
 
                 if "conclu" in situacao and "baixar" in acao:
                     print(f"[OP156] Relatório pronto para download: {job['download_id']}")
                     return job["download_id"]
+
+                if "conclu" in situacao and "nenhum registro" in acao:
+                    raise RelatorioSemDados(f"{opcao_contains}: nenhum registro encontrado.")
 
             time.sleep(intervalo)
 
@@ -181,12 +196,14 @@ class OP156Queue:
         unidade: str | None = None,
         timeout_seconds: int = 300,
         intervalo: float = 5,
+        ignorar_ids: set[str] | None = None,
     ) -> Path:
         download_id = self.aguardar_download_id(
             opcao_contains=opcao_contains,
             unidade=unidade,
             timeout_seconds=timeout_seconds,
             intervalo=intervalo,
+            ignorar_ids=ignorar_ids,
         )
 
         return self.baixar_arquivo(
@@ -201,6 +218,7 @@ class OP156Queue:
         unidade: str | None = None,
         timeout_seconds: int = 300,
         intervalo: float = 5,
+        ignorar_ids: set[str] | None = None,
     ) -> Path:
         """
         Atalho para aguardar um relatório da OP156 e realizar o download.
@@ -215,4 +233,5 @@ class OP156Queue:
             unidade=unidade,
             timeout_seconds=timeout_seconds,
             intervalo=intervalo,
+            ignorar_ids=ignorar_ids,
         )

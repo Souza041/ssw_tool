@@ -7,6 +7,8 @@ from operations.op930.parser import tratar_op930
 from operations.op930.report import OP930Report
 from ssw.client import SSWClient
 
+from operations.op156.queue import RelatorioSemDados
+
 
 def executar_incidentes_op930(
     client: SSWClient,
@@ -62,6 +64,24 @@ def executar_incidentes_op930(
                     grupo=grupo,
                     timeout_seconds=timeout_seconds,
                 )
+
+            except RelatorioSemDados:
+                log(f"{grupo}: nenhum relatório encontrado.")
+
+                if job:
+                    from web.jobs import set_progress
+                    set_progress(job, atual, total)
+
+                continue
+
+            except Exception as exc:
+                log(f"{grupo}: relatório não gerado ou falhou. Erro: {exc}")
+
+                if job:
+                    from web.jobs import set_progress
+                    set_progress(job, atual, total)
+
+                continue
 
             except TimeoutError:
                 log(f"{grupo}: nenhum relatório encontrado.")
