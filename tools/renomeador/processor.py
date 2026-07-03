@@ -3,6 +3,8 @@ import cv2
 import pytesseract
 from pathlib import Path
 
+import numpy as np
+
 import platform
 
 if platform.system() == "Windows":
@@ -15,21 +17,41 @@ def limpar_nf(valor):
 
 
 def preprocess(img):
+    if img is None or img.size == 0:
+        return None
+
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gray = cv2.resize(gray, None, fx=2.5, fy=2.5)
+    gray = cv2.resize(gray, None, fx=2.0, fy=2.0)
     gray = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)[1]
     return gray
 
 
 def ocr(img, numeros=False):
+    if img is None or img.size == 0:
+        return ""
+
+    imagem = preprocess(img)
+
+    if imagem is None:
+        return ""
+
     config = "--psm 6"
+
     if numeros:
         config += " -c tessedit_char_whitelist=0123456789"
 
-    return pytesseract.image_to_string(preprocess(img), config=config)
+    try:
+        return pytesseract.image_to_string(imagem, config=config)
+    except Exception as e:
+        print(f"OCR: {e}")
+        return ""
 
 
 def rotacoes(img):
+
+    if img is None or img.size == 0:
+        return []
+    
     return [
         ("normal", img),
         ("90_direita", cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)),
@@ -39,6 +61,10 @@ def rotacoes(img):
 
 
 def detectar_qrcode(img):
+
+    if img is None or img.size == 0:
+       return None
+
     detector = cv2.QRCodeDetector()
     data, points, _ = detector.detectAndDecode(img)
 
@@ -65,6 +91,10 @@ def extrair_dacte_chave_nfe(img):
         ]
 
         for crop in crops:
+
+            if crop is None or crop.size == 0:
+                continue
+
             texto = ocr(crop, numeros=False).upper()
 
             match = re.search(
@@ -113,6 +143,10 @@ def extrair_canhoto_por_qr(img):
 
         for cx1, cy1, cx2, cy2 in candidatos:
             crop = r[cy1:cy2, cx1:cx2]
+
+            if crop is None or crop.size == 0:
+                continue
+            
             texto = ocr(crop, numeros=False)
             nums = re.sub(r"\D", "", texto)
 
@@ -139,6 +173,9 @@ def extrair_canhoto_fallback_lateral(img):
         ]
 
         for crop in crops:
+            if crop is None or crop.size == 0:
+                continue
+
             texto = ocr(crop, numeros=False)
             nums = re.sub(r"\D", "", texto)
 
@@ -154,7 +191,10 @@ def extrair_canhoto_fallback_lateral(img):
 
 
 def extrair_nf_da_imagem(caminho: Path):
-    img = cv2.imread(str(caminho))
+    img = cv2.imdecode(
+        np.fromfile(str(caminho), dtype=np.uint8),
+        cv2.IMREAD_COLOR,
+    )
 
     if img is None:
         return None, "imagem inválida"
