@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard de Nível de Serviço • Rodobras</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/remixicon@4.6.0/fonts/remixicon.css" rel="stylesheet">
+  <link rel="stylesheet" href="/metricas-static/dashboard.css">
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="titlewrap">
+      <div class="brand-box">R</div>
+      <div>
+        <h1>Dashboard de Nível de Serviço</h1>
+        <p id="screenSubtitle">Análise • Entregas</p>
+      </div>
+    </div>
+
+    <div class="top-actions">
+      <span class="status-pill" id="recCount">
+        <span class="dot"></span> Carregando...
+      </span>
+
+      <button class="btn" id="btn-refresh" onclick="atualizarMetricas()">
+        Atualizar agora
+      </button>
+    </div>
+  </div>
+
+  <main class="container">
+
+    <section class="filters">
+      <div class="filter-group">
+        <label>Ano</label>
+        <select id="fAno"><option value="">Todos</option></select>
+      </div>
+
+      <div class="filter-group">
+        <label>Mês</label>
+        <select id="fMes"><option value="">Todos</option></select>
+      </div>
+
+      <div class="filter-group">
+        <label>UF</label>
+        <select id="fUf"><option value="">Todas</option></select>
+      </div>
+
+      <div class="filter-group">
+        <label>Cliente</label>
+        <select id="fCliente"><option value="">Todos</option></select>
+      </div>
+
+      <div class="filter-group">
+        <label>Unidade</label>
+        <select id="fUnidade"><option value="">Todas</option></select>
+      </div>
+
+      <div class="filter-group">
+        <label>Ocorrência</label>
+        <select id="fOcorrencia"><option value="">Todas</option></select>
+      </div>
+
+      <div class="filter-group clear">
+        <label>&nbsp;</label>
+        <button id="clearFiltersBtn" class="btn-clear">Limpar</button>
+      </div>
+    </section>
+
+    <section class="tabs">
+      <button class="tab-btn active" data-tab="entregas">Entregas</button>
+      <button class="tab-btn" data-tab="parceiros">Parceiros</button>
+    </section>
+
+    <div class="tab-content active" id="tab-entregas">
+
+    <section class="cards">
+
+      <div class="card">
+        <div class="card-title">Nível de Serviço</div>
+        <div class="gauge-wrap">
+          <canvas id="gaugeChart"></canvas>
+          <div class="gauge-text">
+            <div class="pct" id="gaugePct">0%</div>
+            <div class="lbl">No prazo</div>
+          </div>
+        </div>
+        <div class="gauge-meta">
+          <span class="meta-pill">Meta: 97%</span>
+          <span class="meta-status" id="gaugeMetaStatus">—</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          Total de Entregas
+          <span class="title-right" id="kTotalTitle">0</span>
+        </div>
+
+        <div class="sub">
+          <div class="line"><span>Entregue</span><span><b id="kEntregue">0</b> <em id="kEntreguePct">0%</em></span></div>
+          <div class="line warn"><span>Em aberto</span><span><b id="kAberto">0</b> <em id="kAbertoPct">0%</em></span></div>
+          <div class="line good"><span>No prazo</span><span><b id="kPrazo">0</b> <em id="kPrazoPct">0%</em></span></div>
+          <div class="line accent"><span>Antecipadas</span><span><b id="kAntecip">0</b> <em id="kAntecipPct">0%</em></span></div>
+          <div class="line bad"><span>Atrasado</span><span><b id="kAtraso">0</b> <em id="kAtrasoPct">0%</em></span></div>
+          <div class="line justified"><span>Justificado</span><span><b id="kJustificado">0</b> <em id="kJustificadoPct">0%</em></span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Procedimentos</div>
+        <div class="gauge-wrap gauge-mini">
+          <canvas id="gaugeMobile"></canvas>
+          <div class="gauge-text">
+            <div class="pct" id="gaugeMobilePct">0%</div>
+            <div class="lbl">Baixa Mobile</div>
+          </div>
+        </div>
+        <div class="sub">
+          <div class="line"><span>Com Romaneio</span><span><b id="kRomaneioVal">0</b> <em id="kRomaneioPct">0%</em></span></div>
+          <div class="line"><span>Ocorrência 73</span><span><b id="kOcorr73">0</b> <em id="kOcorr73Pct">0%</em></span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Clientes com Mais Entregas</div>
+        <div class="sub" id="kCliTop5"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          UF com Mais Entregas
+          <span class="title-right" id="kUfTitle">—</span>
+        </div>
+        <div class="sub" id="kUfResumo"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Unidades com Mais Entregas</div>
+        <div class="sub" id="kUniTop5"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          Previsão de Entrega
+          <span class="title-right" id="kPrevTitle">0</span>
+        </div>
+        <div class="sub">
+          <div class="line prev-today"><span>Hoje <small id="kPrevDate0"></small></span><b id="kPrev0">0</b></div>
+          <div class="line prev"><span>Amanhã <small id="kPrevDate1"></small></span><b id="kPrev1">0</b></div>
+          <div class="line prev"><span>Depois de amanhã <small id="kPrevDate2"></small></span><b id="kPrev2">0</b></div>
+          <div class="line prev"><span>+3 dias <small id="kPrevDate3"></small></span><b id="kPrev3">0</b></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          Entregas em Aberto por Dias
+          <span class="title-right" id="kAgingTitle">0</span>
+        </div>
+        <div class="sub" id="kAgingResumo"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Volumes • Cubagem • Peso</div>
+        <div class="sub">
+          <div class="line"><span>Volumes</span><b id="kVol">0</b></div>
+          <div class="line"><span>Cubagem m³</span><b id="kCub">0</b></div>
+          <div class="line"><span>Peso</span><b id="kFre">0 t</b></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          Total de Emissão
+          <span class="title-right" id="kEmissaoTotal">0</span>
+        </div>
+        <div class="sub" id="kEmissaoBreak"></div>
+        <div class="sub extra-line">
+          <div class="line"><span>Unid. com mais emissão</span><b id="kEmissaoUni">—</b></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Top 5 UFs (mais entregas)</div>
+        <div class="sub" id="kTop5UfsBody"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          Tempo de Baixa
+          <span class="title-right" id="kBaixaTitle">0</span>
+        </div>
+        <div class="sub" id="kTempoBaixaBody"></div>
+      </div>
+    </section>
+
+    <section class="cards hq-cards">
+      <div class="card">
+        <div class="card-title">
+          Agendamento
+          <span class="title-right" id="kAgendTitle">0</span>
+        </div>
+        <div class="sub" id="kAgendBody"></div>
+      </div>
+      
+      <div class="card hq-card" id="hqCardCWB">
+        <div class="card-title">CWB <span class="title-right" id="hqCWBns">—</span></div>
+        <div class="sub" id="hqCWBrows"></div>
+      </div>
+
+      <div class="card hq-card" id="hqCardJOI">
+        <div class="card-title">JOI <span class="title-right" id="hqJOIns">—</span></div>
+        <div class="sub" id="hqJOIrows"></div>
+      </div>
+
+      <div class="card hq-card" id="hqCardPOA">
+        <div class="card-title">POA <span class="title-right" id="hqPOAns">—</span></div>
+        <div class="sub" id="hqPOArows"></div>
+      </div>
+    </section>
+
+    <section class="grid-1">
+      <div class="panel">
+        <h3>Ocorrência 73 por Dia</h3>
+        <div class="chart-wrap wide"><canvas id="chartOcorr73Dia"></canvas></div>
+      </div>
+    </section>
+
+    <section class="grid-1">
+      <div class="panel">
+        <h3>Nível de Serviço Mensal</h3>
+        <div class="chart-wrap wide"><canvas id="chartNivelMensal"></canvas></div>
+      </div>
+    </section>
+
+    <section class="grid-1">
+      <div class="panel">
+        <h3>Emissão x Entrega por Dia</h3>
+        <div class="chart-wrap wide"><canvas id="chartDia"></canvas></div>
+      </div>
+    </section>
+
+    <section class="grid-1">
+      <div class="panel">
+        <h3>Unidades</h3>
+        <div class="chart-wrap xtall"><canvas id="chartUnidade"></canvas></div>
+      </div>
+    </section>
+
+    <section class="grid-2">
+      <div class="panel">
+        <h3>Entregas no Prazo por UF</h3>
+        <div class="chart-wrap xtall"><canvas id="chartUf"></canvas></div>
+      </div>
+
+      <div class="panel">
+        <h3>Entregas no Prazo por Cliente</h3>
+        <div class="chart-wrap xtall"><canvas id="chartCliente"></canvas></div>
+      </div>
+    </section>
+
+    <section class="grid-2">
+      <div class="panel">
+        <h3>Top 10 Usuários com Mais Emissão</h3>
+        <ol class="ranklist" id="topUsuariosEmissao"></ol>
+      </div>
+
+      <div class="panel">
+        <h3>Ocorrências</h3>
+        <ol class="ranklist" id="topOcorrencias"></ol>
+      </div>
+    </section>
+
+    <section class="grid-2">
+      <div class="panel">
+        <h3>Unidades com CTRC em Aberto</h3>
+        <ol class="ranklist scroll-list" id="topCtrcAberto"></ol>
+      </div>
+
+      <div class="panel">
+        <h3>Unidades com Atraso</h3>
+        <ol class="ranklist scroll-list" id="topCtrcEntregue"></ol>
+      </div>
+    </section>
+
+    </div>
+
+    <div class="tab-content" id="tab-parceiros">
+      <section class="section-title">
+        <h2>Parceiros</h2>
+        <p>Resumo operacional por UF, parceiro e cidade de atendimento.</p>
+      </section>
+
+      <section class="parceiros-grid">
+        <div class="card parceiro-uf-card pr">
+          <div class="card-title">PR <span class="title-right" id="parcPRns">—</span></div>
+          <div class="sub" id="parcPRrows"></div>
+        </div>
+
+        <div class="card parceiro-uf-card sc">
+          <div class="card-title">SC <span class="title-right" id="parcSCns">—</span></div>
+          <div class="sub" id="parcSCrows"></div>
+        </div>
+
+        <div class="card parceiro-uf-card rs">
+          <div class="card-title">RS <span class="title-right" id="parcRSns">—</span></div>
+          <div class="sub" id="parcRSrows"></div>
+        </div>
+      </section>
+
+      <section class="grid-2">
+        <div class="panel">
+          <h3>Unidades Parceiras</h3>
+          <ol class="ranklist scroll-list" id="rankingParceiros"></ol>
+        </div>
+
+        <div class="panel">
+          <h3>Cidades Parceiras</h3>
+          <ol class="ranklist scroll-list" id="rankingCidadesParceiras"></ol>
+        </div>
+      </section>
+
+      <section class="grid-1">
+        <div class="panel">
+          <h3>Tabela de Parceiros</h3>
+
+          <div class="table-wrap">
+            <table class="parceiros-table">
+              <thead>
+                <tr>
+                  <th>UF</th>
+                  <th>Parceiro</th>
+                  <th>Cidade</th>
+                  <th>Total</th>
+                  <th>Entregue</th>
+                  <th>Aberto</th>
+                  <th>Atrasado</th>
+                  <th>Ocorr. 73</th>
+                  <th>Mobile</th>
+                  <th>Nível</th>
+                </tr>
+              </thead>
+              <tbody id="tabelaParceirosBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+
+  </main>
+
+  <footer class="app-footer">
+    <p>Rodobras Transportes Rodoviários Ltda</p>
+    <small>Desenvolvido por <strong>T.I Rodobras</strong></small>
+  </footer>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="/metricas-static/dashboard.js"></script>
+</body>
+</html>
