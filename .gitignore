@@ -17,3 +17,6 @@ logs/
 
 .DS_Store
 Thumbs.db
+
+modules/metricas/snapshots/*
+downloads/*
