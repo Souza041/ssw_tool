@@ -137,7 +137,15 @@ function populateFilters() {
   optionize("fCliente", unique("cliente"), "Todos");
   optionize("fUnidade", unique("unidadeReceptora"), "Todas");
   optionize("fOcorrencia", unique("ocorrencia"), "Todas");
-  optionize("fOperacao", unique("operacao"), "Todas");
+  const operacoes = [...new Set(RAW.map(x => nomeOperacao(x.operacao)).filter(Boolean))];
+
+  const ordemOperacoes = ["COMPLEMENTAR", "CORTESIA", "NORMAL", "REVERSA"];
+
+  optionize(
+    "fOperacao",
+    ordemOperacoes.filter(op => operacoes.includes(op)),
+    "Todas"
+  );
 }
 
 function applyFilters() {
@@ -156,7 +164,7 @@ function applyFilters() {
     if (cliente && x.cliente !== cliente) return false;
     if (unidade && x.unidadeReceptora !== unidade) return false;
     if (ocorrencia && x.ocorrencia !== ocorrencia) return false;
-    if (operacao && x.operacao !== operacao) return false;
+    if (operacao && nomeOperacao(x.operacao) !== operacao) return false;
     return true;
   });
 
@@ -599,7 +607,11 @@ function renderRankings() {
 }
 
 function renderTotalEmissao() {
-  const rows = topRanking("operacao", 10);
+  const dataOperacao = DATA.map(x => ({
+    ...x,
+    operacaoNome: nomeOperacao(x.operacao)
+  }));
+  const rows = topRanking("operacaoNome", 10, dataOperacao);
   const total = DATA.length;
 
   $("kEmissaoTotal").textContent = fmt(total);
@@ -680,7 +692,7 @@ function renderTempoBaixa() {
 
 function renderAgendamento() {
   const agendados = DATA.filter(x => {
-    const op = String(x.operacao || "").toUpperCase();
+    const op = nomeOperacao(x.operacao);
     return op.includes("AGEND") || String(x.agendamento || "").trim();
   });
 
@@ -777,6 +789,23 @@ function cidadeParceiroKey(item) {
 
 function ufParceiroKey(item) {
   return item.ufParceiro || item.uf || "Não informado";
+}
+
+function nomeOperacao(valor) {
+  const v = String(valor || "").trim().toUpperCase();
+
+  const mapa = {
+    "CP": "COMPLEMENTAR",
+    "FP": "CORTESIA",
+    "FV": "NORMAL",
+    "FR": "REVERSA",
+    "COMPLEMENTAR": "COMPLEMENTAR",
+    "CORTESIA": "CORTESIA",
+    "NORMAL": "NORMAL",
+    "REVERSA": "REVERSA",
+  };
+
+  return mapa[v] || v || "Não informado";
 }
 
 function groupParceiros() {
