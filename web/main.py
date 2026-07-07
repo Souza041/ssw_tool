@@ -9,6 +9,8 @@ from starlette.middleware.sessions import SessionMiddleware
 from web.routes import router
 from modules.metricas.routes import router as metricas_router
 
+from modules.metricas.scheduler import iniciar_scheduler_metricas
+
 mimetypes.add_type("text/css", ".css")
 mimetypes.add_type("application/javascript", ".js")
 
@@ -36,3 +38,7 @@ app.mount(
 
 app.include_router(router)
 app.include_router(metricas_router)
+
+@app.on_event("startup")
+def startup_event():
+    iniciar_scheduler_metricas()
