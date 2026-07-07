@@ -100,4 +100,45 @@ class MetricasService:
             "created_at": snap["created_at"],
         }
 
+        def reduzir_item_metricas(item):
+            campos = [
+                "emissao",
+                "diaEmissao",
+                "previsao",
+                "entrega",
+                "status",
+                "prazo",
+                "diasAtraso",
+                "ocorrencia",
+                "ocorrenciaDescricao",
+                "ocorr73",
+                "cliente",
+                "uf",
+                "cidade",
+                "unidade",
+                "unidadeReceptora",
+                "usuario",
+                "romaneio",
+                "baixaMobile",
+                "h",
+                "i",
+                "l",
+                "operacao",
+                "frete",
+                "peso",
+                "cubagem",
+                "volumes",
+                "parceiro",
+                "cidParceiros",
+                "ufParceiro",
+                "endereco",
+            ]
+
+            return {campo: item.get(campo) for campo in campos}
+
+        payload["DATA"] = [
+            reduzir_item_metricas(item)
+            for item in payload.get("DATA", [])
+        ]
+
         return payload

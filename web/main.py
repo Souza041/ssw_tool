@@ -11,6 +11,8 @@ from modules.metricas.routes import router as metricas_router
 
 from modules.metricas.scheduler import iniciar_scheduler_metricas
 
+from starlette.middleware.gzip import GZipMiddleware
+
 mimetypes.add_type("text/css", ".css")
 mimetypes.add_type("application/javascript", ".js")
 
@@ -26,6 +28,11 @@ app.add_middleware(
     SessionMiddleware,
     secret_key="troque-essa-chave-depois",
     max_age=60 * 60 * 8,
+)
+
+app.add_middleware(
+    GZipMiddleware,
+    minimum_size=1000,
 )
 
 app.mount("/downloads", StaticFiles(directory=str(BASE_DIR / "downloads")), name="downloads")
