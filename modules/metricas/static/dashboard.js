@@ -795,19 +795,18 @@ function nomeOperacao(valor) {
   const v = String(valor || "").trim().toUpperCase();
 
   const mapa = {
-    "CP": "COMPLEMENTAR",
-    "FP": "CORTESIA",
-    "FV": "NORMAL",
-    "FR": "REVERSA",
-    "R": "REVERSA",
-    "REV": "REVERSA",
-    "DEVOLUCAO": "REVERSA",
-    "DEVOLUÇÃO": "REVERSA",
-
-    "COMPLEMENTAR": "COMPLEMENTAR",
-    "CORTESIA": "CORTESIA",
     "NORMAL": "NORMAL",
     "REVERSA": "REVERSA",
+    "CORTESIA": "CORTESIA",
+    "COMPLEMENTAR": "COMPLEMENTAR",
+
+    "N": "NORMAL",
+    "R": "REVERSA",
+    "C": "CORTESIA",
+    "CP": "COMPLEMENTAR",
+    "FV": "NORMAL",
+    "FP": "CORTESIA",
+    "FR": "REVERSA"
   };
 
   return mapa[v] || v || "Não informado";

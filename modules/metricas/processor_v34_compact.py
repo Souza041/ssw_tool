@@ -139,7 +139,7 @@ def montar_item_v34(row, cols):
         "romaneio": "SIM" if get(row, cols["canhoto"]) else "NÃO",
         "baixaMobile": baixa_mobile,
 
-        "operacao": get(row, cols["tipo_frete"]),
+        "operacao": get(row, cols["tipo_documento"]) or get(row, cols["tipo_frete"]),"operacao": get(row, cols["tipo_frete"]),
 
         "frete": to_float(get(row, cols["valor_frete"])),
         "fretePeso": to_float(get(row, cols["frete_peso"])),
@@ -188,6 +188,7 @@ def processar_op455_snapshot(file_path):
 
         "canhoto": find_col(df, ["Capa de Canhoto de NF"]),
         "tipo_baixa": find_col(df, ["Tipo de Baixa"]),
+        "tipo_documento": find_col(df, ["Tipo do Documento"]),
         "tipo_frete": find_col(df, ["Tipo do Frete"]),
 
         "valor_frete": find_col(df, ["Valor do Frete"]),
