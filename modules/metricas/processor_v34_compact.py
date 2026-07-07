@@ -139,7 +139,7 @@ def montar_item_v34(row, cols):
         "romaneio": "SIM" if get(row, cols["canhoto"]) else "NÃO",
         "baixaMobile": baixa_mobile,
 
-        "operacao": get(row, cols["tipo_documento"]) or get(row, cols["tipo_frete"]),"operacao": get(row, cols["tipo_frete"]),
+        "operacao": get(row, cols["tipo_documento"]) or get(row, cols["tipo_frete"]),
 
         "frete": to_float(get(row, cols["valor_frete"])),
         "fretePeso": to_float(get(row, cols["frete_peso"])),
