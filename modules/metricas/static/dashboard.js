@@ -799,6 +799,11 @@ function nomeOperacao(valor) {
     "FP": "CORTESIA",
     "FV": "NORMAL",
     "FR": "REVERSA",
+    "R": "REVERSA",
+    "REV": "REVERSA",
+    "DEVOLUCAO": "REVERSA",
+    "DEVOLUÇÃO": "REVERSA",
+
     "COMPLEMENTAR": "COMPLEMENTAR",
     "CORTESIA": "CORTESIA",
     "NORMAL": "NORMAL",
@@ -806,6 +811,38 @@ function nomeOperacao(valor) {
   };
 
   return mapa[v] || v || "Não informado";
+}
+
+function nomeCliente(valor) {
+  const v = String(valor || "").trim().toUpperCase();
+
+  if (!v) return "Não informado";
+
+  if (v.includes("WHP") && v.includes("PE")) {
+    return "WHP-PEÇAS";
+  }
+
+  if (
+    v.includes("WHIRLPOOL") ||
+    v.includes("WHIRPOOL") ||
+    v.includes("BUD") ||
+    v.includes("MLOG")
+  ) {
+    return "WHIRLPOOL";
+  }
+
+  if (
+    v.includes("ELECTROLUX") ||
+    v.includes("ELETROLUX")
+  ) {
+    return "ELETROLUX";
+  }
+
+  if (v.includes("PANASONIC")) {
+    return "PANASONIC";
+  }
+
+  return v;
 }
 
 function groupParceiros() {
@@ -1066,6 +1103,16 @@ async function carregarDados() {
     }
 
     RAW = payload.DATA || [];
+
+    RAW = RAW.map(x => ({
+      ...x,
+      clienteOriginal: x.cliente,
+      cliente: nomeCliente(x.cliente),
+      operacaoOriginal: x.operacao,
+      operacao: nomeOperacao(x.operacao),
+    }));
+
+    console.log("OPERAÇÕES BRUTAS:", [...new Set(RAW.map(x => x.operacao))]);
 
     window.DATA_COLETA = payload.DATA_COLETA || [];
     window.DATA_AVALIACAO = payload.DATA_AVALIACAO || [];
