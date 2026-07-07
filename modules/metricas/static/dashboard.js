@@ -792,24 +792,24 @@ function ufParceiroKey(item) {
 }
 
 function nomeOperacao(valor) {
-  const v = String(valor || "").trim().toUpperCase();
 
-  const mapa = {
-    "NORMAL": "NORMAL",
-    "REVERSA": "REVERSA",
-    "CORTESIA": "CORTESIA",
-    "COMPLEMENTAR": "COMPLEMENTAR",
+    const v = String(valor || "").trim().toUpperCase();
 
-    "N": "NORMAL",
-    "R": "REVERSA",
-    "C": "CORTESIA",
-    "CP": "COMPLEMENTAR",
-    "FV": "NORMAL",
-    "FP": "CORTESIA",
-    "FR": "REVERSA"
-  };
+    if (!v) return "Não informado";
 
-  return mapa[v] || v || "Não informado";
+    if (v.includes("COMPLEMENTAR"))
+        return "COMPLEMENTAR";
+
+    if (v.includes("CORTESIA"))
+        return "CORTESIA";
+
+    if (v.includes("REVERS"))
+        return "REVERSA";
+
+    if (v.includes("NORMAL"))
+        return "NORMAL";
+
+    return v;
 }
 
 function nomeCliente(valor) {
