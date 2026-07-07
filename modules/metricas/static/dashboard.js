@@ -1104,6 +1104,11 @@ async function carregarDados() {
 
     RAW = payload.DATA || [];
 
+    console.log(
+        "OPERAÇÕES ORIGINAIS:",
+        [...new Set(RAW.map(x => x.operacao))]
+    );
+
     RAW = RAW.map(x => ({
       ...x,
       clienteOriginal: x.cliente,
@@ -1112,7 +1117,10 @@ async function carregarDados() {
       operacao: nomeOperacao(x.operacao),
     }));
 
-    console.log("OPERAÇÕES BRUTAS:", [...new Set(RAW.map(x => x.operacao))]);
+    console.log(
+        "OPERAÇÕES TRATADAS:",
+        [...new Set(RAW.map(x => x.operacao))]
+    );
 
     window.DATA_COLETA = payload.DATA_COLETA || [];
     window.DATA_AVALIACAO = payload.DATA_AVALIACAO || [];
