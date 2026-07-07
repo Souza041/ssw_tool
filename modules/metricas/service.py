@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 from operations.op455.report import OP455Report
@@ -14,9 +15,17 @@ class MetricasService:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def criar_client_logado(self):
-        client = SSWClient()
+        client = SSWClient(
+            dominio=os.getenv("METRICAS_SSW_DOMINIO"),
+            cpf=os.getenv("METRICAS_SSW_CPF"),
+            usuario=os.getenv("METRICAS_SSW_USUARIO"),
+            senha=os.getenv("METRICAS_SSW_SENHA"),
+            unidade=os.getenv("METRICAS_SSW_UNIDADE", "MTZ"),
+        )
+
         client.login()
         client.open_menu()
+
         return client
 
     def atualizar_op455(self, triggered_by="manual", triggered_user_id=None, dias=7):

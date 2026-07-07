@@ -117,7 +117,7 @@ class OP455Report:
         hoje = datetime.now()
         inicio = hoje - timedelta(days=dias_periodo)
 
-        self.open(unidade="MTZ")
+        self.open(unidade=self.client.unidade)
         html = self.gerar_relatorio(inicio, hoje)
 
         if "Informe a unidade" in html:
@@ -136,7 +136,7 @@ class OP455Report:
         return fila.baixar_por_opcao(
             output_dir=output_dir,
             opcao="455 - Fretes Expedidos/Recebidos - CTRCs",
-            unidade="MTZ",
+            unidade=self.client.unidade,
             timeout_seconds=timeout_seconds,
             intervalo=5,
         )
