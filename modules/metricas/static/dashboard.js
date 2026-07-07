@@ -137,13 +137,10 @@ function populateFilters() {
   optionize("fCliente", unique("cliente"), "Todos");
   optionize("fUnidade", unique("unidadeReceptora"), "Todas");
   optionize("fOcorrencia", unique("ocorrencia"), "Todas");
-  const operacoes = [...new Set(RAW.map(x => nomeOperacao(x.operacao)).filter(Boolean))];
-
-  const ordemOperacoes = ["COMPLEMENTAR", "CORTESIA", "NORMAL", "REVERSA"];
 
   optionize(
     "fOperacao",
-    ordemOperacoes.filter(op => operacoes.includes(op)),
+    ["COMPLEMENTAR", "CORTESIA", "NORMAL", "REVERSA", "OUTROS"],
     "Todas"
   );
 }
@@ -607,11 +604,7 @@ function renderRankings() {
 }
 
 function renderTotalEmissao() {
-  const dataOperacao = DATA.map(x => ({
-    ...x,
-    operacaoNome: nomeOperacao(x.operacao)
-  }));
-  const rows = topRanking("operacaoNome", 10, dataOperacao);
+  const rows = topRanking("operacaoNome", 10);
   const total = DATA.length;
 
   $("kEmissaoTotal").textContent = fmt(total);
@@ -792,24 +785,17 @@ function ufParceiroKey(item) {
 }
 
 function nomeOperacao(valor) {
+  const v = String(valor || "").trim().toUpperCase();
 
-    const v = String(valor || "").trim().toUpperCase();
+  if (!v) return "Não informado";
 
-    if (!v) return "Não informado";
+  if (v.includes("COMPLEMENTAR")) return "COMPLEMENTAR";
+  if (v.includes("CORTESIA")) return "CORTESIA";
+  if (v.includes("DEVOLUCAO") || v.includes("DEVOLUÇÃO")) return "REVERSA";
+  if (v.includes("REVERSA")) return "REVERSA";
+  if (v.includes("NORMAL")) return "NORMAL";
 
-    if (v.includes("COMPLEMENTAR"))
-        return "COMPLEMENTAR";
-
-    if (v.includes("CORTESIA"))
-        return "CORTESIA";
-
-    if (v.includes("REVERS"))
-        return "REVERSA";
-
-    if (v.includes("NORMAL"))
-        return "NORMAL";
-
-    return v;
+  return "OUTROS";
 }
 
 function nomeCliente(valor) {

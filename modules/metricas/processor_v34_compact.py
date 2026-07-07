@@ -212,12 +212,12 @@ def processar_op455_snapshot(file_path):
     else:
         print("Coluna 'tipo_baixa' não encontrada.")
 
-    print("AMOSTRA TIPO DO FRETE:")
-    col_tipo_frete = cols.get("tipo_frete")
-    if col_tipo_frete:
-        print(df[col_tipo_frete].dropna().astype(str).str.strip().value_counts().head(20))
+    print("AMOSTRA TIPO DO DOCUMENTO:")
+    col_tipo_documento = cols.get("tipo_documento")
+    if col_tipo_documento:
+        print(df[col_tipo_documento].dropna().astype(str).str.strip().value_counts().head(20))
     else:
-        print("Coluna 'tipo_frete' não encontrada.")
+        print("Coluna 'tipo_documento' não encontrada.")
     
     print("Colunas COM POSSÍVEL MOBILE/ROMANEIO/BAIXA:")
     for col in df.columns:
