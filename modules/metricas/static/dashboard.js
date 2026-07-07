@@ -109,7 +109,7 @@ function unique(field) {
 }
 
 function bindFilters() {
-  ["fAno", "fMes", "fUf", "fCliente", "fUnidade", "fOcorrencia"].forEach(id => {
+  ["fAno", "fMes", "fUf", "fCliente", "fUnidade", "fOcorrencia", "fOperacao"].forEach(id => {
     const el = $(id);
     if (el) el.addEventListener("change", applyFilters);
   });
@@ -117,7 +117,7 @@ function bindFilters() {
   const clear = $("clearFiltersBtn");
   if (clear) {
     clear.addEventListener("click", () => {
-      ["fAno", "fMes", "fUf", "fCliente", "fUnidade", "fOcorrencia"].forEach(id => {
+      ["fAno", "fMes", "fUf", "fCliente", "fUnidade", "fOcorrencia", "fOperacao"].forEach(id => {
         if ($(id)) $(id).value = "";
       });
       applyFilters();
@@ -137,6 +137,7 @@ function populateFilters() {
   optionize("fCliente", unique("cliente"), "Todos");
   optionize("fUnidade", unique("unidadeReceptora"), "Todas");
   optionize("fOcorrencia", unique("ocorrencia"), "Todas");
+  optionize("fOperacao", unique("operacao"), "Todas");
 }
 
 function applyFilters() {
@@ -146,6 +147,7 @@ function applyFilters() {
   const cliente = $("fCliente")?.value || "";
   const unidade = $("fUnidade")?.value || "";
   const ocorrencia = $("fOcorrencia")?.value || "";
+  const operacao = $("fOperacao")?.value || "";
 
   DATA = RAW.filter(x => {
     if (ano && x._ano !== ano) return false;
@@ -154,6 +156,7 @@ function applyFilters() {
     if (cliente && x.cliente !== cliente) return false;
     if (unidade && x.unidadeReceptora !== unidade) return false;
     if (ocorrencia && x.ocorrencia !== ocorrencia) return false;
+    if (operacao && x.operacao !== operacao) return false;
     return true;
   });
 
