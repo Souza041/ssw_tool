@@ -252,6 +252,13 @@ function kpis() {
   const entregues = DATA.filter(x => x.status === "Entregue");
   const baixaBase = entregues.filter(hasBaixaInfo).length;
   const baixaMobile = entregues.filter(isMobile).length;
+  const isComplementar =
+    DATA.length > 0 &&
+    DATA.every(x => nomeOperacao(x.operacao) === "COMPLEMENTAR");
+
+  const nivelServico = isComplementar
+    ? 100
+    : pctNum(prazo + antecipado + justificado, entregue);
 
   return {
     total,
@@ -264,7 +271,7 @@ function kpis() {
     ocorr73,
     romaneio,
     baixaMobile,
-    nivelServico: pctNum(prazo + antecipado + justificado, entregue),
+    nivelServico,
     pctMobile: pctNum(baixaMobile, baixaBase),
     pctRomaneio: pctNum(romaneio, entregue)
   };
