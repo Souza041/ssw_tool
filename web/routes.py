@@ -4,7 +4,7 @@ import time
 import uuid
 import shutil
 
-from tools.renomeador.service import processar_renomeador
+from tools.renomeador.service import processar_carrier_lg
 
 from pathlib import Path
 
@@ -740,12 +740,15 @@ def renomeador_form(request: Request):
 async def renomeador_run(
     request: Request,
     arquivos: list[UploadFile] = File(...),
+    base_csv: UploadFile = File(...),
+    email: str = Form("suporte.ti@rodobrastransp.com.br"),
+    observacao: str = Form(""),
 ):
     job = criar_job()
     add_log(job, "Job criado.")
-    add_log(job, "Iniciando renomeador de notas.")
+    add_log(job, "Iniciando Carrier LG.")
 
-    base_dir = Path("temp") / f"renomeador_{uuid.uuid4().hex}"
+    base_dir = Path("temp") / f"carrier_lg_{uuid.uuid4().hex}"
     input_dir = base_dir / "input"
     output_dir = base_dir / "output"
 
@@ -753,20 +756,29 @@ async def renomeador_run(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for arquivo in arquivos:
-        destino = input_dir / arquivo.filename
+        nome_seguro = Path(arquivo.filename).name
+        destino = input_dir / nome_seguro
 
         with destino.open("wb") as f:
             f.write(await arquivo.read())
 
-    zip_path = Path("downloads") / f"renomeador_notas_{job.id}.zip"
+    base_csv_path = base_dir / Path(base_csv.filename).name
+
+    with base_csv_path.open("wb") as f:
+        f.write(await base_csv.read())
+
+    zip_path = Path("downloads") / f"carrier_lg_{job.id}.zip"
 
     executar_job(
         job,
-        executar_renomeador_job,
+        executar_carrier_lg_job,
         input_dir,
+        base_csv_path,
         output_dir,
         zip_path,
         base_dir,
+        email,
+        observacao,
     )
 
     return RedirectResponse(
@@ -775,25 +787,31 @@ async def renomeador_run(
     )
 
 
-def executar_renomeador_job(
+def executar_carrier_lg_job(
     job,
     input_dir: Path,
+    base_csv_path: Path,
     output_dir: Path,
     zip_path: Path,
     base_dir: Path,
+    email: str,
+    observacao: str,
 ) -> list[dict]:
     try:
-        arquivo_zip = processar_renomeador(
+        arquivo_zip = processar_carrier_lg(
             input_dir=input_dir,
+            base_csv=base_csv_path,
             output_dir=output_dir,
             zip_path=zip_path,
+            email=email,
+            observacao=observacao,
             job=job,
         )
 
         arquivos = [{
             "name": arquivo_zip.name,
             "url": f"/downloads/{arquivo_zip.name}",
-            "periodo": "Renomeador de Notas",
+            "periodo": "Carrier LG",
         }]
 
         job.result_files = arquivos
@@ -802,36 +820,6 @@ def executar_renomeador_job(
     finally:
         if base_dir.exists():
             shutil.rmtree(base_dir, ignore_errors=True)
-
-def executar_incidentes_op930_job(
-    job,
-    client: SSWClient,
-    data_inicial: str,
-    data_final: str,
-    timeout: int,
-) -> list[dict]:
-    add_log(job, "Sessão SSW carregada.")
-    add_log(job, "Iniciando fluxo de Incidentes OP930.")
-
-    arquivo_saida = executar_incidentes_op930(
-        client=client,
-        data_inicial=data_inicial,
-        data_final=data_final,
-        output_dir=Path("downloads"),
-        timeout_seconds=timeout,
-        job=job,
-    )
-
-    add_log(job, f"Base consolidada gerada: {arquivo_saida.name}")
-
-    arquivos = [{
-        "name": arquivo_saida.name,
-        "url": f"/downloads/op930/consolidado/{arquivo_saida.name}",
-        "periodo": f"Incidentes OP930 - {data_inicial} até {data_final}",
-    }]
-
-    job.result_files = arquivos
-    return arquivos
 
 @router.get("/incidentes-op930", response_class=HTMLResponse)
 def incidentes_op930_form(request: Request):

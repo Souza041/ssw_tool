@@ -1,18 +1,17 @@
 import re
 import cv2
+import numpy as np
+import platform
 import pytesseract
 from pathlib import Path
-
-import numpy as np
-
-import platform
+from datetime import datetime
 
 if platform.system() == "Windows":
     pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 
 def limpar_nf(valor):
-    valor = re.sub(r"\D", "", valor).lstrip("0")
+    valor = re.sub(r"\D", "", str(valor)).lstrip("0")
     return valor if valor else None
 
 
@@ -31,27 +30,31 @@ def ocr(img, numeros=False):
         return ""
 
     imagem = preprocess(img)
-
     if imagem is None:
         return ""
 
     config = "--psm 6"
-
     if numeros:
-        config += " -c tessedit_char_whitelist=0123456789"
+        config += " -c tessedit_char_whitelist=0123456789/"
 
     try:
         return pytesseract.image_to_string(imagem, config=config)
-    except Exception as e:
-        print(f"OCR: {e}")
+    except Exception:
         return ""
 
 
-def rotacoes(img):
+def carregar_imagem(caminho: Path):
+    try:
+        dados = np.fromfile(str(caminho), dtype=np.uint8)
+        return cv2.imdecode(dados, cv2.IMREAD_COLOR)
+    except Exception:
+        return None
 
+
+def rotacoes(img):
     if img is None or img.size == 0:
         return []
-    
+
     return [
         ("normal", img),
         ("90_direita", cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)),
@@ -61,9 +64,8 @@ def rotacoes(img):
 
 
 def detectar_qrcode(img):
-
     if img is None or img.size == 0:
-       return None
+        return None
 
     detector = cv2.QRCodeDetector()
     data, points, _ = detector.detectAndDecode(img)
@@ -72,12 +74,12 @@ def detectar_qrcode(img):
         return None
 
     pts = points[0].astype(int)
-    x = min(p[0] for p in pts)
-    y = min(p[1] for p in pts)
-    x2 = max(p[0] for p in pts)
-    y2 = max(p[1] for p in pts)
-
-    return x, y, x2, y2
+    return (
+        min(p[0] for p in pts),
+        min(p[1] for p in pts),
+        max(p[0] for p in pts),
+        max(p[1] for p in pts),
+    )
 
 
 def extrair_dacte_chave_nfe(img):
@@ -91,16 +93,15 @@ def extrair_dacte_chave_nfe(img):
         ]
 
         for crop in crops:
-
             if crop is None or crop.size == 0:
                 continue
 
-            texto = ocr(crop, numeros=False).upper()
+            texto = ocr(crop).upper()
 
             match = re.search(
                 r"NF[\s\-]*E\s*[:\-]?\s*([0-9\s\.\-]{44,90})",
                 texto,
-                re.DOTALL
+                re.DOTALL,
             )
 
             if not match:
@@ -114,8 +115,7 @@ def extrair_dacte_chave_nfe(img):
                 if chave[20:22] != "55":
                     continue
 
-                numero_nf = chave[25:34]
-                nf = limpar_nf(numero_nf)
+                nf = limpar_nf(chave[25:34])
 
                 if nf and 5 <= len(nf) <= 7:
                     return nf, f"DACTE chave NF-e {nome_rot}"
@@ -146,15 +146,12 @@ def extrair_canhoto_por_qr(img):
 
             if crop is None or crop.size == 0:
                 continue
-            
-            texto = ocr(crop, numeros=False)
-            nums = re.sub(r"\D", "", texto)
 
+            nums = re.sub(r"\D", "", ocr(crop))
             matches = re.findall(r"000\d{6}", nums)
 
             for m in matches:
                 nf = limpar_nf(m)
-
                 if nf and len(nf) == 6:
                     return nf, f"canhoto QR {nome_rot}"
 
@@ -176,39 +173,84 @@ def extrair_canhoto_fallback_lateral(img):
             if crop is None or crop.size == 0:
                 continue
 
-            texto = ocr(crop, numeros=False)
-            nums = re.sub(r"\D", "", texto)
-
+            nums = re.sub(r"\D", "", ocr(crop))
             matches = re.findall(r"000\d{6}", nums)
 
             for m in matches:
                 nf = limpar_nf(m)
-
                 if nf and len(nf) == 6:
                     return nf, f"fallback lateral {nome_rot}"
 
     return None, None
 
 
+def normalizar_data(valor):
+    valor = valor.strip().replace("-", "/").replace(".", "/")
+
+    match = re.search(r"(\d{1,2})/(\d{1,2})/(\d{2,4})", valor)
+    if not match:
+        return None
+
+    dia, mes, ano = match.groups()
+
+    dia = int(dia)
+    mes = int(mes)
+    ano = int(ano)
+
+    if ano < 100:
+        ano += 2000
+
+    try:
+        return datetime(ano, mes, dia)
+    except ValueError:
+        return None
+
+
+def extrair_data_assinatura(img):
+    textos = []
+
+    for nome_rot, r in rotacoes(img):
+        h, w = r.shape[:2]
+
+        crops = [
+            r[:, 0:int(w * 0.45)],
+            r[int(h * 0.45):h, 0:int(w * 0.55)],
+            r[0:int(h * 0.45), 0:int(w * 0.55)],
+            r[int(h * 0.60):h, int(w * 0.30):int(w * 0.75)],
+        ]
+
+        for crop in crops:
+            if crop is None or crop.size == 0:
+                continue
+            textos.append(ocr(crop))
+
+    texto_total = "\n".join(textos)
+
+    matches = re.findall(r"\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}", texto_total)
+
+    for item in matches:
+        data = normalizar_data(item)
+        if data:
+            return data
+
+    return None
+
+
 def extrair_nf_da_imagem(caminho: Path):
-    img = cv2.imdecode(
-        np.fromfile(str(caminho), dtype=np.uint8),
-        cv2.IMREAD_COLOR,
-    )
+    img = carregar_imagem(caminho)
 
     if img is None:
-        return None, "imagem inválida"
+        return None, None, "imagem inválida"
 
     nf, metodo = extrair_dacte_chave_nfe(img)
-    if nf:
-        return nf, metodo
+    if not nf:
+        nf, metodo = extrair_canhoto_por_qr(img)
+    if not nf:
+        nf, metodo = extrair_canhoto_fallback_lateral(img)
 
-    nf, metodo = extrair_canhoto_por_qr(img)
-    if nf:
-        return nf, metodo
+    data_assinatura = extrair_data_assinatura(img)
 
-    nf, metodo = extrair_canhoto_fallback_lateral(img)
     if nf:
-        return nf, metodo
+        return nf, data_assinatura, metodo
 
-    return None, "não encontrado"
+    return None, data_assinatura, "não encontrado"
