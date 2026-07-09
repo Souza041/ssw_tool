@@ -11,7 +11,7 @@ from tools.renomeador.processor import extrair_nf_da_imagem
 EXTENSOES = {".png", ".jpg", ".jpeg"}
 TEMPLATE_CARRIER = Path("tools/renomeador/templates/Carrier.xltm")
 
-EMAIL_FIXO = "Insira seu email aqui"
+EMAIL_FIXO = "gce4@rodobrastransp.com.br"
 LIMITE_POR_ARQUIVO = 20
 
 
