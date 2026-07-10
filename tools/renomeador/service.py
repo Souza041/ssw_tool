@@ -26,27 +26,63 @@ def nome_unico(pasta: Path, nome_base: str, ext: str) -> Path:
     return destino
 
 
-def ler_base_csv(base_csv: Path) -> dict:
-    df = pd.read_csv(base_csv, sep="\t", encoding="utf-16", dtype=str)
+from datetime import datetime
+import pandas as pd
 
+
+def ler_base_csv(base_csv: Path) -> dict:
+    df = pd.read_csv(
+        base_csv,
+        sep="\t",
+        encoding="utf-16",
+        dtype=str
+    )
+
+    # Remove espaços dos nomes das colunas
     df.columns = [c.strip() for c in df.columns]
 
     mapa = {}
 
     for _, row in df.iterrows():
-        nf = str(row.get("NF No", "")).strip()
-        serie = str(row.get("NS No", "")).strip()
+
+        nf = str(row.get("NF No", "")).strip().lstrip("0")
+        serie = str(row.get("NS No", "")).strip().lstrip("0")
         load_id = str(row.get("Load ID", "")).strip()
 
         if not nf or not load_id:
             continue
 
-        nf = nf.lstrip("0")
+        # Data da ocorrência (Occurrence Date)
+        occurrence = str(row.get("Occurrence Date", "")).strip()
+
+        data_ocorrencia = None
+
+        if occurrence:
+            try:
+                ts = pd.to_datetime(
+                    occurrence,
+                    dayfirst=True,
+                    errors="coerce"
+                )
+
+                if not pd.isna(ts):
+                    data_ocorrencia = ts.date()
+
+            except Exception:
+                pass
 
         mapa[nf] = {
             "nf": nf,
             "serie": serie,
             "load_id": load_id,
+
+            # Vamos usar no Carrier
+            "occurrence_date": data_ocorrencia,
+
+            # Já deixei preparado para futuras melhorias
+            "truck": str(row.get("Truck", "")).strip(),
+            "occurrence": str(row.get("Occurrence", "")).strip(),
+            "approval": str(row.get("Approval", "")).strip(),
         }
 
     return mapa
@@ -55,7 +91,7 @@ def ler_base_csv(base_csv: Path) -> dict:
 def transportadora_por_serie(serie: str) -> str:
     serie_normalizada = str(serie).strip().lstrip("0")
 
-    if serie_normalizada == "3":
+    if serie_normalizada in {"1", "3", "13"}:
         return "ROBR_SP"
 
     if serie_normalizada == "33":
@@ -104,7 +140,7 @@ def gerar_protocolos_carrier(
                 ws.cell(linha_excel, 2).value = item["load_id"]
                 ws.cell(linha_excel, 3).value = int(item["nf"])
                 ws.cell(linha_excel, 4).value = int(item["serie"]) if str(item["serie"]).isdigit() else item["serie"]
-                ws.cell(linha_excel, 5).value = None
+                ws.cell(linha_excel, 5).value = item["data_assinatura"]
                 ws.cell(linha_excel, 6).value = observacao
 
                 ws.cell(linha_excel, 5).number_format = "DD/MM/YYYY"
@@ -192,11 +228,13 @@ def processar_carrier_lg(
             "nf": nf,
             "serie": dados_base["serie"],
             "load_id": dados_base["load_id"],
-            "data_assinatura": None,
+            "data_assinatura": dados_base["occurrence_date"],
         })
 
         if job:
-            job.logs.put(f"OK: {arquivo.name} -> {destino.name} | Load {dados_base['load_id']} | Série {dados_base['serie']} | {metodo}")
+            data_log = dados_base["occurrence_date"]
+            data_log = data_log.strftime("%d/%m/%Y") if data_log else "sem data"
+            job.logs.put(f"OK: {arquivo.name} -> {destino.name} | Load {dados_base['load_id']} | Série {dados_base['serie']} | Data {data_log} | {metodo}")
             job.progress = idx
 
     carrier_dir = output_dir / "carrier"
