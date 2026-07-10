@@ -20,7 +20,7 @@ def preprocess(img):
         return None
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gray = cv2.resize(gray, None, fx=2.0, fy=2.0)
+    gray = cv2.resize(gray, None, fx=1.5, fy=1.5)
     gray = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)[1]
     return gray
 
@@ -205,52 +205,25 @@ def normalizar_data(valor):
     except ValueError:
         return None
 
-
-def extrair_data_assinatura(img):
-    textos = []
-
-    for nome_rot, r in rotacoes(img):
-        h, w = r.shape[:2]
-
-        crops = [
-            r[:, 0:int(w * 0.45)],
-            r[int(h * 0.45):h, 0:int(w * 0.55)],
-            r[0:int(h * 0.45), 0:int(w * 0.55)],
-            r[int(h * 0.60):h, int(w * 0.30):int(w * 0.75)],
-        ]
-
-        for crop in crops:
-            if crop is None or crop.size == 0:
-                continue
-            textos.append(ocr(crop))
-
-    texto_total = "\n".join(textos)
-
-    matches = re.findall(r"\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}", texto_total)
-
-    for item in matches:
-        data = normalizar_data(item)
-        if data:
-            return data
-
-    return None
-
-
 def extrair_nf_da_imagem(caminho: Path):
     img = carregar_imagem(caminho)
 
     if img is None:
         return None, None, "imagem inválida"
 
-    nf, metodo = extrair_dacte_chave_nfe(img)
-    if not nf:
-        nf, metodo = extrair_canhoto_por_qr(img)
-    if not nf:
-        nf, metodo = extrair_canhoto_fallback_lateral(img)
-
-    data_assinatura = extrair_data_assinatura(img)
-
+    # 1. Canhoto por QR primeiro
+    nf, metodo = extrair_canhoto_por_qr(img)
     if nf:
-        return nf, data_assinatura, metodo
+        return nf, None, metodo
 
-    return None, data_assinatura, "não encontrado"
+    # 2. DACTE completo
+    nf, metodo = extrair_dacte_chave_nfe(img)
+    if nf:
+        return nf, None, metodo
+
+    # 3. Fallback só se necessário
+    nf, metodo = extrair_canhoto_fallback_lateral(img)
+    if nf:
+        return nf, None, metodo
+
+    return None, None, "não encontrado"
