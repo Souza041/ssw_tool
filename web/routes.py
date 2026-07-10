@@ -740,8 +740,8 @@ def renomeador_form(request: Request):
 async def renomeador_run(
     request: Request,
     arquivos: list[UploadFile] = File(...),
-    base_csv: UploadFile = File(...),
-    email: str = Form("suporte.ti@rodobrastransp.com.br"),
+    base_planilha: UploadFile = File(...),
+    email: str = Form("gce4@rodobrastransp.com.br"),
     observacao: str = Form(""),
 ):
     job = criar_job()
@@ -762,10 +762,10 @@ async def renomeador_run(
         with destino.open("wb") as f:
             f.write(await arquivo.read())
 
-    base_csv_path = base_dir / Path(base_csv.filename).name
+    base_planilha_path = base_dir / base_planilha.filename
 
-    with base_csv_path.open("wb") as f:
-        f.write(await base_csv.read())
+    with base_planilha_path.open("wb") as f:
+        f.write(await base_planilha.read())
 
     zip_path = Path("downloads") / f"carrier_lg_{job.id}.zip"
 

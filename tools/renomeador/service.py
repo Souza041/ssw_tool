@@ -31,12 +31,7 @@ import pandas as pd
 
 
 def ler_base_csv(base_csv: Path) -> dict:
-    df = pd.read_csv(
-        base_csv,
-        sep="\t",
-        encoding="utf-16",
-        dtype=str
-    )
+    df = ler_base(base_csv)
 
     # Remove espaços dos nomes das colunas
     df.columns = [c.strip() for c in df.columns]
@@ -87,6 +82,43 @@ def ler_base_csv(base_csv: Path) -> dict:
 
     return mapa
 
+def ler_base(base_path: Path) -> pd.DataFrame:
+    ext = base_path.suffix.lower()
+
+    if ext in [".xlsx", ".xls"]:
+        return pd.read_excel(base_path, dtype=str)
+
+    if ext == ".csv":
+
+        # 1º tenta UTF16 TAB
+        try:
+            return pd.read_csv(
+                base_path,
+                sep="\t",
+                encoding="utf-16",
+                dtype=str,
+            )
+        except Exception:
+            pass
+
+        # 2º tenta UTF8 vírgula
+        try:
+            return pd.read_csv(
+                base_path,
+                encoding="utf-8",
+                dtype=str,
+            )
+        except Exception:
+            pass
+
+        # 3º tenta Latin1
+        return pd.read_csv(
+            base_path,
+            encoding="latin1",
+            dtype=str,
+        )
+
+    raise ValueError(f"Formato não suportado: {ext}")
 
 def transportadora_por_serie(serie: str) -> str:
     serie_normalizada = str(serie).strip().lstrip("0")
