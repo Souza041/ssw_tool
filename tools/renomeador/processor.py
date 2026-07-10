@@ -42,6 +42,23 @@ def ocr(img, numeros=False):
     except Exception:
         return ""
 
+def classificar_documento(img):
+    if img is None or img.size == 0:
+        return "invalido"
+
+    h, w = img.shape[:2]
+
+    maior = max(w, h)
+    menor = min(w, h)
+
+    proporcao = maior / menor if menor else 0
+
+    # Canhoto normalmente é uma faixa longa e estreita
+    if proporcao >= 2.2:
+        return "canhoto"
+
+    # DACTE completo tende a ser mais próximo de folha
+    return "dacte"
 
 def carregar_imagem(caminho: Path):
     try:
@@ -87,9 +104,8 @@ def extrair_dacte_chave_nfe(img):
         h, w = r.shape[:2]
 
         crops = [
-            r[int(h * 0.48):int(h * 0.75), int(w * 0.35):int(w * 0.88)],
-            r[int(h * 0.50):int(h * 0.70), int(w * 0.35):int(w * 0.85)],
-            r[int(h * 0.45):int(h * 0.80), int(w * 0.30):int(w * 0.90)],
+            r[int(h * 0.45):int(h * 0.72), int(w * 0.25):int(w * 0.90)],
+            r[int(h * 0.50):int(h * 0.78), int(w * 0.30):int(w * 0.92)],
         ]
 
         for crop in crops:
@@ -211,19 +227,23 @@ def extrair_nf_da_imagem(caminho: Path):
     if img is None:
         return None, None, "imagem inválida"
 
-    # 1. Canhoto por QR primeiro
-    nf, metodo = extrair_canhoto_por_qr(img)
-    if nf:
-        return nf, None, metodo
+    tipo = classificar_documento(img)
 
-    # 2. DACTE completo
+    if tipo == "canhoto":
+        # Canhoto: QR primeiro
+        nf, metodo = extrair_canhoto_por_qr(img)
+        if nf:
+            return nf, None, metodo
+
+        nf, metodo = extrair_canhoto_fallback_lateral(img)
+        if nf:
+            return nf, None, metodo
+
+        return None, None, "canhoto não identificado"
+
+    # DACTE inteiro: vai direto para a região NF-E
     nf, metodo = extrair_dacte_chave_nfe(img)
     if nf:
         return nf, None, metodo
 
-    # 3. Fallback só se necessário
-    nf, metodo = extrair_canhoto_fallback_lateral(img)
-    if nf:
-        return nf, None, metodo
-
-    return None, None, "não encontrado"
+    return None, None, "DACTE não identificado"
