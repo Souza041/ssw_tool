@@ -773,7 +773,7 @@ async def renomeador_run(
         job,
         executar_carrier_lg_job,
         input_dir,
-        base_csv_path,
+        base_planilha_path,
         output_dir,
         zip_path,
         base_dir,
@@ -790,7 +790,7 @@ async def renomeador_run(
 def executar_carrier_lg_job(
     job,
     input_dir: Path,
-    base_csv_path: Path,
+    base_planilha_path: Path,
     output_dir: Path,
     zip_path: Path,
     base_dir: Path,
@@ -800,7 +800,7 @@ def executar_carrier_lg_job(
     try:
         arquivo_zip = processar_carrier_lg(
             input_dir=input_dir,
-            base_csv=base_csv_path,
+            base_csv=base_planilha_path,
             output_dir=output_dir,
             zip_path=zip_path,
             email=email,
