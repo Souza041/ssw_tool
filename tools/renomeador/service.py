@@ -1,8 +1,10 @@
+import re
 import shutil
 import zipfile
-import pandas as pd
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+
+import pandas as pd
 from openpyxl import load_workbook
 
 from tools.renomeador.processor import extrair_nf_da_imagem
@@ -26,71 +28,20 @@ def nome_unico(pasta: Path, nome_base: str, ext: str) -> Path:
     return destino
 
 
-from datetime import datetime
-import pandas as pd
-
-
-def ler_base_csv(base_csv: Path) -> dict:
-    df = ler_base(base_csv)
-
-    df.columns = [
-        str(coluna).strip()
-        for coluna in df.columns
-    ]
-
-    mapa = {}
-
-    for _, row in df.iterrows():
-
-        nf = str(row.get("NF No", "")).strip().lstrip("0")
-        serie = str(row.get("NS No", "")).strip().lstrip("0")
-        load_id = str(row.get("Load ID", "")).strip()
-
-        if not nf or not load_id:
-            continue
-
-        # Data da ocorrência (Occurrence Date)
-        occurrence = str(row.get("Occurrence Date", "")).strip()
-
-        data_ocorrencia = None
-
-        if occurrence:
-            try:
-                ts = pd.to_datetime(
-                    occurrence,
-                    dayfirst=True,
-                    errors="coerce"
-                )
-
-                if not pd.isna(ts):
-                    data_ocorrencia = ts.date()
-
-            except Exception:
-                pass
-
-        mapa[nf] = {
-            "nf": nf,
-            "serie": serie,
-            "load_id": load_id,
-
-            # Vamos usar no Carrier
-            "occurrence_date": data_ocorrencia,
-
-            # Já deixei preparado para futuras melhorias
-            "truck": str(row.get("Truck", "")).strip(),
-            "occurrence": str(row.get("Occurrence", "")).strip(),
-            "approval": str(row.get("Approval", "")).strip(),
-        }
-
-    return mapa
-
 def ler_base(base_path: Path) -> pd.DataFrame:
     extensao = base_path.suffix.lower()
 
-    if extensao in {".xlsx", ".xls"}:
+    if extensao == ".xlsx":
         return pd.read_excel(
             base_path,
-            dtype=str
+            dtype=str,
+            engine="openpyxl",
+        )
+
+    if extensao == ".xls":
+        return pd.read_excel(
+            base_path,
+            dtype=str,
         )
 
     if extensao != ".csv":
@@ -100,51 +51,41 @@ def ler_base(base_path: Path) -> pd.DataFrame:
         )
 
     tentativas = [
-        # CSV UTF-16 separado por tabulação
         {
             "encoding": "utf-16",
             "sep": "\t",
             "engine": "python",
         },
-
-        # Detecta automaticamente vírgula, ponto e vírgula ou tabulação
         {
             "encoding": "utf-8-sig",
             "sep": None,
             "engine": "python",
         },
-
         {
             "encoding": "utf-8",
             "sep": None,
             "engine": "python",
         },
-
         {
             "encoding": "latin1",
             "sep": None,
             "engine": "python",
         },
-
-        # Tentativas explícitas
         {
             "encoding": "utf-8-sig",
             "sep": ";",
             "engine": "python",
         },
-
         {
             "encoding": "utf-8-sig",
             "sep": ",",
             "engine": "python",
         },
-
         {
             "encoding": "latin1",
             "sep": ";",
             "engine": "python",
         },
-
         {
             "encoding": "latin1",
             "sep": ",",
@@ -159,10 +100,9 @@ def ler_base(base_path: Path) -> pd.DataFrame:
             df = pd.read_csv(
                 base_path,
                 dtype=str,
-                **config
+                **config,
             )
 
-            # Só aceita se realmente encontrou mais de uma coluna
             if len(df.columns) > 1:
                 return df
 
@@ -171,9 +111,78 @@ def ler_base(base_path: Path) -> pd.DataFrame:
 
     raise ValueError(
         "Não foi possível identificar a codificação ou o separador do CSV. "
-        "Tente salvar o arquivo como CSV UTF-8, separado por vírgula ou "
-        "ponto e vírgula."
+        "Tente salvar como CSV UTF-8, separado por vírgula, ponto e vírgula "
+        "ou tabulação."
     )
+
+
+def ler_base_csv(base_csv: Path) -> dict:
+    df = ler_base(base_csv)
+
+    df.columns = [
+        str(coluna).strip()
+        for coluna in df.columns
+    ]
+
+    colunas_obrigatorias = {
+        "NF No",
+        "NS No",
+        "Load ID",
+        "Registered Date",
+    }
+
+    faltantes = colunas_obrigatorias.difference(df.columns)
+
+    if faltantes:
+        raise ValueError(
+            "A base não possui as colunas obrigatórias: "
+            + ", ".join(sorted(faltantes))
+        )
+
+    mapa = {}
+
+    for _, row in df.iterrows():
+        nf = str(row.get("NF No", "")).strip().lstrip("0")
+        serie = str(row.get("NS No", "")).strip().lstrip("0")
+        load_id = str(row.get("Load ID", "")).strip()
+
+        if not nf or nf.lower() == "nan":
+            continue
+
+        if not load_id or load_id.lower() == "nan":
+            continue
+
+        registered = str(
+            row.get("Registered Date", "")
+        ).strip()
+
+        data_registro = None
+
+        if registered and registered.lower() != "nan":
+            try:
+                ts = pd.to_datetime(
+                    registered,
+                    errors="coerce",
+                )
+
+                if not pd.isna(ts):
+                    data_registro = ts.date()
+
+            except Exception:
+                data_registro = None
+
+        mapa[nf] = {
+            "nf": nf,
+            "serie": serie,
+            "load_id": load_id,
+            "occurrence_date": data_registro,
+            "truck": str(row.get("Truck", "")).strip(),
+            "occurrence": str(row.get("Occurrence", "")).strip(),
+            "approval": str(row.get("Approval", "")).strip(),
+        }
+
+    return mapa
+
 
 def transportadora_por_serie(serie: str) -> str:
     serie_normalizada = str(serie).strip().lstrip("0")
@@ -184,6 +193,7 @@ def transportadora_por_serie(serie: str) -> str:
     if serie_normalizada == "33":
         return "ROBR_SC"
 
+    # Mantido conforme regra temporária combinada
     return "ROBR_SC"
 
 
@@ -195,59 +205,121 @@ def gerar_protocolos_carrier(
     job=None,
 ) -> list[Path]:
     arquivos = []
-
     grupos = {}
 
     for item in registros:
-        transportadora = transportadora_por_serie(item["serie"])
-        grupos.setdefault(transportadora, []).append(item)
+        transportadora = transportadora_por_serie(
+            item["serie"]
+        )
+
+        grupos.setdefault(
+            transportadora,
+            [],
+        ).append(item)
 
     for transportadora, itens in grupos.items():
         for idx in range(0, len(itens), LIMITE_POR_ARQUIVO):
             lote = itens[idx:idx + LIMITE_POR_ARQUIVO]
-            numero_lote = (idx // LIMITE_POR_ARQUIVO) + 1
+            numero_lote = (
+                idx // LIMITE_POR_ARQUIVO
+            ) + 1
 
-            wb = load_workbook(TEMPLATE_CARRIER, keep_vba=True)
+            wb = load_workbook(
+                TEMPLATE_CARRIER,
+                keep_vba=True,
+            )
+
             ws = wb.active
 
-            protocolo = datetime.now().strftime("%Y%m%d%H%M%S") + f"{numero_lote:02d}"
+            protocolo = (
+                datetime.now().strftime("%Y%m%d%H%M%S")
+                + f"{numero_lote:02d}"
+            )
 
             ws["C1"] = transportadora
             ws["C2"] = datetime.now()
+            ws["C2"].number_format = "DD/MM/YYYY"
+
             ws["C3"] = protocolo
             ws["C4"] = email
 
             for linha in range(9, 80):
                 for coluna in range(2, 7):
-                    ws.cell(linha, coluna).value = None
+                    ws.cell(
+                        linha,
+                        coluna,
+                    ).value = None
 
             linha_excel = 9
 
             for item in lote:
-                ws.cell(linha_excel, 2).value = item["load_id"]
-                ws.cell(linha_excel, 3).value = int(item["nf"])
-                ws.cell(linha_excel, 4).value = int(item["serie"]) if str(item["serie"]).isdigit() else item["serie"]
-                ws.cell(linha_excel, 5).value = item["data_assinatura"]
-                ws.cell(linha_excel, 6).value = observacao
+                ws.cell(
+                    linha_excel,
+                    2,
+                ).value = item["load_id"]
 
-                ws.cell(linha_excel, 5).number_format = "DD/MM/YYYY"
+                ws.cell(
+                    linha_excel,
+                    3,
+                ).value = int(item["nf"])
+
+                serie = str(item["serie"]).strip()
+
+                ws.cell(
+                    linha_excel,
+                    4,
+                ).value = (
+                    int(serie)
+                    if serie.isdigit()
+                    else serie
+                )
+
+                ws.cell(
+                    linha_excel,
+                    5,
+                ).value = item["data_assinatura"]
+
+                ws.cell(
+                    linha_excel,
+                    5,
+                ).number_format = "DD/MM/YYYY"
+
+                ws.cell(
+                    linha_excel,
+                    6,
+                ).value = observacao
 
                 linha_excel += 1
 
-            nome = f"Carrier_{transportadora}_{numero_lote:03d}.xltm"
+            nome = (
+                f"Carrier_{transportadora}_"
+                f"{numero_lote:03d}.xltm"
+            )
+
             caminho = output_dir / nome
             wb.save(caminho)
+
             arquivos.append(caminho)
 
             if job:
-                job.logs.put(f"Carrier gerado: {nome} ({len(lote)} notas)")
+                job.logs.put(
+                    f"Carrier gerado: {nome} "
+                    f"({len(lote)} notas)"
+                )
 
     return arquivos
 
 
-def adicionar_zip(zipf, arquivo: Path, base: Path):
+def adicionar_zip(
+    zipf,
+    arquivo: Path,
+    base: Path,
+):
     if arquivo.is_file():
-        zipf.write(arquivo, arquivo.relative_to(base))
+        zipf.write(
+            arquivo,
+            arquivo.relative_to(base),
+        )
 
 
 def processar_carrier_lg(
@@ -263,65 +335,177 @@ def processar_carrier_lg(
     falhou_dir = output_dir / "falhou"
     sem_base_dir = output_dir / "sem_base"
 
-    renomeados_dir.mkdir(parents=True, exist_ok=True)
-    falhou_dir.mkdir(parents=True, exist_ok=True)
-    sem_base_dir.mkdir(parents=True, exist_ok=True)
+    renomeados_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    falhou_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    sem_base_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    if job:
+        job.logs.put("Lendo a base diária...")
 
     mapa_base = ler_base_csv(base_csv)
 
-    arquivos = [
-        p for p in input_dir.iterdir()
-        if p.is_file() and p.suffix.lower() in EXTENSOES
-    ]
+    if job:
+        job.logs.put(
+            f"Base carregada: {len(mapa_base)} NFs."
+        )
+
+    arquivos = sorted(
+        [
+            p
+            for p in input_dir.iterdir()
+            if (
+                p.is_file()
+                and p.suffix.lower() in EXTENSOES
+            )
+        ],
+        key=lambda item: item.name.lower(),
+    )
 
     if job:
         job.progress = 0
         job.total = len(arquivos)
 
     registros_carrier = []
+    total_ocr = 0
+    total_nome = 0
+    total_falhou = 0
+    total_sem_base = 0
 
-    for idx, arquivo in enumerate(arquivos, start=1):
+    for idx, arquivo in enumerate(
+        arquivos,
+        start=1,
+    ):
         if job:
-            job.logs.put(f"Processando {idx}/{len(arquivos)}: {arquivo.name}")
+            job.logs.put(
+                f"Processando {idx}/{len(arquivos)}: "
+                f"{arquivo.name}"
+            )
 
-        nf, data_assinatura, metodo = extrair_nf_da_imagem(arquivo)
+        nome = arquivo.stem.strip()
 
-        if not nf:
-            destino = nome_unico(falhou_dir, arquivo.stem, arquivo.suffix.lower())
-            shutil.copy2(arquivo, destino)
+        # Aceita NF já presente no nome:
+        # 117824.png, 000117824.png etc.
+        if re.fullmatch(r"\d{5,9}", nome):
+            nf = nome.lstrip("0")
+            metodo = "nome do arquivo"
+            total_nome += 1
 
             if job:
-                job.logs.put(f"Falhou OCR: {arquivo.name}")
+                job.logs.put(
+                    f"NF obtida pelo nome: {arquivo.name}"
+                )
 
-            job.progress = idx
+        else:
+            if job:
+                job.logs.put(
+                    f"Iniciando OCR: {arquivo.name}"
+                )
+
+            nf, _, metodo = extrair_nf_da_imagem(
+                arquivo
+            )
+
+            total_ocr += 1
+
+        if not nf:
+            destino = nome_unico(
+                falhou_dir,
+                arquivo.stem,
+                arquivo.suffix.lower(),
+            )
+
+            shutil.copy2(
+                arquivo,
+                destino,
+            )
+
+            total_falhou += 1
+
+            if job:
+                job.logs.put(
+                    f"Falhou OCR: {arquivo.name}"
+                )
+                job.progress = idx
+
             continue
 
-        destino = nome_unico(renomeados_dir, nf, arquivo.suffix.lower())
-        shutil.copy2(arquivo, destino)
+        nf = str(nf).strip().lstrip("0")
+
+        destino = nome_unico(
+            renomeados_dir,
+            nf,
+            arquivo.suffix.lower(),
+        )
+
+        shutil.copy2(
+            arquivo,
+            destino,
+        )
 
         dados_base = mapa_base.get(nf)
 
         if not dados_base:
-            destino_sem_base = nome_unico(sem_base_dir, nf, arquivo.suffix.lower())
-            shutil.copy2(arquivo, destino_sem_base)
+            destino_sem_base = nome_unico(
+                sem_base_dir,
+                nf,
+                arquivo.suffix.lower(),
+            )
+
+            shutil.copy2(
+                arquivo,
+                destino_sem_base,
+            )
+
+            total_sem_base += 1
 
             if job:
-                job.logs.put(f"Sem base: NF {nf} não localizada no CSV")
+                job.logs.put(
+                    f"Sem base: NF {nf} não localizada "
+                    f"na planilha"
+                )
+                job.progress = idx
 
-            job.progress = idx
             continue
 
         registros_carrier.append({
             "nf": nf,
             "serie": dados_base["serie"],
             "load_id": dados_base["load_id"],
-            "data_assinatura": dados_base["occurrence_date"],
+            "data_assinatura": dados_base[
+                "occurrence_date"
+            ],
         })
 
         if job:
-            data_log = dados_base["occurrence_date"]
-            data_log = data_log.strftime("%d/%m/%Y") if data_log else "sem data"
-            job.logs.put(f"OK: {arquivo.name} -> {destino.name} | Load {dados_base['load_id']} | Série {dados_base['serie']} | Data {data_log} | {metodo}")
+            data_log = dados_base.get(
+                "occurrence_date"
+            )
+
+            data_log = (
+                data_log.strftime("%d/%m/%Y")
+                if data_log
+                else "sem data"
+            )
+
+            job.logs.put(
+                f"OK: {arquivo.name} -> {destino.name} | "
+                f"Load {dados_base['load_id']} | "
+                f"Série {dados_base['serie']} | "
+                f"Data {data_log} | "
+                f"{metodo}"
+            )
+
             job.progress = idx
 
     carrier_dir = output_dir / "carrier"
@@ -335,13 +519,39 @@ def processar_carrier_lg(
         job=job,
     )
 
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+    if job:
+        job.logs.put("Compactando resultado...")
+
+    with zipfile.ZipFile(
+        zip_path,
+        "w",
+        zipfile.ZIP_DEFLATED,
+    ) as zipf:
         for arquivo in output_dir.rglob("*"):
             if arquivo.is_file():
-                adicionar_zip(zipf, arquivo, output_dir)
+                adicionar_zip(
+                    zipf,
+                    arquivo,
+                    output_dir,
+                )
 
     if job:
-        job.logs.put(f"Notas para Carrier: {len(registros_carrier)}")
+        job.logs.put(
+            f"Identificadas pelo nome: {total_nome}"
+        )
+        job.logs.put(
+            f"Enviadas ao OCR: {total_ocr}"
+        )
+        job.logs.put(
+            f"Falhas no OCR: {total_falhou}"
+        )
+        job.logs.put(
+            f"Sem correspondência na base: {total_sem_base}"
+        )
+        job.logs.put(
+            f"Notas adicionadas ao Carrier: "
+            f"{len(registros_carrier)}"
+        )
         job.logs.put("ZIP final gerado.")
 
     return zip_path
