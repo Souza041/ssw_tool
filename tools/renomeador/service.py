@@ -208,14 +208,14 @@ def gerar_protocolos_carrier(
     grupos = {}
 
     for item in registros:
-        transportadora = transportadora_por_serie(
-            item["serie"]
-        )
+        serie = str(item.get("serie") or "").strip()
 
-        grupos.setdefault(
-            transportadora,
-            [],
-        ).append(item)
+        if serie:
+            grupo = transportadora_por_serie(serie)
+        else:
+            grupo = "SEM_BASE"
+
+        grupos.setdefault(grupo, []).append(item)
 
     for transportadora, itens in grupos.items():
         for idx in range(0, len(itens), LIMITE_POR_ARQUIVO):
@@ -231,12 +231,13 @@ def gerar_protocolos_carrier(
 
             ws = wb.active
 
-            protocolo = (
-                datetime.now().strftime("%Y%m%d%H%M%S")
-                + f"{numero_lote:02d}"
-            )
+            protocolo = gerar_numero_protocolo()
 
-            ws["C1"] = transportadora
+            ws["C1"] = (
+                ""
+                if transportadora == "SEM_BASE"
+                else transportadora
+            )
             ws["C2"] = datetime.now()
             ws["C2"].number_format = "DD/MM/YYYY"
 
@@ -253,50 +254,45 @@ def gerar_protocolos_carrier(
             linha_excel = 9
 
             for item in lote:
-                ws.cell(
-                    linha_excel,
-                    2,
-                ).value = item["load_id"]
+                load_id = str(item.get("load_id") or "").strip()
+                nf = str(item.get("nf") or "").strip()
+                serie = str(item.get("serie") or "").strip()
+                data_assinatura = item.get("data_assinatura")
 
-                ws.cell(
-                    linha_excel,
-                    3,
-                ).value = int(item["nf"])
-
-                serie = str(item["serie"]).strip()
-
-                ws.cell(
-                    linha_excel,
-                    4,
-                ).value = (
-                    int(serie)
-                    if serie.isdigit()
-                    else serie
+                ws.cell(linha_excel, 2).value = (
+                    int(load_id)
+                    if load_id.isdigit()
+                    else None
                 )
 
-                ws.cell(
-                    linha_excel,
-                    5,
-                ).value = item["data_assinatura"]
+                ws.cell(linha_excel, 3).value = (
+                    int(nf)
+                    if nf.isdigit()
+                    else nf
+                )
 
-                ws.cell(
-                    linha_excel,
-                    5,
-                ).number_format = "DD/MM/YYYY"
+                ws.cell(linha_excel, 4).value = (
+                    int(serie)
+                    if serie.isdigit()
+                    else None
+                )
 
-                ws.cell(
-                    linha_excel,
-                    6,
-                ).value = observacao
+                ws.cell(linha_excel, 5).value = data_assinatura
+                ws.cell(linha_excel, 5).number_format = "DD/MM/YYYY"
+
+                ws.cell(linha_excel, 6).value = observacao
 
                 linha_excel += 1
 
-            nome = (
-                f"Carrier_{transportadora}_"
-                f"{numero_lote:03d}.xltm"
-            )
-
+            nome = f"{protocolo}.xltm"
             caminho = output_dir / nome
+
+            while caminho.exists():
+                protocolo = gerar_numero_protocolo()
+                nome = f"{protocolo}.xltm"
+                caminho = output_dir / nome
+                ws["C3"] = protocolo
+
             wb.save(caminho)
 
             arquivos.append(caminho)
@@ -321,6 +317,13 @@ def adicionar_zip(
             arquivo.relative_to(base),
         )
 
+def gerar_numero_protocolo() -> str:
+    agora = datetime.now()
+
+    return (
+        agora.strftime("%Y%m%d%H%M%S")
+        + f"{agora.microsecond // 1000:03d}"
+    )
 
 def processar_carrier_lg(
     input_dir: Path,
@@ -469,10 +472,18 @@ def processar_carrier_lg(
 
             total_sem_base += 1
 
+            # Inclui a NF em um Carrier separado de auditoria.
+            registros_carrier.append({
+                "nf": nf,
+                "serie": "",
+                "load_id": "",
+                "data_assinatura": None,
+            })
+
             if job:
                 job.logs.put(
-                    f"Sem base: NF {nf} não localizada "
-                    f"na planilha"
+                    f"Sem base: NF {nf} será incluída "
+                    f"na planilha de auditoria."
                 )
                 job.progress = idx
 
