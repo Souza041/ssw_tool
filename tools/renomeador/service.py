@@ -31,23 +31,110 @@ def nome_unico(pasta: Path, nome_base: str, ext: str) -> Path:
 def ler_base(base_path: Path) -> pd.DataFrame:
     extensao = base_path.suffix.lower()
 
-    if extensao == ".xlsx":
-        return pd.read_excel(
+    if extensao in {".xlsx", ".xlsm"}:
+        abas = pd.read_excel(
             base_path,
+            sheet_name=None,
             dtype=str,
             engine="openpyxl",
         )
 
+        abas_normalizadas = {
+            str(nome).strip().upper(): df
+            for nome, df in abas.items()
+        }
+
+        # Ordem de prioridade:
+        # primeiro DATA-SP/DATA-SC, depois SP/SC
+        nomes_prioritarios = [
+            "DATA-SP",
+            "DATA-SC",
+            "SP",
+            "SC",
+        ]
+
+        dataframes = []
+
+        for nome_aba in nomes_prioritarios:
+            df = abas_normalizadas.get(nome_aba)
+
+            if df is None or df.empty:
+                continue
+
+            df = df.copy()
+            df["__aba_origem"] = nome_aba
+            df["__prioridade"] = (
+                0 if nome_aba.startswith("DATA-") else 1
+            )
+
+            dataframes.append(df)
+
+        # Caso o arquivo não tenha nenhuma das quatro abas esperadas,
+        # usa a primeira aba disponível.
+        if not dataframes:
+            primeira_aba, primeiro_df = next(iter(abas.items()))
+
+            primeiro_df = primeiro_df.copy()
+            primeiro_df["__aba_origem"] = str(primeira_aba).strip()
+            primeiro_df["__prioridade"] = 2
+
+            dataframes.append(primeiro_df)
+
+        return pd.concat(
+            dataframes,
+            ignore_index=True,
+            sort=False,
+        )
+
     if extensao == ".xls":
-        return pd.read_excel(
+        # Arquivos .xls antigos podem exigir:
+        # python -m pip install xlrd
+        abas = pd.read_excel(
             base_path,
+            sheet_name=None,
             dtype=str,
+        )
+
+        dataframes = []
+
+        for nome_aba, df in abas.items():
+            nome_normalizado = str(nome_aba).strip().upper()
+
+            if nome_normalizado not in {
+                "DATA-SP",
+                "DATA-SC",
+                "SP",
+                "SC",
+            }:
+                continue
+
+            df = df.copy()
+            df["__aba_origem"] = nome_normalizado
+            df["__prioridade"] = (
+                0 if nome_normalizado.startswith("DATA-") else 1
+            )
+
+            dataframes.append(df)
+
+        if not dataframes:
+            primeira_aba, primeiro_df = next(iter(abas.items()))
+
+            primeiro_df = primeiro_df.copy()
+            primeiro_df["__aba_origem"] = str(primeira_aba).strip()
+            primeiro_df["__prioridade"] = 2
+
+            dataframes.append(primeiro_df)
+
+        return pd.concat(
+            dataframes,
+            ignore_index=True,
+            sort=False,
         )
 
     if extensao != ".csv":
         raise ValueError(
             f"Formato não suportado: {extensao}. "
-            "Envie CSV, XLSX ou XLS."
+            "Envie CSV, XLSX, XLSM ou XLS."
         )
 
     tentativas = [
@@ -93,8 +180,6 @@ def ler_base(base_path: Path) -> pd.DataFrame:
         },
     ]
 
-    erros = []
-
     for config in tentativas:
         try:
             df = pd.read_csv(
@@ -104,16 +189,70 @@ def ler_base(base_path: Path) -> pd.DataFrame:
             )
 
             if len(df.columns) > 1:
+                df["__aba_origem"] = "CSV"
+                df["__prioridade"] = 0
                 return df
 
-        except Exception as exc:
-            erros.append(str(exc))
+        except Exception:
+            continue
 
     raise ValueError(
-        "Não foi possível identificar a codificação ou o separador do CSV. "
-        "Tente salvar como CSV UTF-8, separado por vírgula, ponto e vírgula "
-        "ou tabulação."
+        "Não foi possível identificar a codificação ou o separador "
+        "do CSV."
     )
+
+
+def limpar_texto_base(valor) -> str:
+    if valor is None:
+        return ""
+
+    texto = str(valor).strip()
+
+    if texto.lower() in {"nan", "none", "nat"}:
+        return ""
+
+    # Corrige valores importados como 123456.0
+    if texto.endswith(".0"):
+        texto = texto[:-2]
+
+    return texto
+
+
+def converter_data_base(valor):
+    texto = limpar_texto_base(valor)
+
+    if not texto:
+        return None
+
+    formatos = [
+        "%d/%m/%Y",
+        "%Y-%m-%d",
+        "%Y-%m-%d %H:%M:%S",
+        "%d/%m/%Y %H:%M:%S",
+    ]
+
+    for formato in formatos:
+        try:
+            return datetime.strptime(
+                texto,
+                formato,
+            ).date()
+        except ValueError:
+            continue
+
+    try:
+        ts = pd.to_datetime(
+            texto,
+            errors="coerce",
+        )
+
+        if not pd.isna(ts):
+            return ts.date()
+
+    except Exception:
+        pass
+
+    return None
 
 
 def ler_base_csv(base_csv: Path) -> dict:
@@ -128,7 +267,6 @@ def ler_base_csv(base_csv: Path) -> dict:
         "NF No",
         "NS No",
         "Load ID",
-        "Registered Date",
     }
 
     faltantes = colunas_obrigatorias.difference(df.columns)
@@ -139,53 +277,100 @@ def ler_base_csv(base_csv: Path) -> dict:
             + ", ".join(sorted(faltantes))
         )
 
+    # DATA-SP e DATA-SC vêm primeiro.
+    if "__prioridade" in df.columns:
+        df = df.sort_values(
+            by="__prioridade",
+            ascending=True,
+            kind="stable",
+        )
+
     mapa = {}
 
     for _, row in df.iterrows():
-        nf = str(row.get("NF No", "")).strip().lstrip("0")
-        serie = str(row.get("NS No", "")).strip().lstrip("0")
-        load_id = str(row.get("Load ID", "")).strip()
+        nf = limpar_texto_base(
+            row.get("NF No", "")
+        ).lstrip("0")
 
-        if not nf or nf.lower() == "nan":
+        serie = limpar_texto_base(
+            row.get("NS No", "")
+        ).lstrip("0")
+
+        load_id = limpar_texto_base(
+            row.get("Load ID", "")
+        )
+
+        origem = limpar_texto_base(
+            row.get("__aba_origem", "")
+        )
+
+        if not nf:
             continue
 
-        if not load_id or load_id.lower() == "nan":
-            continue
+        registered = row.get(
+            "Registered Date",
+            "",
+        )
 
-        registered = str(
-            row.get("Registered Date", "")
-        ).strip()
+        data_registro = converter_data_base(
+            registered
+        )
 
-        data_registro = None
-
-        if registered and registered.lower() != "nan":
-            try:
-                ts = pd.to_datetime(
-                    registered,
-                    errors="coerce",
-                )
-
-                if not pd.isna(ts):
-                    data_registro = ts.date()
-
-            except Exception:
-                data_registro = None
-
-        mapa[nf] = {
+        novo_registro = {
             "nf": nf,
             "serie": serie,
             "load_id": load_id,
             "occurrence_date": data_registro,
-            "truck": str(row.get("Truck", "")).strip(),
-            "occurrence": str(row.get("Occurrence", "")).strip(),
-            "approval": str(row.get("Approval", "")).strip(),
+            "truck": limpar_texto_base(
+                row.get("Truck", "")
+            ),
+            "occurrence": limpar_texto_base(
+                row.get("Occurrence", "")
+            ),
+            "approval": limpar_texto_base(
+                row.get("Approval", "")
+            ),
+            "shipto_name": limpar_texto_base(
+                row.get("ShipTo Name", "")
+            ),
+            "protocolos": limpar_texto_base(
+                row.get("Protocolos", "")
+            ),
+            "aba_origem": origem,
         }
+
+        registro_existente = mapa.get(nf)
+
+        if not registro_existente:
+            mapa[nf] = novo_registro
+            continue
+
+        # Caso a primeira aba não tenha algum valor,
+        # complementa usando SP/SC ou outra aba.
+        for chave, valor in novo_registro.items():
+            atual = registro_existente.get(chave)
+
+            if atual in {None, ""} and valor not in {None, ""}:
+                registro_existente[chave] = valor
 
     return mapa
 
 
-def transportadora_por_serie(serie: str) -> str:
-    serie_normalizada = str(serie).strip().lstrip("0")
+def transportadora_por_serie(
+    serie: str,
+    aba_origem: str = "",
+) -> str:
+    serie_normalizada = (
+        str(serie)
+        .strip()
+        .lstrip("0")
+    )
+
+    origem = (
+        str(aba_origem)
+        .strip()
+        .upper()
+    )
 
     if serie_normalizada in {"1", "3", "13"}:
         return "ROBR_SP"
@@ -193,7 +378,12 @@ def transportadora_por_serie(serie: str) -> str:
     if serie_normalizada == "33":
         return "ROBR_SC"
 
-    # Mantido conforme regra temporária combinada
+    if origem in {"SP", "DATA-SP"}:
+        return "ROBR_SP"
+
+    if origem in {"SC", "DATA-SC"}:
+        return "ROBR_SC"
+
     return "ROBR_SC"
 
 
@@ -209,9 +399,10 @@ def gerar_protocolos_carrier(
 
     for item in registros:
         serie = str(item.get("serie") or "").strip()
+        aba_origem = str(item.get("aba_origem") or "").strip()
 
-        if serie:
-            grupo = transportadora_por_serie(serie)
+        if serie or aba_origem:
+            grupo = transportadora_por_serie(serie, aba_origem)
         else:
             grupo = "SEM_BASE"
 
@@ -478,6 +669,7 @@ def processar_carrier_lg(
                 "serie": "",
                 "load_id": "",
                 "data_assinatura": None,
+                "aba_origem": "",
             })
 
             if job:
@@ -496,6 +688,7 @@ def processar_carrier_lg(
             "data_assinatura": dados_base[
                 "occurrence_date"
             ],
+            "aba_origem": dados_base.get("aba_origem", ""),
         })
 
         if job:
