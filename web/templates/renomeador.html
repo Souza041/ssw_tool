@@ -86,9 +86,17 @@
         </div>
 
         <div class="box">
-            <label>Base diária (CSV ou Excel)</label>
-            <p class="hint">Arquivo CSV baixado do sistema, com colunas NF No, NS No e Load ID.</p>
-            <input type="file" name="base_planilha" accept=".csv,.xlsx,.xlsm,.xls" required>
+            <label>Base diária LG</label>
+            <p class="hint">
+                Opcional. Envie CSV, XLSX, XLSM ou XLS para gerar também os arquivos Carrier.
+                Sem a base, o sistema apenas renomeia os canhotos.
+            </p>
+
+            <input
+                type="file"
+                name="base_planilha"
+                accept=".csv,.xlsx,.xlsm,.xls"
+            >
         </div>
 
         <div class="box">

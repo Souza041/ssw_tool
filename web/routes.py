@@ -740,7 +740,7 @@ def renomeador_form(request: Request):
 async def renomeador_run(
     request: Request,
     arquivos: list[UploadFile] = File(...),
-    base_planilha: UploadFile = File(...),
+    base_planilha: UploadFile | None = File(None),
     email: str = Form("gce4@rodobrastransp.com.br"),
     observacao: str = Form(""),
 ):
@@ -759,13 +759,33 @@ async def renomeador_run(
         nome_seguro = Path(arquivo.filename).name
         destino = input_dir / nome_seguro
 
+        arquivo.file.seek(0)
+
         with destino.open("wb") as f:
-            f.write(await arquivo.read())
+            shutil.copyfileobj(
+                arquivo.file,
+                f,
+            )
 
-    base_planilha_path = base_dir / base_planilha.filename
+        await arquivo.close()
 
-    with base_planilha_path.open("wb") as f:
-        f.write(await base_planilha.read())
+
+    base_planilha_path = None
+
+    if base_planilha and base_planilha.filename:
+        nome_base_seguro = Path(base_planilha.filename).name
+        base_planilha_path = base_dir / nome_base_seguro
+
+        base_planilha.file.seek(0)
+
+        with base_planilha_path.open("wb") as f:
+            shutil.copyfileobj(
+                base_planilha.file,
+                f,
+            )
+
+        await base_planilha.close()
+
 
     zip_path = Path("downloads") / f"carrier_lg_{job.id}.zip"
 
@@ -790,7 +810,7 @@ async def renomeador_run(
 def executar_carrier_lg_job(
     job,
     input_dir: Path,
-    base_planilha_path: Path,
+    base_planilha_path: Path | None,
     output_dir: Path,
     zip_path: Path,
     base_dir: Path,

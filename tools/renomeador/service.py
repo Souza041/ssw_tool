@@ -518,7 +518,7 @@ def gerar_numero_protocolo() -> str:
 
 def processar_carrier_lg(
     input_dir: Path,
-    base_csv: Path,
+    base_csv: Path | None,
     output_dir: Path,
     zip_path: Path,
     email: str = EMAIL_FIXO,
@@ -544,15 +544,28 @@ def processar_carrier_lg(
         exist_ok=True,
     )
 
-    if job:
-        job.logs.put("Lendo a base diária...")
+    modo_completo = (
+        base_csv is not None
+        and base_csv.exists()
+    )
 
-    mapa_base = ler_base_csv(base_csv)
+    mapa_base = {}
 
-    if job:
-        job.logs.put(
-            f"Base carregada: {len(mapa_base)} NFs."
-        )
+    if modo_completo:
+        if job:
+            job.logs.put("Modo completo: lendo a base diária...")
+
+        mapa_base = ler_base_csv(base_csv)
+
+        if job:
+            job.logs.put(
+                f"Base carregada: {len(mapa_base)} NFs."
+            )
+    else:
+        if job:
+            job.logs.put(
+                "Modo renomeação: nenhuma base foi enviada."
+            )
 
     arquivos = sorted(
         [
@@ -647,6 +660,16 @@ def processar_carrier_lg(
             destino,
         )
 
+        if not modo_completo:
+            if job:
+                job.logs.put(
+                    f"OK: {arquivo.name} -> {destino.name} | "
+                    f"{metodo}"
+                )
+                job.progress = idx
+
+            continue
+
         dados_base = mapa_base.get(nf)
 
         if not dados_base:
@@ -712,16 +735,17 @@ def processar_carrier_lg(
 
             job.progress = idx
 
-    carrier_dir = output_dir / "carrier"
-    carrier_dir.mkdir(exist_ok=True)
+    if modo_completo:
+        carrier_dir = output_dir / "carrier"
+        carrier_dir.mkdir(exist_ok=True)
 
-    gerar_protocolos_carrier(
-        registros=registros_carrier,
-        output_dir=carrier_dir,
-        email=email,
-        observacao=observacao,
-        job=job,
-    )
+        gerar_protocolos_carrier(
+            registros=registros_carrier,
+            output_dir=carrier_dir,
+            email=email,
+            observacao=observacao,
+            job=job,
+        )
 
     if job:
         job.logs.put("Compactando resultado...")
@@ -749,13 +773,20 @@ def processar_carrier_lg(
         job.logs.put(
             f"Falhas no OCR: {total_falhou}"
         )
-        job.logs.put(
-            f"Sem correspondência na base: {total_sem_base}"
-        )
-        job.logs.put(
-            f"Notas adicionadas ao Carrier: "
-            f"{len(registros_carrier)}"
-        )
+
+        if modo_completo:
+            job.logs.put(
+                f"Sem correspondência na base: {total_sem_base}"
+            )
+            job.logs.put(
+                f"Notas adicionadas ao Carrier: "
+                f"{len(registros_carrier)}"
+            )
+        else:
+            job.logs.put(
+                "Processo finalizado somente com renomeação."
+            )
+
         job.logs.put("ZIP final gerado.")
 
     return zip_path
