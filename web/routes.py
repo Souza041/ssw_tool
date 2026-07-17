@@ -728,6 +728,39 @@ def executar_op101_comprovantes_job(
     job.result_files = arquivos
     return arquivos
 
+def executar_incidentes_op930_job(
+    job,
+    client: SSWClient,
+    data_inicial: str,
+    data_final: str,
+    timeout: int,
+) -> list[dict]:
+
+    add_log(job, "Sessão SSW carregada.")
+    add_log(job, "Iniciando fluxo de Incidentes OP930.")
+
+    arquivo_saida = executar_incidentes_op930(
+        client=client,
+        data_inicial=data_inicial,
+        data_final=data_final,
+        output_dir=Path("downloads"),
+        timeout_seconds=timeout,
+        job=job,
+    )
+
+    add_log(job, f"Base consolidada gerada: {arquivo_saida.name}")
+
+    arquivos = [{
+        "name": arquivo_saida.name,
+        "url": f"/downloads/op930/consolidado/{arquivo_saida.name}",
+        "periodo": f"{data_inicial} até {data_final}",
+    }]
+
+    job.result_file = None
+    job.result_files = arquivos
+
+    return arquivos
+
 @router.get("/renomeador", response_class=HTMLResponse)
 def renomeador_form(request: Request):
     return templates.TemplateResponse(
