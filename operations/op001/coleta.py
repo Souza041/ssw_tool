@@ -555,6 +555,18 @@ class OP001Coleta:
         print("fil_ent:", fil_ent)
         print("setor:", setor)
 
+        transporte_limpo = re.sub(r"\D", "", str(transporte))
+        ordem_limpa = re.sub(r"\D", "", str(ordem_inversa))
+
+        identificador = transporte_limpo or ordem_limpa
+
+        solicitante_unico = f"AUT{identificador}"[:20]
+
+        observacao = (
+            f"TRANSPORTE: {transporte} | "
+            f"ORDEM: {ordem_inversa}"
+        ).strip()
+
         payload = {
             "act": "SAVECOL",
             "f5": data_programada,
@@ -562,7 +574,7 @@ class OP001Coleta:
             "cod_fil": "#cod_fil#",
             "devolucao": "REVERSA",
 
-            "f30": solicitante,
+            "f30": solicitante_unico,
             "f31": tipo_frete,
 
             "f33": remetente.get("nome"),

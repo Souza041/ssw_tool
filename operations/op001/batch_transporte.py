@@ -133,6 +133,9 @@ def processar_planilha_transporte(
                 add_log(
                     job,
                     f"Processando linha {index + 1}/{total} | "
+                    f"Transporte={row['TRANSPORTE']} | "
+                    f"Ordem={row['ORDEM_INVERSA']} | "
+                    f"CNPJ={row['CNPJ_DESTINATARIO']} | "
                     f"Cliente={row['CLIENTE']} | "
                     f"Destino={row['MUNICIPIO_DESTINO']}/{row['UF_DESTINO']}"
                 )
