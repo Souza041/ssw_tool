@@ -8,6 +8,8 @@ from utils.excel import carregar_planilha
 
 from web.jobs import add_log, set_progress
 
+import re
+
 
 COLUNA_NFD = "NFD"
 COLUNA_CNPJ = "CNPJ"
@@ -87,10 +89,14 @@ def processar_planilha_nfd(
             continue
 
         try:
+            nfd_limpa = re.sub(r"\D", "", nfd)
+
+            solicitante_unico = f"AUT{nfd_limpa}"[:20]
+
             resultado = op001.salvar_coleta_nfd(
                 nfd=nfd,
                 cnpj=cnpj,
-                solicitante=solicitante,
+                solicitante=solicitante_unico,
                 tipo_frete=tipo_frete,
                 cnpj_destinatario=cnpj_destinatario,
                 hora_limite=hora_limite,
@@ -102,7 +108,7 @@ def processar_planilha_nfd(
             df.at[index, COLUNA_RESULTADO_MSG] = resultado.get("mensagem", "")
 
             if job:
-                add_log(job, f"Coleta gerada: {resultado.get('coleta', '')}")
+                add_log(job, f"NFD={nfd} | Coleta={resultado.get('coleta', '')}")
 
         except Exception as exc:
             df.at[index, COLUNA_RESULTADO_STATUS] = "ERRO"
