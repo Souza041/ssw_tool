@@ -9,6 +9,7 @@ from operations.incidentes.enrich import enriquecer_base_com_op101
 from operations.incidentes.op101_history import OP101History
 from operations.incidentes.analytics import preparar_base_analitica
 from operations.incidentes.xml_enricher import baixar_xmls_cte
+from operations.incidentes.publisher import IncidentPublisher
 from ssw.client import SSWClient
 
 
@@ -287,5 +288,30 @@ def executar_incidentes_op930(
         f"Base final de débitos gerada: "
         f"{len(base_debitos)} registros."
     )
+
+    # ---------------------------------------------------------
+    # 6. Publica a base de auditoria para o dashboard
+    # ---------------------------------------------------------
+    publisher = IncidentPublisher()
+
+    publicacao = publisher.publish(
+        arquivo_auditoria
+    )
+
+    log(
+        "Base publicada para o dashboard: "
+        f"{publicacao['current']}"
+    )
+
+    log(
+        "Cópia histórica gerada: "
+        f"{publicacao['history']}"
+    )
+
+    if publicacao["history_removed"] > 0:
+        log(
+            "Históricos antigos removidos: "
+            f"{publicacao['history_removed']}"
+        )
 
     return arquivo_auditoria

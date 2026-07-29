@@ -1,22 +1,55 @@
+# Ambientes virtuais
 venv/
 .venv/
-__pycache__/
-*.pyc
 
+# Cache Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Variáveis de ambiente
 .env
 .env.*
+!.env.example
 
-downloads/
+# Logs
 logs/
 *.log
 
+# Downloads e arquivos temporários
+downloads/
+temp/
+tmp/
+
+# Arquivos de saída
+outputs/downloads/
+outputs/xml/
+outputs/metricas_snapshots/
+outputs/*.xlsx
+outputs/*.xls
+outputs/*.csv
+
+# Snapshots antigos do módulo de métricas
+modules/metricas/snapshots/
+
+# Arquivos gerados
 *.xlsx
 *.xls
 *.csv
 *.sswweb
 
+# IDEs e editores
+.vscode/
+.idea/
+
+# Sistema operacional
 .DS_Store
 Thumbs.db
 
-modules/metricas/snapshots/*
-downloads/*
+# Dados publicados do dashboard de incidentes
+data/incidentes/current/*
+data/incidentes/history/*
+
+# Mantém somente a estrutura das pastas
+!data/incidentes/current/.gitkeep
+!data/incidentes/history/.gitkeep
