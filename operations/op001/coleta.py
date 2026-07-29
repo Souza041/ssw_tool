@@ -46,6 +46,10 @@ class OP001Coleta:
             },
         )
 
+    def _gerar_solicitante(self, identificador: str) -> str:
+        identificador = re.sub(r"\D", "", str(identificador))
+        return f"AUT{identificador}"[:20]
+
     def consultar_remetente(self, cnpj: str) -> dict:
         response = self.client.get(
             "/bin/ssw0017",
@@ -267,6 +271,10 @@ class OP001Coleta:
         hora_limite: str = "1800",
     ) -> dict:
         hoje = datetime.now().strftime("%d%m%y")
+
+        # Gera um solicitante único para evitar bloqueio de duplicidade do SSW
+        nfd_limpa = re.sub(r"\D", "", str(nfd))
+        solicitante = self._gerar_solicitante(nfd)
 
         return self.salvar_coleta_reversa(
             solicitante=solicitante,
@@ -560,7 +568,7 @@ class OP001Coleta:
 
         identificador = transporte_limpo or ordem_limpa
 
-        solicitante_unico = f"AUT{identificador}"[:20]
+        solicitante_unico = self._gerar_solicitante(transporte)
 
         observacao = (
             f"TRANSPORTE: {transporte} | "

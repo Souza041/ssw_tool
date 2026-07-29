@@ -748,11 +748,18 @@ def executar_incidentes_op930_job(
         job=job,
     )
 
-    add_log(job, f"Base consolidada gerada: {arquivo_saida.name}")
+    add_log(
+        job,
+        f"Arquivo final gerado: {arquivo_saida.name}",
+    )
+
+    caminho_relativo = arquivo_saida.relative_to(
+        Path("downloads")
+    )
 
     arquivos = [{
         "name": arquivo_saida.name,
-        "url": f"/downloads/op930/consolidado/{arquivo_saida.name}",
+        "url": f"/downloads/{caminho_relativo.as_posix()}",
         "periodo": f"{data_inicial} até {data_final}",
     }]
 

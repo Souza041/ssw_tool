@@ -13,6 +13,10 @@ from modules.metricas.scheduler import iniciar_scheduler_metricas
 
 from starlette.middleware.gzip import GZipMiddleware
 
+from modules.incidentes.router import (
+    router as incidentes_router,
+)
+
 mimetypes.add_type("text/css", ".css")
 mimetypes.add_type("application/javascript", ".js")
 
@@ -43,8 +47,25 @@ app.mount(
     name="metricas-static",
 )
 
+app.mount(
+    "/incidentes-static",
+    StaticFiles(
+        directory=str(
+            BASE_DIR
+            / "modules"
+            / "incidentes"
+            / "static"
+        )
+    ),
+    name="incidentes-static",
+)
+
 app.include_router(router)
 app.include_router(metricas_router)
+
+app.include_router(
+    incidentes_router
+)
 
 @app.on_event("startup")
 def startup_event():

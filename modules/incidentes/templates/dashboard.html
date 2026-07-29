@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <meta
+        name="description"
+        content="Dashboard operacional de incidentes"
+    >
+
+    <title>
+        {{ page_title | default("Gestão de Incidentes") }}
+    </title>
+
+    <link
+        rel="stylesheet"
+        href="/incidentes-static/dashboard.css"
+    >
+</head>
+
+<body>
+    <div
+        class="incidents-app"
+        id="incidentsApp"
+        data-api-url="/incidentes/api/dashboard"
+        data-status-url="/incidentes/api/status"
+        data-cache-url="/incidentes/api/cache/reload"
+    >
+
+        <!-- ==========================================
+             CABEÇALHO
+        =========================================== -->
+
+        <header class="incidents-header">
+            <div class="incidents-header__content">
+                <div class="incidents-header__identity">
+                    <span class="incidents-header__eyebrow">
+                        Nexus Platform
+                    </span>
+
+                    <h1 class="incidents-header__title">
+                        Gestão de Incidentes
+                    </h1>
+
+                    <p class="incidents-header__description">
+                        Acompanhamento operacional, validação de
+                        débitos e análise de ocorrências.
+                    </p>
+                </div>
+
+                <div class="incidents-header__actions">
+                    <div
+                        class="snapshot-status"
+                        id="snapshotStatus"
+                    >
+                        <span
+                            class="snapshot-status__indicator"
+                            id="snapshotIndicator"
+                            aria-hidden="true"
+                        ></span>
+
+                        <div class="snapshot-status__content">
+                            <span class="snapshot-status__label">
+                                Base de dados
+                            </span>
+
+                            <strong
+                                class="snapshot-status__value"
+                                id="snapshotName"
+                            >
+                                {% if snapshot_name %}
+                                    {{ snapshot_name }}
+                                {% else %}
+                                    Nenhum snapshot
+                                {% endif %}
+                            </strong>
+                        </div>
+                    </div>
+
+                    <button
+                        type="button"
+                        class="button button--secondary"
+                        id="reloadCacheButton"
+                    >
+                        Atualizar dados
+                    </button>
+                </div>
+            </div>
+        </header>
+
+
+        <!-- ==========================================
+             CONTEÚDO
+        =========================================== -->
+
+        <main class="incidents-main">
+
+            <!-- Loading -->
+
+            <section
+                class="dashboard-state dashboard-state--loading"
+                id="dashboardLoading"
+                aria-live="polite"
+            >
+                <div
+                    class="dashboard-spinner"
+                    aria-hidden="true"
+                ></div>
+
+                <p>
+                    Carregando indicadores...
+                </p>
+            </section>
+
+
+            <!-- Erro -->
+
+            <section
+                class="dashboard-state dashboard-state--error"
+                id="dashboardError"
+                hidden
+                aria-live="assertive"
+            >
+                <div class="dashboard-state__content">
+                    <strong>
+                        Não foi possível carregar o dashboard
+                    </strong>
+
+                    <p id="dashboardErrorMessage">
+                        Verifique a disponibilidade do snapshot
+                        e tente novamente.
+                    </p>
+
+                    <button
+                        type="button"
+                        class="button button--primary"
+                        id="retryDashboardButton"
+                    >
+                        Tentar novamente
+                    </button>
+                </div>
+            </section>
+
+
+            <!-- Dashboard -->
+
+            <div
+                class="dashboard-content"
+                id="dashboardContent"
+                hidden
+            >
+
+                <!-- ==================================
+                     FILTROS
+                =================================== -->
+
+                <section
+                    class="dashboard-panel dashboard-filters"
+                    aria-labelledby="filtersTitle"
+                >
+                    <div class="dashboard-panel__header">
+                        <div>
+                            <span class="dashboard-panel__eyebrow">
+                                Consulta
+                            </span>
+
+                            <h2
+                                class="dashboard-panel__title"
+                                id="filtersTitle"
+                            >
+                                Filtros
+                            </h2>
+                        </div>
+
+                        <div class="dashboard-panel__actions">
+                            <button
+                                type="button"
+                                class="button button--text"
+                                id="clearFiltersButton"
+                            >
+                                Limpar filtros
+                            </button>
+
+                            <button
+                                type="submit"
+                                class="button button--primary"
+                                form="dashboardFiltersForm"
+                            >
+                                Aplicar filtros
+                            </button>
+                        </div>
+                    </div>
+
+                    <form
+                        class="filters-grid"
+                        id="dashboardFiltersForm"
+                    >
+                        <div class="form-field">
+                            <label for="filterStartDate">
+                                Data inicial
+                            </label>
+
+                            <input
+                                type="date"
+                                id="filterStartDate"
+                                name="data_inicial"
+                            >
+                        </div>
+
+                        <div class="form-field">
+                            <label for="filterEndDate">
+                                Data final
+                            </label>
+
+                            <input
+                                type="date"
+                                id="filterEndDate"
+                                name="data_final"
+                            >
+                        </div>
+
+                        <div class="form-field">
+                            <label for="filterGroups">
+                                Grupo de cliente
+                            </label>
+
+                            <select
+                                id="filterGroups"
+                                name="grupos_clientes"
+                                multiple
+                            ></select>
+                        </div>
+
+                        <div class="form-field">
+                            <label for="filterClients">
+                                Cliente
+                            </label>
+
+                            <select
+                                id="filterClients"
+                                name="clientes"
+                                multiple
+                            ></select>
+                        </div>
+
+                        <div class="form-field">
+                            <label for="filterUnits">
+                                Unidade
+                            </label>
+
+                            <select
+                                id="filterUnits"
+                                name="unidades"
+                                multiple
+                            ></select>
+                        </div>
+
+                        <div class="form-field">
+                            <label for="filterOccurrences">
+                                Código de ocorrência
+                            </label>
+
+                            <select
+                                id="filterOccurrences"
+                                name="codigos_ocorrencia"
+                                multiple
+                            ></select>
+                        </div>
+
+                        <div class="form-field">
+                            <label for="filterDebitStatus">
+                                Status do débito
+                            </label>
+
+                            <select
+                                id="filterDebitStatus"
+                                name="status_debito"
+                                multiple
+                            ></select>
+                        </div>
+
+                        <div class="form-field">
+                            <label for="filterDebitRules">
+                                Regra de validação
+                            </label>
+
+                            <select
+                                id="filterDebitRules"
+                                name="regras_debito"
+                                multiple
+                            ></select>
+                        </div>
+
+                        <div class="form-field">
+                            <label for="filterProducts">
+                                Produto
+                            </label>
+
+                            <select
+                                id="filterProducts"
+                                name="produtos"
+                                multiple
+                            ></select>
+                        </div>
+                    </form>
+                </section>
+
+
+                <!-- ==================================
+                     METADADOS
+                =================================== -->
+
+                <section class="dashboard-meta">
+                    <div class="dashboard-meta__item">
+                        <span>Última atualização</span>
+
+                        <strong id="metaUpdatedAt">
+                            —
+                        </strong>
+                    </div>
+
+                    <div class="dashboard-meta__item">
+                        <span>Registros da base</span>
+
+                        <strong id="metaTotalBefore">
+                            0
+                        </strong>
+                    </div>
+
+                    <div class="dashboard-meta__item">
+                        <span>Registros filtrados</span>
+
+                        <strong id="metaTotalAfter">
+                            0
+                        </strong>
+                    </div>
+
+                    <div class="dashboard-meta__item">
+                        <span>Situação dos filtros</span>
+
+                        <strong id="metaFiltersStatus">
+                            Sem filtros
+                        </strong>
+                    </div>
+                </section>
+
+
+                <!-- ==================================
+                     KPIs
+                =================================== -->
+
+                <section
+                    class="dashboard-section"
+                    aria-labelledby="kpisTitle"
+                >
+                    <div class="dashboard-section__header">
+                        <div>
+                            <span class="dashboard-section__eyebrow">
+                                Visão geral
+                            </span>
+
+                            <h2
+                                class="dashboard-section__title"
+                                id="kpisTitle"
+                            >
+                                Indicadores principais
+                            </h2>
+                        </div>
+                    </div>
+
+                    <div class="kpi-grid">
+                        <article class="kpi-card">
+                            <span class="kpi-card__label">
+                                CTRCs
+                            </span>
+
+                            <strong
+                                class="kpi-card__value"
+                                id="kpiTotalCtrcs"
+                            >
+                                0
+                            </strong>
+
+                            <span class="kpi-card__detail">
+                                Conhecimentos distintos
+                            </span>
+                        </article>
+
+                        <article class="kpi-card">
+                            <span class="kpi-card__label">
+                                Valor da carga
+                            </span>
+
+                            <strong
+                                class="kpi-card__value"
+                                id="kpiCargoValue"
+                            >
+                                R$ 0,00
+                            </strong>
+
+                            <span class="kpi-card__detail">
+                                Soma dos registros selecionados
+                            </span>
+                        </article>
+
+                        <article
+                            class="kpi-card kpi-card--danger"
+                        >
+                            <span class="kpi-card__label">
+                                Débitos
+                            </span>
+
+                            <strong
+                                class="kpi-card__value"
+                                id="kpiDebits"
+                            >
+                                0
+                            </strong>
+
+                            <span
+                                class="kpi-card__detail"
+                                id="kpiDebitsPercentage"
+                            >
+                                0,00% dos registros
+                            </span>
+                        </article>
+
+                        <article
+                            class="kpi-card kpi-card--warning"
+                        >
+                            <span class="kpi-card__label">
+                                Pendentes
+                            </span>
+
+                            <strong
+                                class="kpi-card__value"
+                                id="kpiPending"
+                            >
+                                0
+                            </strong>
+
+                            <span
+                                class="kpi-card__detail"
+                                id="kpiPendingPercentage"
+                            >
+                                0,00% dos registros
+                            </span>
+                        </article>
+
+                        <article
+                            class="kpi-card kpi-card--success"
+                        >
+                            <span class="kpi-card__label">
+                                Não débitos
+                            </span>
+
+                            <strong
+                                class="kpi-card__value"
+                                id="kpiNonDebits"
+                            >
+                                0
+                            </strong>
+
+                            <span class="kpi-card__detail">
+                                Ocorrências não classificadas como débito
+                            </span>
+                        </article>
+
+                        <article class="kpi-card">
+                            <span class="kpi-card__label">
+                                Sem histórico
+                            </span>
+
+                            <strong
+                                class="kpi-card__value"
+                                id="kpiWithoutHistory"
+                            >
+                                0
+                            </strong>
+
+                            <span class="kpi-card__detail">
+                                Registros sem histórico localizado
+                            </span>
+                        </article>
+
+                        <article class="kpi-card">
+                            <span class="kpi-card__label">
+                                Clientes
+                            </span>
+
+                            <strong
+                                class="kpi-card__value"
+                                id="kpiClients"
+                            >
+                                0
+                            </strong>
+
+                            <span class="kpi-card__detail">
+                                Clientes distintos
+                            </span>
+                        </article>
+
+                        <article class="kpi-card">
+                            <span class="kpi-card__label">
+                                Produtos
+                            </span>
+
+                            <strong
+                                class="kpi-card__value"
+                                id="kpiProducts"
+                            >
+                                0
+                            </strong>
+
+                            <span class="kpi-card__detail">
+                                Produtos predominantes
+                            </span>
+                        </article>
+                    </div>
+                </section>
+
+
+                <!-- ==================================
+                     ANÁLISES V2
+                =================================== -->
+
+                <section
+                    class="dashboard-section"
+                    aria-labelledby="analyticsTitle"
+                >
+                    <div class="dashboard-section__header">
+                        <div>
+                            <span class="dashboard-section__eyebrow">
+                                Análises
+                            </span>
+
+                            <h2
+                                class="dashboard-section__title"
+                                id="analyticsTitle"
+                            >
+                                Evolução e distribuição
+                            </h2>
+                        </div>
+                    </div>
+
+                    <div class="analytics-grid">
+
+                        <!-- Evolução diária -->
+
+                        <article
+                            class="analytics-card analytics-card--evolution"
+                        >
+                            <div class="analytics-card__header">
+                                <div>
+                                    <h3 class="analytics-card__title">
+                                        Evolução diária
+                                    </h3>
+
+                                    <p class="analytics-card__description">
+                                        Volume de incidentes no período
+                                    </p>
+                                </div>
+
+                                <span class="analytics-card__period">
+                                    Período selecionado
+                                </span>
+                            </div>
+
+                            <div
+                                class="analytics-chart analytics-chart--line"
+                                id="dailyEvolutionChart"
+                            ></div>
+                        </article>
+
+
+                        <!-- Status dos débitos -->
+
+                        <article
+                            class="analytics-card analytics-card--status"
+                        >
+                            <div class="analytics-card__header">
+                                <div>
+                                    <h3 class="analytics-card__title">
+                                        Status dos débitos
+                                    </h3>
+
+                                    <p class="analytics-card__description">
+                                        Distribuição da validação atual
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div
+                                class="analytics-chart analytics-chart--donut"
+                                id="debitStatusChart"
+                            ></div>
+                        </article>
+
+
+                        <!-- Ocorrências -->
+
+                        <article class="analytics-card">
+                            <div class="analytics-card__header">
+                                <div>
+                                    <h3 class="analytics-card__title">
+                                        Principais códigos de ocorrência
+                                    </h3>
+
+                                    <p class="analytics-card__description">
+                                        Códigos com maior volume de registros
+                                    </p>
+                                </div>
+
+                                <span class="analytics-card__badge">
+                                    Top 10
+                                </span>
+                            </div>
+
+                            <div
+                                class="ranking-list"
+                                id="occurrencesRankingChart"
+                            ></div>
+                        </article>
+
+
+                        <!-- Grupos -->
+
+                        <article class="analytics-card">
+                            <div class="analytics-card__header">
+                                <div>
+                                    <h3 class="analytics-card__title">
+                                        Grupos de clientes
+                                    </h3>
+
+                                    <p class="analytics-card__description">
+                                        Concentração por grupo econômico
+                                    </p>
+                                </div>
+
+                                <span class="analytics-card__badge">
+                                    Top 10
+                                </span>
+                            </div>
+
+                            <div
+                                class="ranking-list"
+                                id="clientGroupsChart"
+                            ></div>
+                        </article>
+
+
+                        <!-- Unidades -->
+
+                        <article class="analytics-card">
+                            <div class="analytics-card__header">
+                                <div>
+                                    <h3 class="analytics-card__title">
+                                        Unidades
+                                    </h3>
+
+                                    <p class="analytics-card__description">
+                                        Filiais com maior volume de incidentes
+                                    </p>
+                                </div>
+
+                                <span class="analytics-card__badge">
+                                    Top 10
+                                </span>
+                            </div>
+
+                            <div
+                                class="ranking-list"
+                                id="unitsRankingChart"
+                            ></div>
+                        </article>
+
+
+                        <!-- Produtos -->
+
+                        <article class="analytics-card">
+                            <div class="analytics-card__header">
+                                <div>
+                                    <h3 class="analytics-card__title">
+                                        Produtos predominantes
+                                    </h3>
+
+                                    <p class="analytics-card__description">
+                                        Produtos mais presentes nas ocorrências
+                                    </p>
+                                </div>
+
+                                <span class="analytics-card__badge">
+                                    Top 10
+                                </span>
+                            </div>
+
+                            <div
+                                class="ranking-list"
+                                id="productsRankingChart"
+                            ></div>
+                        </article>
+
+                    </div>
+                </section>
+
+
+                <!-- ==================================
+                     REGRAS
+                =================================== -->
+
+                <section
+                    class="dashboard-panel dashboard-table-panel"
+                    aria-labelledby="rulesTitle"
+                >
+                    <div class="dashboard-panel__header">
+                        <div>
+                            <span class="dashboard-panel__eyebrow">
+                                Validação
+                            </span>
+
+                            <h2
+                                class="dashboard-panel__title"
+                                id="rulesTitle"
+                            >
+                                Regras de débito
+                            </h2>
+                        </div>
+
+                        <span
+                            class="record-counter"
+                            id="rulesCounter"
+                        >
+                            0 regras
+                        </span>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="dashboard-table">
+                            <thead>
+                                <tr>
+                                    <th>Regra</th>
+                                    <th>Descrição</th>
+                                    <th>Ação recomendada</th>
+                                    <th class="table-number">
+                                        Quantidade
+                                    </th>
+                                    <th class="table-number">
+                                        Percentual
+                                    </th>
+                                    <th class="table-number">
+                                        Acumulado
+                                    </th>
+                                    <th class="table-number">
+                                        Valor da carga
+                                    </th>
+                                </tr>
+                            </thead>
+
+                            <tbody id="rulesTableBody">
+                                <tr>
+                                    <td
+                                        colspan="7"
+                                        class="table-empty"
+                                    >
+                                        Nenhuma regra disponível.
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+
+                <!-- ==================================
+                     REGISTROS DE ATENÇÃO
+                =================================== -->
+
+                <section
+                    class="dashboard-panel dashboard-table-panel"
+                    aria-labelledby="attentionTitle"
+                >
+                    <div class="dashboard-panel__header">
+                        <div>
+                            <span class="dashboard-panel__eyebrow">
+                                Tratativa operacional
+                            </span>
+
+                            <h2
+                                class="dashboard-panel__title"
+                                id="attentionTitle"
+                            >
+                                Registros que exigem atenção
+                            </h2>
+                        </div>
+
+                        <span
+                            class="record-counter"
+                            id="attentionCounter"
+                        >
+                            0 registros
+                        </span>
+                    </div>
+
+                    <div
+                        class="table-responsive attention-table-scroll"
+                    >
+                        <table class="dashboard-table">
+                            <thead>
+                                <tr>
+                                    <th>CTRC</th>
+                                    <th>Nota fiscal</th>
+                                    <th>Data</th>
+                                    <th>Grupo</th>
+                                    <th>Cliente</th>
+                                    <th>Unidade</th>
+                                    <th>Ocorrência</th>
+                                    <th>Status</th>
+                                    <th>Regra</th>
+                                    <th>Produto</th>
+                                    <th class="table-number">
+                                        Valor da carga
+                                    </th>
+                                </tr>
+                            </thead>
+
+                            <tbody id="attentionTableBody">
+                                <tr>
+                                    <td
+                                        colspan="11"
+                                        class="table-empty"
+                                    >
+                                        Nenhum registro exige atenção.
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+            </div>
+        </main>
+
+
+        <!-- ==========================================
+             TOAST
+        =========================================== -->
+
+        <div
+            class="dashboard-toast"
+            id="dashboardToast"
+            hidden
+            role="status"
+            aria-live="polite"
+        >
+            <span id="dashboardToastMessage"></span>
+        </div>
+    </div>
+
+
+    <!-- ApexCharts -->
+
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+
+    <script
+        src="/incidentes-static/dashboard.js"
+        defer
+    ></script>
+</body>
+</html>

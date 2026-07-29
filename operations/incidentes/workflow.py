@@ -5,10 +5,18 @@ import pandas as pd
 from operations.op930.clientes import GRUPOS_ATIVOS_MVP
 from operations.op930.parser import tratar_op930
 from operations.op930.report import OP930Report
+from operations.incidentes.enrich import enriquecer_base_com_op101
+from operations.incidentes.op101_history import OP101History
+from operations.incidentes.analytics import preparar_base_analitica
+from operations.incidentes.xml_enricher import baixar_xmls_cte
 from ssw.client import SSWClient
+
 
 from operations.op156.queue import RelatorioSemDados
 
+from operations.incidentes.xml_parser_enricher import (enriquecer_base_com_xml_cte,)
+
+from operations.incidentes.exporter import (exportar_incidentes,)
 
 def executar_incidentes_op930(
     client: SSWClient,
@@ -74,8 +82,8 @@ def executar_incidentes_op930(
 
                 continue
 
-            except Exception as exc:
-                log(f"{grupo}: relatório não gerado ou falhou. Erro: {exc}")
+            except TimeoutError:
+                log(f"{grupo}: tempo limite ao aguardar relatório.")
 
                 if job:
                     from web.jobs import set_progress
@@ -83,8 +91,11 @@ def executar_incidentes_op930(
 
                 continue
 
-            except TimeoutError:
-                log(f"{grupo}: nenhum relatório encontrado.")
+            except Exception as exc:
+                log(
+                    f"{grupo}: relatório não gerado ou falhou. "
+                    f"Erro: {exc}"
+                )
 
                 if job:
                     from web.jobs import set_progress
@@ -123,18 +134,158 @@ def executar_incidentes_op930(
 
     if not bases:
         raise ValueError("Nenhuma base gerada.")
-    
+
     log("Consolidando bases...")
 
-    base_final = pd.concat(bases, ignore_index=True)
+    base_final = pd.concat(
+        bases,
+        ignore_index=True,
+    )
 
-    log(f"Base consolidada: {len(base_final)} registros.")
+    log(
+        f"Base consolidada inicial: "
+        f"{len(base_final)} registros."
+    )
 
-    output_file = consolidado_dir / "incidentes_op930_base.xlsx"
+    # ---------------------------------------------------------
+    # 1. Salva o consolidado inicial, antes da consulta OP101
+    # ---------------------------------------------------------
+    output_file = (
+        consolidado_dir
+        / "incidentes_op930_base.xlsx"
+    )
 
-    with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
-        base_final.to_excel(writer, index=False, sheet_name="base")
+    base_final.to_excel(
+        output_file,
+        index=False,
+    )
 
-    log(f"Base consolidada gerada: {output_file.name}")
+    log(
+        f"Base consolidada inicial gerada: "
+        f"{output_file.name}"
+    )
 
-    return output_file
+    # ---------------------------------------------------------
+    # 2. Enriquece a base consultando a OP101
+    # ---------------------------------------------------------
+    log("Iniciando enriquecimento pela OP101...")
+
+    op101_history = OP101History(client)
+
+    base_enriquecida = enriquecer_base_com_op101(
+        df=base_final,
+        op101=op101_history,
+        job=job,
+        log_func=log_func,
+    )
+
+    log("Enriquecimento OP101 finalizado.")
+
+    base_enriquecida = preparar_base_analitica(
+        base_enriquecida
+    )
+
+    log("Preparando colunas analíticas para dashboard...")
+
+    log("Colunas analíticas preparadas.")
+    
+    log("Iniciando download dos XMLs vinculados aos CTRCs...")
+
+    base_enriquecida = baixar_xmls_cte(
+        df=base_enriquecida,
+        client=client,
+        output_dir=output_dir / "op930" / "xml",
+        job=job,
+        log_func=log_func,
+        apenas_debitos=False,
+    )
+
+    log("Download dos XMLs finalizado.")
+
+    log("Iniciando leitura dos XMLs dos CT-es...")
+
+    base_enriquecida = enriquecer_base_com_xml_cte(
+        df=base_enriquecida,
+        job=job,
+        log_func=log_func,
+    )
+
+    log("Leitura dos XMLs dos CT-es finalizada.")
+
+    # ---------------------------------------------------------
+    # 3. Cria diretórios de auditoria e base final
+    # ---------------------------------------------------------
+    auditoria_dir = (
+        output_dir
+        / "op930"
+        / "auditoria"
+    )
+
+    final_dir = (
+        output_dir
+        / "op930"
+        / "final"
+    )
+
+    auditoria_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    final_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    # ---------------------------------------------------------
+    # 4. Salva todos os registros enriquecidos para auditoria
+    # ---------------------------------------------------------
+    arquivo_auditoria = (
+        auditoria_dir
+        / "incidentes_op930_auditoria.xlsx"
+    )
+
+    exportar_incidentes(
+        df=base_enriquecida,
+        caminho_saida=arquivo_auditoria,
+    )
+
+    log(
+        f"Base de auditoria gerada: "
+        f"{arquivo_auditoria.name}"
+    )
+
+    # ---------------------------------------------------------
+    # 5. Filtra somente débitos efetivamente validados
+    # ---------------------------------------------------------
+    if "DEBITO_VALIDADO" in base_enriquecida.columns:
+        base_debitos = base_enriquecida[
+            base_enriquecida["DEBITO_VALIDADO"]
+            .astype(str)
+            .str.strip()
+            .str.upper()
+            == "SIM"
+        ].copy()
+    else:
+        base_debitos = (
+            base_enriquecida
+            .iloc[0:0]
+            .copy()
+        )
+
+    arquivo_final = (
+        final_dir
+        / "incidentes_op930_debitos_validos.xlsx"
+    )
+
+    base_debitos.to_excel(
+        arquivo_final,
+        index=False,
+    )
+
+    log(
+        f"Base final de débitos gerada: "
+        f"{len(base_debitos)} registros."
+    )
+
+    return arquivo_auditoria

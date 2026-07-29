@@ -4,7 +4,7 @@ import pandas as pd
 
 
 OCORRENCIAS_INTERESSE = {
-    "1", "47", "62", "63", "73", "80", "85", "96",
+    "2", "3", "11", "12", "54", "57", "67",
 }
 
 
@@ -57,13 +57,28 @@ def tratar_op930(file_path: Path, grupo: str, cnpj: str) -> pd.DataFrame:
     base["_OC_NORMALIZADA"] = (
         base[col_oc]
         .astype(str)
-        .str.replace(r"\.0$", "", regex=True)
         .str.strip()
+        .str.replace(r"\.0$", "", regex=True)
+        .str.lstrip("0")
     )
+
+    base["_OC_NORMALIZADA"] = base["_OC_NORMALIZADA"].replace("", "0")
 
     base = base[
         base["_OC_NORMALIZADA"].isin(OCORRENCIAS_INTERESSE)
     ].copy()
+
+    if "CANCELADO" in base.columns:
+        cancelado = (
+            base["CANCELADO"]
+            .astype(str)
+            .str.strip()
+            .str.upper()
+        )
+
+        base = base [
+            cancelado != "SIM"
+        ].copy()
 
     base["GRUPO_CLIENTE"] = grupo
     base["CNPJ_GRUPO"] = cnpj

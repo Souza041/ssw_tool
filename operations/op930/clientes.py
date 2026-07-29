@@ -21,4 +21,8 @@ GRUPOS_ATIVOS_MVP = {
     "Electrolux": GRUPOS_CNPJ["Electrolux"],
     "LG": GRUPOS_CNPJ["LG"],
     "Britania": GRUPOS_CNPJ["Britania"],
+    "Whirlpool": GRUPOS_CNPJ["Mlog"],
+    "Muller": GRUPOS_CNPJ["Muller"],
+    "Samsung": GRUPOS_CNPJ["Samsung"],
+    "Carrefour": GRUPOS_CNPJ["Carrefour"],
 }
