@@ -49,8 +49,10 @@ def ler_base(base_path: Path) -> pd.DataFrame:
         nomes_prioritarios = [
             "DATA-SP",
             "DATA-SC",
+            "DATA-PR",
             "SP",
             "SC",
+            "PR",
         ]
 
         dataframes = []
@@ -103,8 +105,10 @@ def ler_base(base_path: Path) -> pd.DataFrame:
             if nome_normalizado not in {
                 "DATA-SP",
                 "DATA-SC",
+                "DATA-PR",
                 "SP",
                 "SC",
+                "PR",
             }:
                 continue
 
@@ -360,23 +364,12 @@ def transportadora_por_serie(
     serie: str,
     aba_origem: str = "",
 ) -> str:
-    serie_normalizada = (
-        str(serie)
-        .strip()
-        .lstrip("0")
-    )
+    serie_normalizada = str(serie or "").strip().lstrip("0")
+    origem = str(aba_origem or "").strip().upper()
 
-    origem = (
-        str(aba_origem)
-        .strip()
-        .upper()
-    )
-
-    if serie_normalizada in {"1", "3", "13"}:
-        return "ROBR_SP"
-
-    if serie_normalizada == "33":
-        return "ROBR_SC"
+    # A origem da aba tem prioridade quando estiver disponível.
+    if origem in {"PR", "DATA-PR"}:
+        return "ROBR_PR"
 
     if origem in {"SP", "DATA-SP"}:
         return "ROBR_SP"
@@ -384,8 +377,17 @@ def transportadora_por_serie(
     if origem in {"SC", "DATA-SC"}:
         return "ROBR_SC"
 
-    return "ROBR_SC"
+    # Fallback temporário pela série.
+    if serie_normalizada == "1":
+        return "ROBR_PR"
 
+    if serie_normalizada in {"3", "13"}:
+        return "ROBR_SP"
+
+    if serie_normalizada == "33":
+        return "ROBR_SC"
+
+    return "NAO_MAPEADO"
 
 def gerar_protocolos_carrier(
     registros: list[dict],
@@ -398,19 +400,42 @@ def gerar_protocolos_carrier(
     grupos = {}
 
     for item in registros:
-        serie = str(item.get("serie") or "").strip()
-        aba_origem = str(item.get("aba_origem") or "").strip()
+        transportadora = str(
+            item.get("transportadora") or ""
+        ).strip()
 
-        if serie or aba_origem:
-            grupo = transportadora_por_serie(serie, aba_origem)
-        else:
-            grupo = "SEM_BASE"
+        if not transportadora:
+            serie = str(
+                item.get("serie") or ""
+            ).strip()
 
-        grupos.setdefault(grupo, []).append(item)
+            aba_origem = str(
+                item.get("aba_origem") or ""
+            ).strip()
+
+            if serie or aba_origem:
+                transportadora = transportadora_por_serie(
+                    serie,
+                    aba_origem,
+                )
+            else:
+                transportadora = "SEM_BASE"
+
+        grupos.setdefault(
+            transportadora,
+            [],
+        ).append(item)
 
     for transportadora, itens in grupos.items():
-        for idx in range(0, len(itens), LIMITE_POR_ARQUIVO):
-            lote = itens[idx:idx + LIMITE_POR_ARQUIVO]
+        for idx in range(
+            0,
+            len(itens),
+            LIMITE_POR_ARQUIVO,
+        ):
+            lote = itens[
+                idx:idx + LIMITE_POR_ARQUIVO
+            ]
+
             numero_lote = (
                 idx // LIMITE_POR_ARQUIVO
             ) + 1
@@ -429,12 +454,14 @@ def gerar_protocolos_carrier(
                 if transportadora == "SEM_BASE"
                 else transportadora
             )
+
             ws["C2"] = datetime.now()
             ws["C2"].number_format = "DD/MM/YYYY"
 
             ws["C3"] = protocolo
             ws["C4"] = email
 
+            # Limpa as linhas do template antes de preencher.
             for linha in range(9, 80):
                 for coluna in range(2, 7):
                     ws.cell(
@@ -445,57 +472,97 @@ def gerar_protocolos_carrier(
             linha_excel = 9
 
             for item in lote:
-                load_id = str(item.get("load_id") or "").strip()
-                nf = str(item.get("nf") or "").strip()
-                serie = str(item.get("serie") or "").strip()
-                data_assinatura = item.get("data_assinatura")
+                load_id = str(
+                    item.get("load_id") or ""
+                ).strip()
 
-                ws.cell(linha_excel, 2).value = (
+                nf = str(
+                    item.get("nf") or ""
+                ).strip()
+
+                serie = str(
+                    item.get("serie") or ""
+                ).strip()
+
+                data_assinatura = item.get(
+                    "data_assinatura"
+                )
+
+                ws.cell(
+                    linha_excel,
+                    2,
+                ).value = (
                     int(load_id)
                     if load_id.isdigit()
                     else None
                 )
 
-                ws.cell(linha_excel, 3).value = (
+                ws.cell(
+                    linha_excel,
+                    3,
+                ).value = (
                     int(nf)
                     if nf.isdigit()
                     else nf
                 )
 
-                ws.cell(linha_excel, 4).value = (
+                ws.cell(
+                    linha_excel,
+                    4,
+                ).value = (
                     int(serie)
                     if serie.isdigit()
                     else None
                 )
 
-                ws.cell(linha_excel, 5).value = data_assinatura
-                ws.cell(linha_excel, 5).number_format = "DD/MM/YYYY"
+                ws.cell(
+                    linha_excel,
+                    5,
+                ).value = data_assinatura
 
-                ws.cell(linha_excel, 6).value = observacao
+                ws.cell(
+                    linha_excel,
+                    5,
+                ).number_format = "DD/MM/YYYY"
+
+                ws.cell(
+                    linha_excel,
+                    6,
+                ).value = observacao
 
                 linha_excel += 1
 
-            nome = f"{protocolo}.xltm"
+            # O protocolo dentro da planilha continua apenas numérico.
+            # No nome do arquivo incluímos a transportadora.
+            nome = (
+                f"{transportadora}_"
+                f"{protocolo}.xltm"
+            )
+
             caminho = output_dir / nome
 
             while caminho.exists():
                 protocolo = gerar_numero_protocolo()
-                nome = f"{protocolo}.xltm"
+
+                nome = (
+                    f"{transportadora}_"
+                    f"{protocolo}.xltm"
+                )
+
                 caminho = output_dir / nome
                 ws["C3"] = protocolo
 
             wb.save(caminho)
-
             arquivos.append(caminho)
 
             if job:
                 job.logs.put(
-                    f"Carrier gerado: {nome} "
-                    f"({len(lote)} notas)"
+                    f"Carrier gerado: {nome} | "
+                    f"lote {numero_lote} | "
+                    f"{len(lote)} nota(s)"
                 )
 
     return arquivos
-
 
 def adicionar_zip(
     zipf,
@@ -553,7 +620,9 @@ def processar_carrier_lg(
 
     if modo_completo:
         if job:
-            job.logs.put("Modo completo: lendo a base diária...")
+            job.logs.put(
+                "Modo completo: lendo a base diária..."
+            )
 
         mapa_base = ler_base_csv(base_csv)
 
@@ -584,10 +653,18 @@ def processar_carrier_lg(
         job.total = len(arquivos)
 
     registros_carrier = []
+
     total_ocr = 0
     total_nome = 0
     total_falhou = 0
     total_sem_base = 0
+
+    totais_transportadora = {
+        "ROBR_SP": 0,
+        "ROBR_SC": 0,
+        "ROBR_PR": 0,
+        "NAO_MAPEADO": 0,
+    }
 
     for idx, arquivo in enumerate(
         arquivos,
@@ -601,8 +678,7 @@ def processar_carrier_lg(
 
         nome = arquivo.stem.strip()
 
-        # Aceita NF já presente no nome:
-        # 117824.png, 000117824.png etc.
+        # Se o arquivo já estiver renomeado, evita OCR.
         if re.fullmatch(r"\d{5,9}", nome):
             nf = nome.lstrip("0")
             metodo = "nome do arquivo"
@@ -649,18 +725,19 @@ def processar_carrier_lg(
 
         nf = str(nf).strip().lstrip("0")
 
-        destino = nome_unico(
-            renomeados_dir,
-            nf,
-            arquivo.suffix.lower(),
-        )
-
-        shutil.copy2(
-            arquivo,
-            destino,
-        )
-
+        # Modo simples: apenas renomeia, sem separar por transportadora.
         if not modo_completo:
+            destino = nome_unico(
+                renomeados_dir,
+                nf,
+                arquivo.suffix.lower(),
+            )
+
+            shutil.copy2(
+                arquivo,
+                destino,
+            )
+
             if job:
                 job.logs.put(
                     f"OK: {arquivo.name} -> {destino.name} | "
@@ -672,6 +749,7 @@ def processar_carrier_lg(
 
         dados_base = mapa_base.get(nf)
 
+        # NF não encontrada na base.
         if not dados_base:
             destino_sem_base = nome_unico(
                 sem_base_dir,
@@ -686,13 +764,14 @@ def processar_carrier_lg(
 
             total_sem_base += 1
 
-            # Inclui a NF em um Carrier separado de auditoria.
+            # Inclui somente a NF na planilha de auditoria.
             registros_carrier.append({
                 "nf": nf,
                 "serie": "",
                 "load_id": "",
                 "data_assinatura": None,
                 "aba_origem": "",
+                "transportadora": "SEM_BASE",
             })
 
             if job:
@@ -704,14 +783,57 @@ def processar_carrier_lg(
 
             continue
 
+        serie = str(
+            dados_base.get("serie") or ""
+        ).strip()
+
+        aba_origem = str(
+            dados_base.get("aba_origem") or ""
+        ).strip()
+
+        transportadora = transportadora_por_serie(
+            serie,
+            aba_origem,
+        )
+
+        # Cria uma pasta separada para cada transportadora.
+        pasta_transportadora = (
+            renomeados_dir / transportadora
+        )
+
+        pasta_transportadora.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        destino = nome_unico(
+            pasta_transportadora,
+            nf,
+            arquivo.suffix.lower(),
+        )
+
+        shutil.copy2(
+            arquivo,
+            destino,
+        )
+
+        if transportadora not in totais_transportadora:
+            totais_transportadora[transportadora] = 0
+
+        totais_transportadora[transportadora] += 1
+
         registros_carrier.append({
             "nf": nf,
-            "serie": dados_base["serie"],
-            "load_id": dados_base["load_id"],
-            "data_assinatura": dados_base[
+            "serie": serie,
+            "load_id": dados_base.get(
+                "load_id",
+                "",
+            ),
+            "data_assinatura": dados_base.get(
                 "occurrence_date"
-            ],
-            "aba_origem": dados_base.get("aba_origem", ""),
+            ),
+            "aba_origem": aba_origem,
+            "transportadora": transportadora,
         })
 
         if job:
@@ -726,9 +848,10 @@ def processar_carrier_lg(
             )
 
             job.logs.put(
-                f"OK: {arquivo.name} -> {destino.name} | "
-                f"Load {dados_base['load_id']} | "
-                f"Série {dados_base['serie']} | "
+                f"OK: {arquivo.name} -> "
+                f"{transportadora}/{destino.name} | "
+                f"Load {dados_base.get('load_id', '')} | "
+                f"Série {serie} | "
                 f"Data {data_log} | "
                 f"{metodo}"
             )
@@ -737,7 +860,11 @@ def processar_carrier_lg(
 
     if modo_completo:
         carrier_dir = output_dir / "carrier"
-        carrier_dir.mkdir(exist_ok=True)
+
+        carrier_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
 
         gerar_protocolos_carrier(
             registros=registros_carrier,
@@ -767,17 +894,41 @@ def processar_carrier_lg(
         job.logs.put(
             f"Identificadas pelo nome: {total_nome}"
         )
+
         job.logs.put(
             f"Enviadas ao OCR: {total_ocr}"
         )
+
         job.logs.put(
             f"Falhas no OCR: {total_falhou}"
         )
 
         if modo_completo:
             job.logs.put(
-                f"Sem correspondência na base: {total_sem_base}"
+                f"ROBR_SP: "
+                f"{totais_transportadora.get('ROBR_SP', 0)}"
             )
+
+            job.logs.put(
+                f"ROBR_SC: "
+                f"{totais_transportadora.get('ROBR_SC', 0)}"
+            )
+
+            job.logs.put(
+                f"ROBR_PR: "
+                f"{totais_transportadora.get('ROBR_PR', 0)}"
+            )
+
+            job.logs.put(
+                f"Não mapeadas: "
+                f"{totais_transportadora.get('NAO_MAPEADO', 0)}"
+            )
+
+            job.logs.put(
+                f"Sem correspondência na base: "
+                f"{total_sem_base}"
+            )
+
             job.logs.put(
                 f"Notas adicionadas ao Carrier: "
                 f"{len(registros_carrier)}"
