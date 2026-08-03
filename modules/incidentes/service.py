@@ -816,17 +816,29 @@ class IncidentesService:
                     numero_nota=self._valor_linha(
                         linha,
                         [
+                            "NRO_NOTA_FISCAL",
+                            "NUMERO_NOTA_FISCAL",
                             "NUMERO_NOTA",
                             "NOTA_FISCAL",
                             "NF",
+                        ],
+                    ),
+                    data_inclusao_ctrc=self._data_linha(
+                        linha,
+                        [
+                            "EMISSAO_CTRC",
+                            "DATA_EMISSAO_CTRC",
+                            "DATA_INCLUSAO_CTRC",
+                            "DATA_CTRC",
                         ],
                     ),
                     data_ocorrencia=(
                         self._data_linha(
                             linha,
                             [
-                                "DATA_OCORRENCIA",
                                 "DATA_OCOR",
+                                "DATA_OCORRENCIA",
+                                "DIA_INCLUSAO_OCOR",
                                 "DATA",
                             ],
                         )

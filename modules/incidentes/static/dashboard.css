@@ -1248,3 +1248,12 @@ button:disabled {
         transition-duration: 0.01ms !important;
     }
 }
+
+.table-occurrence {
+    min-width: 230px;
+    max-width: 320px;
+    overflow: hidden;
+    color: var(--incidents-text);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

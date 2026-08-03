@@ -2106,6 +2106,35 @@
         );
     }
 
+    function formatOccurrence(record) {
+        var code = getFirstValue(
+            record,
+            [
+                'codigo_ocorrencia',
+                'ocorrencia',
+                'codigo'
+            ]
+        );
+
+        var description = getFirstValue(
+            record,
+            [
+                'descricao_ocorrencia',
+                'descricao',
+                'descricao_ocor'
+            ]
+        );
+
+        code = String(code || '').trim();
+        description = String(description || '').trim();
+
+        if (code && description) {
+            return code + ' - ' + description;
+        }
+
+        return code || description || '—';
+    }
+
 
     // ==================================================
     // Registros de atenção
@@ -2128,7 +2157,7 @@
             elements.attentionTableBody
                 .appendChild(
                     createEmptyRow(
-                        11,
+                        12,
                         'Nenhum registro exige atenção.'
                     )
                 );
@@ -2178,9 +2207,22 @@
                     getFirstValue(
                         record,
                         [
-                            'data',
-                            'data_emissao',
-                            'data_ocorrencia'
+                            'data_inclusao_ctrc',
+                            'data_emissao_ctrc',
+                            'emissao_ctrc'
+                        ]
+                    )
+                )
+            );
+
+            appendTextCell(
+                row,
+                formatDate(
+                    getFirstValue(
+                        record,
+                        [
+                            'data_ocorrencia',
+                            'data'
                         ]
                     )
                 )
@@ -2222,15 +2264,8 @@
 
             appendTextCell(
                 row,
-                getFirstValue(
-                    record,
-                    [
-                        'codigo_ocorrencia',
-                        'ocorrencia',
-                        'codigo'
-                    ]
-                ) || '—',
-                'table-code'
+                formatOccurrence(record),
+                'table-occurrence'
             );
 
             appendBadgeCell(
@@ -2312,12 +2347,21 @@
             cell.className = className;
         }
 
-        cell.textContent =
+        var finalValue =
             value === null ||
             typeof value === 'undefined' ||
             value === ''
                 ? '—'
                 : String(value);
+
+        cell.textContent = finalValue;
+
+        if (
+            className === 'table-occurrence' ||
+            className === 'table-long-text'
+        ) {
+            cell.title = finalValue;
+        }
 
         row.appendChild(cell);
     }

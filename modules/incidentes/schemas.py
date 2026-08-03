@@ -247,6 +247,7 @@ class AttentionRecord(BaseModel):
     ctrc: str = ""
     numero_nota: str = ""
 
+    data_inclusao_ctrc: Optional[date] = None
     data_ocorrencia: Optional[date] = None
 
     grupo_cliente: str = ""
