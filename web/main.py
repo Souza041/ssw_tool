@@ -17,6 +17,10 @@ from modules.incidentes.router import (
     router as incidentes_router,
 )
 
+from modules.ocorrencia_73.scheduler import (
+    iniciar_scheduler_ocorrencia_73,
+)
+
 mimetypes.add_type("text/css", ".css")
 mimetypes.add_type("application/javascript", ".js")
 
@@ -70,3 +74,4 @@ app.include_router(
 @app.on_event("startup")
 def startup_event():
     iniciar_scheduler_metricas()
+    iniciar_scheduler_ocorrencia_73()
