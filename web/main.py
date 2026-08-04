@@ -73,5 +73,19 @@ app.include_router(
 
 @app.on_event("startup")
 def startup_event():
+    print(
+        "[STARTUP] Iniciando scheduler de metricas",
+        flush=True,
+    )
     iniciar_scheduler_metricas()
+
+    print(
+        "[STARTUP] Chamando scheduler da ocorrencia 73",
+        flush=True,
+    )
     iniciar_scheduler_ocorrencia_73()
+
+    print(
+        "[STARTUP] Schedulers inicializados",
+        flush=True,
+    )
