@@ -212,5 +212,101 @@ class OP455Report:
 
         response = self.client.post("/bin/ssw0230", payload)
         return response.text
+
+    def gerar_relatorio_ocorrencia_73(
+        self,
+        data_inicial: str,
+        data_final: str,
+    ) -> str:
+        """
+        Gera a OP455 exatamente na configuração usada pelo BOT
+        de lançamento da ocorrência 73.
+
+        As datas devem estar no formato DDMMAA.
+        """
+
+        payload = {
+            "act": "E1",
+            "cod_emp_ctb": "00",
+
+            # E = unidade expedidora
+            "f3": "E",
+
+            # Todos os documentos
+            "f8": "T",
+
+            # Período de emissão
+            "f9": data_inicial,
+            "f10": data_final,
+
+            # Configuração confirmada pelo HAR
+            "f18": "T",
+            "f19": "T",
+            "f20": "S",
+            "f21": "T",
+            "f22": "T",
+            "f23": "A",
+            "f25": "T",
+            "f26": "A",
+            "f27": "A",
+            "f28": "T",
+            "ibscbs": "A",
+            "f29": "A",
+            "f30": "A",
+            "f35": "E",
+            "f37": "N",
+            "basico": "N",
+            "dummy": dummy(),
+        }
+
+        response = self.client.post(
+            "/bin/ssw0230",
+            data=payload,
+        )
+
+        return response.text
+
+    def gerar_e_baixar_ocorrencia_73(
+        self,
+        output_dir: Path,
+        data_referencia: str,
+        timeout_seconds: int = 300,
+    ) -> Path:
+        """
+        Abre a OP455 obrigatoriamente na MTZ, gera o relatório
+        pelo período de emissão e baixa o arquivo via resposta
+        direta ou OP156.
+        """
+
+        # Não depende da unidade atual do usuário.
+        self.open(unidade="MTZ")
+
+        html = self.gerar_relatorio_ocorrencia_73(
+            data_inicial=data_referencia,
+            data_final=data_referencia,
+        )
+
+        if "Informe a unidade" in html:
+            raise ValueError(
+                "SSW retornou 'Informe a unidade' ao gerar a OP455 em MTZ."
+            )
+
+        info_direto = self.extrair_arquivo_direto(html)
+
+        if info_direto:
+            return self.baixar_arquivo_direto(
+                info=info_direto,
+                output_dir=output_dir,
+            )
+
+        fila = OP156Queue(self.client)
+
+        return fila.baixar_por_opcao(
+            output_dir=output_dir,
+            opcao="455 - Fretes Expedidos/Recebidos - CTRCs",
+            unidade="MTZ",
+            timeout_seconds=timeout_seconds,
+            intervalo=5,
+        )
     
         

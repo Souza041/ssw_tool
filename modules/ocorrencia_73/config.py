@@ -1,0 +1,43 @@
+import os
+
+
+CLIENTES_PERMITIDOS = {
+    "BUD COM. DE ELETRODOM. LTDA",
+    "WHIRLPOOL SA",
+    "MLOG ARMAZEM GERAL LTDA",
+    "WHIRLPOOL S/A (C2)",
+    "WHIRLPOOL S/A",
+}
+
+CIDADES_PERMITIDAS = {
+    "CURITIBA",
+    "FLORIANOPOLIS",
+}
+
+UNIDADE_EMISSORA_PERMITIDA = "JOI"
+
+CODIGO_OCORRENCIA = "73"
+
+DESCRICAO_OCORRENCIA = (
+    "ENTREGA SERA REALIZADA AMANHA"
+)
+
+OBSERVACAO_OCORRENCIA = os.getenv(
+    "OCORRENCIA_73_OBSERVACAO",
+    "LANCAMENTO AUTOMATICO - BOT OCORRENCIA 73",
+)
+
+DRY_RUN = (
+    os.getenv("OCORRENCIA_73_DRY_RUN", "true")
+    .strip()
+    .lower()
+    in {"1", "true", "sim", "yes"}
+)
+
+HORA_EXECUCAO = int(
+    os.getenv("OCORRENCIA_73_HORA", "19")
+)
+
+MINUTO_EXECUCAO = int(
+    os.getenv("OCORRENCIA_73_MINUTO", "0")
+)
