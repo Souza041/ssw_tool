@@ -19,13 +19,32 @@ _scheduler = BackgroundScheduler(
 )
 
 
-def env_bool(nome: str, padrao: bool = False) -> bool:
-    valor = os.getenv(
-        nome,
-        str(padrao),
+def env_bool(
+    nome: str,
+    padrao: bool = False,
+) -> bool:
+    valor = os.getenv(nome)
+
+    if valor is None:
+        logger.warning(
+            "[OCORRENCIA 73] Variável %s não encontrada.",
+            nome,
+        )
+        return padrao
+
+    valor_normalizado = (
+        str(valor)
+        .strip()
+        .lower()
     )
 
-    return valor.strip().lower() in {
+    logger.info(
+        "[OCORRENCIA 73] %s=%r",
+        nome,
+        valor_normalizado,
+    )
+
+    return valor_normalizado in {
         "1",
         "true",
         "yes",
@@ -66,13 +85,14 @@ def executar_ocorrencia_73_agendada() -> None:
 
 def iniciar_scheduler_ocorrencia_73() -> None:
     run_enabled = env_bool(
-        "RUN",
+        "OCORRENCIA_73_ENABLED",
         False,
     )
 
     if not run_enabled:
         logger.warning(
-            "[OCORRENCIA 73] Scheduler não iniciado: RUN != true."
+            "[OCORRENCIA 73] Scheduler não iniciado: "
+            "OCORRENCIA_73_ENABLED != true."
         )
         return
 
