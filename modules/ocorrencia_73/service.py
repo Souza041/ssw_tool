@@ -1,5 +1,6 @@
 import csv
 import os
+import json
 
 from datetime import date, datetime
 from pathlib import Path
@@ -100,26 +101,45 @@ class Ocorrencia73Service:
 
         return client
 
-    def montar_diretorio_execucao(
+    def montar_diretorios_execucao(
         self,
         data_referencia: date,
-    ) -> Path:
-        diretorio = (
+    ) -> dict[str, Path]:
+        diretorio_base = (
             self.base_output_dir
             / data_referencia.isoformat()
         )
 
-        diretorio.mkdir(
+        diretorio_original = (
+            diretorio_base
+            / "original"
+        )
+
+        diretorio_auditoria = (
+            diretorio_base
+            / "auditoria"
+        )
+
+        diretorio_original.mkdir(
             parents=True,
             exist_ok=True,
         )
 
-        return diretorio
+        diretorio_auditoria.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        return {
+            "base": diretorio_base,
+            "original": diretorio_original,
+            "auditoria": diretorio_auditoria,
+        }
 
     def gerar_auditoria_joi(
         self,
         registros: list[dict],
-        diretorio: Path,
+        diretorio_auditoria: Path,
     ) -> Path | None:
         if not registros:
             print(
@@ -165,7 +185,7 @@ class Ocorrencia73Service:
             return None
 
         csv_saida = (
-            diretorio
+            diretorio_auditoria
             / "auditoria_joi.csv"
         )
 
@@ -186,6 +206,54 @@ class Ocorrencia73Service:
 
         return csv_saida
 
+    def gerar_auditoria_filtrados(
+        self,
+        registros: list[dict],
+        diretorio_auditoria: Path,
+    ) -> Path | None:
+        if not registros:
+            print(
+                "[AUDITORIA] Nenhum registro "
+                "atendeu aos filtros."
+            )
+            return None
+
+        csv_saida = (
+            diretorio_auditoria
+            / "registros_filtrados.csv"
+        )
+
+        campos = [
+            "ctrc_original",
+            "serie",
+            "numero",
+            "digito",
+            "cliente_pagador",
+            "cidade_destinatario",
+            "unidade_emissora",
+        ]
+
+        with csv_saida.open(
+            "w",
+            newline="",
+            encoding="utf-8-sig",
+        ) as fp:
+            writer = csv.DictWriter(
+                fp,
+                fieldnames=campos,
+                extrasaction="ignore",
+            )
+
+            writer.writeheader()
+            writer.writerows(registros)
+
+        print(
+            "[AUDITORIA] Filtrados: "
+            f"{len(registros)} registros"
+        )
+
+        return csv_saida
+
     def executar(
         self,
         data_referencia: date | None = None,
@@ -196,21 +264,15 @@ class Ocorrencia73Service:
             or datetime.now(TIMEZONE).date()
         )
 
-        diretorio = (
-            self.montar_diretorio_execucao(
+        diretorios = (
+            self.montar_diretorios_execucao(
                 data_referencia
             )
         )
 
-        diretorio_original = (
-            diretorio
-            / "original"
-        )
-
-        diretorio_original.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
+        diretorio_base = diretorios["base"]
+        diretorio_original = diretorios["original"]
+        diretorio_auditoria = diretorios["auditoria"]
 
         data_ssw = data_referencia.strftime(
             "%d%m%y"
@@ -263,22 +325,41 @@ class Ocorrencia73Service:
         auditoria_joi = (
             self.gerar_auditoria_joi(
                 registros=registros,
-                diretorio=diretorio,
+                diretorio_auditoria=(
+                    diretorio_auditoria
+                ),
+            )
+        )
+
+        auditoria_filtrados = (
+            self.gerar_auditoria_filtrados(
+                registros=filtrados,
+                diretorio_auditoria=(
+                    diretorio_auditoria
+                ),
             )
         )
 
         if not filtrados:
-            return {
+            resultado = {
                 "success": True,
                 "triggered_by": triggered_by,
                 "dry_run": DRY_RUN,
                 "data_referencia": (
                     data_referencia.isoformat()
                 ),
-                "arquivo": arquivo.name,
+                "arquivo_original": arquivo.name,
+                "diretorio_execucao": str(
+                    diretorio_base
+                ),
                 "auditoria_joi": (
                     str(auditoria_joi)
                     if auditoria_joi
+                    else None
+                ),
+                "auditoria_filtrados": (
+                    str(auditoria_filtrados)
+                    if auditoria_filtrados
                     else None
                 ),
                 "total_relatorio": len(
@@ -296,6 +377,21 @@ class Ocorrencia73Service:
                     "aos filtros."
                 ),
             }
+
+            arquivo_resultado = (
+                self.salvar_resultado_json(
+                    resultado=resultado,
+                    diretorio_auditoria=(
+                        diretorio_auditoria
+                    ),
+                )
+            )
+
+            resultado["resultado_json"] = str(
+                arquivo_resultado
+            )
+
+            return resultado
 
         op101 = OP101Ocorrencias(
             client
@@ -389,17 +485,25 @@ class Ocorrencia73Service:
             )
         )
 
-        return {
+        resultado = {
             "success": True,
             "triggered_by": triggered_by,
             "dry_run": DRY_RUN,
             "data_referencia": (
                 data_referencia.isoformat()
             ),
-            "arquivo": arquivo.name,
+            "arquivo_original": arquivo.name,
+            "diretorio_execucao": str(
+                diretorio_base
+            ),
             "auditoria_joi": (
                 str(auditoria_joi)
                 if auditoria_joi
+                else None
+            ),
+            "auditoria_filtrados": (
+                str(auditoria_filtrados)
+                if auditoria_filtrados
                 else None
             ),
             "total_relatorio": len(
@@ -423,3 +527,47 @@ class Ocorrencia73Service:
             ),
             "itens": itens_consultados,
         }
+
+        arquivo_resultado = (
+            self.salvar_resultado_json(
+                resultado=resultado,
+                diretorio_auditoria=(
+                    diretorio_auditoria
+                ),
+            )
+        )
+
+        resultado["resultado_json"] = str(
+            arquivo_resultado
+        )
+
+        return resultado
+
+    def salvar_resultado_json(
+        self,
+        resultado: dict,
+        diretorio_auditoria: Path,
+    ) -> Path:
+        arquivo_saida = (
+            diretorio_auditoria
+            / "resultado.json"
+        )
+
+        conteudo = json.dumps(
+            resultado,
+            ensure_ascii=False,
+            indent=2,
+            default=str,
+        )
+
+        arquivo_saida.write_text(
+            conteudo,
+            encoding="utf-8",
+        )
+
+        print(
+            "[AUDITORIA] Resultado salvo em: "
+            f"{arquivo_saida}"
+        )
+
+        return arquivo_saida

@@ -1,0 +1,10 @@
+scheduler.add_job(
+    executar_ocorrencia_73,
+    trigger="cron",
+    hour=20,
+    minute=0,
+    id="ocorrencia_73",
+    replace_existing=True,
+    max_instances=1,
+    coalesce=True,
+)
