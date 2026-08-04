@@ -90,10 +90,17 @@ def iniciar_scheduler_ocorrencia_73() -> None:
     )
 
     if not run_enabled:
-        logger.warning(
-            "[OCORRENCIA 73] Scheduler não iniciado: "
+        mensagem = (
+            "[OCORRENCIA 73] Scheduler nao iniciado: "
             "OCORRENCIA_73_ENABLED != true."
         )
+
+        print(
+            mensagem,
+            flush=True,
+        )
+
+        logger.warning(mensagem)
         return
 
     if _scheduler.running:
@@ -136,6 +143,18 @@ def iniciar_scheduler_ocorrencia_73() -> None:
     )
 
     _scheduler.start()
+
+    mensagem = (
+        "[OCORRENCIA 73] Primeiro teste agendado para "
+        f"{horario_primeiro_teste.strftime('%d/%m/%Y às %H:%M:%S')}"
+    )
+
+    print(
+        mensagem,
+        flush=True,
+    )
+
+    logger.info(mensagem)
 
     logger.info(
         "[OCORRENCIA 73] Primeiro teste agendado para %s.",
