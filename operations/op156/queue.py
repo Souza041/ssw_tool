@@ -82,6 +82,15 @@ class OP156Queue:
                 "download_id": campos["f0"],
             })
 
+        jobs.sort(
+            key=lambda job: (
+                int(job["sequencia"])
+                if str(job["sequencia"]).isdigit()
+                else 0
+            ),
+            reverse=True,
+        )
+
         return jobs
 
     def aguardar_download_id(
