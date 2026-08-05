@@ -12,6 +12,34 @@ UNIDADE_COLUNA = "Unidade Emissora"
 CTRC_COLUNA = "Serie/Numero CTRC"
 
 
+ALIASES_COLUNAS = {
+    CLIENTE_COLUNA: {
+        "CLIENTE PAGADOR",
+        "CLIENTE DO PAGADOR",
+        "PAGADOR",
+        "NOME PAGADOR",
+    },
+    CIDADE_COLUNA: {
+        "CIDADE DO DESTINATARIO",
+        "CIDADE DESTINATARIO",
+        "CIDADE DO DESTINO",
+        "CIDADE DESTINO",
+    },
+    UNIDADE_COLUNA: {
+        "UNIDADE EMISSORA",
+        "UNIDADE DE EMISSAO",
+        "UNID EMISSORA",
+        "FILIAL EMISSORA",
+    },
+    CTRC_COLUNA: {
+        "SERIE/NUMERO CTRC",
+        "SERIE NUMERO CTRC",
+        "SERIE/NRO CTRC",
+        "SERIE/NÚMERO CTRC",
+    },
+}
+
+
 def normalizar_texto(valor: object) -> str:
     texto = str(valor or "")
 
@@ -30,6 +58,19 @@ def normalizar_sem_acento(valor: object) -> str:
         for caractere in unicodedata.normalize("NFD", texto)
         if unicodedata.category(caractere) != "Mn"
     )
+
+def aliases_normalizados(
+    nome_esperado: str,
+) -> set[str]:
+    aliases = ALIASES_COLUNAS.get(
+        nome_esperado,
+        {nome_esperado},
+    )
+
+    return {
+        normalizar_sem_acento(alias)
+        for alias in aliases
+    }
 
 
 def detectar_encoding(arquivo: Path) -> str:
@@ -65,30 +106,37 @@ def detectar_encoding(arquivo: Path) -> str:
 def localizar_cabecalho(
     linhas: list[list[str]],
 ) -> int:
-    obrigatorias = {
+    obrigatorias = (
         CLIENTE_COLUNA,
         CIDADE_COLUNA,
         UNIDADE_COLUNA,
         CTRC_COLUNA,
-    }
-
-    obrigatorias_normalizadas = {
-        normalizar_sem_acento(nome)
-        for nome in obrigatorias
-    }
+    )
 
     for indice, linha in enumerate(
         linhas[:50]
     ):
-        nomes = {
+        colunas_normalizadas = {
             normalizar_sem_acento(coluna)
             for coluna in linha
             if normalizar_texto(coluna)
         }
 
-        if obrigatorias_normalizadas.issubset(
-            nomes
-        ):
+        encontrou_todas = True
+
+        for nome_esperado in obrigatorias:
+            aliases = aliases_normalizados(
+                nome_esperado
+            )
+
+            if not (
+                aliases
+                & colunas_normalizadas
+            ):
+                encontrou_todas = False
+                break
+
+        if encontrou_todas:
             return indice
 
     primeiras_linhas = []
@@ -103,7 +151,7 @@ def localizar_cabecalho(
         ]
 
         primeiras_linhas.append(
-            f"Linha {indice + 1}: {valores[:10]}"
+            f"Linha {indice + 1}: {valores}"
         )
 
     raise ValueError(
@@ -232,16 +280,30 @@ def encontrar_coluna(
     registro: dict,
     nome_esperado: str,
 ) -> str:
-    esperado = normalizar_sem_acento(nome_esperado)
-
-    for coluna in registro:
-        if normalizar_sem_acento(coluna) == esperado:
-            return coluna
-
-    raise KeyError(
-        f"Coluna não encontrada no relatório: {nome_esperado}"
+    aliases = aliases_normalizados(
+        nome_esperado
     )
 
+    for coluna in registro:
+        coluna_normalizada = (
+            normalizar_sem_acento(
+                coluna
+            )
+        )
+
+        if coluna_normalizada in aliases:
+            return coluna
+
+    disponiveis = [
+        str(coluna)
+        for coluna in registro.keys()
+    ]
+
+    raise KeyError(
+        "Coluna não encontrada no relatório: "
+        f"{nome_esperado}. "
+        f"Colunas disponíveis: {disponiveis}"
+    )
 
 def filtrar_registros(
     registros: list[dict],
