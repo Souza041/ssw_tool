@@ -7,16 +7,16 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from modules.ocorrencia_73.config import (
-    CIDADES_PERMITIDAS,
     CLIENTES_PERMITIDOS,
     DRY_RUN,
-    UNIDADE_EMISSORA_PERMITIDA,
+    ROTAS_PERMITIDAS,
 )
 from modules.ocorrencia_73.parser import (
     carregar_relatorio,
     diagnosticar_filtros,
     filtrar_registros,
     normalizar_sem_acento,
+    normalizar_texto,
 )
 from operations.op101.ocorrencias import (
     OP101Ocorrencias,
@@ -136,7 +136,7 @@ class Ocorrencia73Service:
             "auditoria": diretorio_auditoria,
         }
 
-    def gerar_auditoria_joi(
+    def gerar_auditoria_rotas(
         self,
         registros: list[dict],
         diretorio_auditoria: Path,
@@ -148,16 +148,28 @@ class Ocorrencia73Service:
             return None
 
         coluna_unidade = None
+        coluna_cidade = None
 
         for coluna in registros[0]:
+            coluna_normalizada = normalizar_sem_acento(
+                coluna
+            )
+
             if (
-                normalizar_sem_acento(coluna)
+                coluna_normalizada
                 == normalizar_sem_acento(
                     "Unidade Emissora"
                 )
             ):
                 coluna_unidade = coluna
-                break
+
+            if (
+                coluna_normalizada
+                == normalizar_sem_acento(
+                    "Cidade do Destinatario"
+                )
+            ):
+                coluna_cidade = coluna
 
         if not coluna_unidade:
             raise KeyError(
@@ -165,28 +177,81 @@ class Ocorrencia73Service:
                 "não encontrada para auditoria."
             )
 
-        somente_joi = [
-            registro
-            for registro in registros
-            if normalizar_sem_acento(
+        if not coluna_cidade:
+            raise KeyError(
+                "Coluna 'Cidade do Destinatario' "
+                "não encontrada para auditoria."
+            )
+
+        rotas_normalizadas = {
+            normalizar_sem_acento(unidade): {
+                normalizar_sem_acento(cidade)
+                for cidade in cidades
+            }
+            for unidade, cidades in (
+                ROTAS_PERMITIDAS.items()
+            )
+        }
+
+        registros_rotas = []
+
+        totais_por_rota = {}
+
+        for registro in registros:
+            unidade_original = normalizar_texto(
                 registro.get(coluna_unidade)
             )
-            == normalizar_sem_acento(
-                UNIDADE_EMISSORA_PERMITIDA
+
+            cidade_original = normalizar_texto(
+                registro.get(coluna_cidade)
             )
-        ]
 
-        print(
-            "[AUDITORIA] JOI: "
-            f"{len(somente_joi)} registros"
-        )
+            unidade = normalizar_sem_acento(
+                unidade_original
+            )
 
-        if not somente_joi:
+            cidade = normalizar_sem_acento(
+                cidade_original
+            )
+
+            cidades_validas = (
+                rotas_normalizadas.get(
+                    unidade,
+                    set(),
+                )
+            )
+
+            if cidade not in cidades_validas:
+                continue
+
+            registros_rotas.append(
+                registro
+            )
+
+            chave_rota = (
+                f"{unidade_original}"
+                f" -> "
+                f"{cidade_original}"
+            )
+
+            totais_por_rota[chave_rota] = (
+                totais_por_rota.get(
+                    chave_rota,
+                    0,
+                )
+                + 1
+            )
+
+        if not registros_rotas:
+            print(
+                "[AUDITORIA] Nenhum registro "
+                "nas rotas monitoradas."
+            )
             return None
 
         csv_saida = (
             diretorio_auditoria
-            / "auditoria_joi.csv"
+            / "auditoria_rotas.csv"
         )
 
         with csv_saida.open(
@@ -197,12 +262,27 @@ class Ocorrencia73Service:
             writer = csv.DictWriter(
                 fp,
                 fieldnames=list(
-                    somente_joi[0].keys()
+                    registros_rotas[0].keys()
                 ),
             )
 
             writer.writeheader()
-            writer.writerows(somente_joi)
+            writer.writerows(
+                registros_rotas
+            )
+
+        print(
+            "[AUDITORIA] Rotas monitoradas: "
+            f"{len(registros_rotas)} registros"
+        )
+
+        for rota, total in sorted(
+            totais_por_rota.items()
+        ):
+            print(
+                "[AUDITORIA] "
+                f"{rota}: {total}"
+            )
 
         return csv_saida
 
@@ -298,32 +378,18 @@ class Ocorrencia73Service:
         # de qualquer retorno antecipado.
         diagnostico = diagnosticar_filtros(
             registros=registros,
-            clientes_permitidos=(
-                CLIENTES_PERMITIDOS
-            ),
-            cidades_permitidas=(
-                CIDADES_PERMITIDAS
-            ),
-            unidade_emissora=(
-                UNIDADE_EMISSORA_PERMITIDA
-            ),
+            clientes_permitidos=(CLIENTES_PERMITIDOS),
+            rotas_permitidas=ROTAS_PERMITIDAS,
         )
 
         filtrados = filtrar_registros(
             registros=registros,
-            clientes_permitidos=(
-                CLIENTES_PERMITIDOS
-            ),
-            cidades_permitidas=(
-                CIDADES_PERMITIDAS
-            ),
-            unidade_emissora=(
-                UNIDADE_EMISSORA_PERMITIDA
-            ),
+            clientes_permitidos=CLIENTES_PERMITIDOS,
+            rotas_permitidas=ROTAS_PERMITIDAS,
         )
 
-        auditoria_joi = (
-            self.gerar_auditoria_joi(
+        auditoria_rotas = (
+            self.gerar_auditoria_rotas(
                 registros=registros,
                 diretorio_auditoria=(
                     diretorio_auditoria
@@ -352,9 +418,9 @@ class Ocorrencia73Service:
                 "diretorio_execucao": str(
                     diretorio_base
                 ),
-                "auditoria_joi": (
-                    str(auditoria_joi)
-                    if auditoria_joi
+                "auditoria_rotas": (
+                    str(auditoria_rotas)
+                    if auditoria_rotas
                     else None
                 ),
                 "auditoria_filtrados": (
@@ -496,9 +562,9 @@ class Ocorrencia73Service:
             "diretorio_execucao": str(
                 diretorio_base
             ),
-            "auditoria_joi": (
-                str(auditoria_joi)
-                if auditoria_joi
+            "auditoria_rotas": (
+                str(auditoria_rotas)
+                if auditoria_rotas
                 else None
             ),
             "auditoria_filtrados": (

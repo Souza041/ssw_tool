@@ -1,9 +1,8 @@
 from pathlib import Path
 
 from modules.ocorrencia_73.config import (
-    CIDADES_PERMITIDAS,
     CLIENTES_PERMITIDOS,
-    UNIDADE_EMISSORA_PERMITIDA,
+    ROTAS_PERMITIDAS,
 )
 from modules.ocorrencia_73.parser import (
     carregar_relatorio,
@@ -13,7 +12,7 @@ from modules.ocorrencia_73.parser import (
 
 def test_carregar_e_filtrar_relatorio():
     arquivo = Path(
-        "downloads/CSVROD00314202ROD[1]164516.sswweb"
+        "downloads/CSVROD00332012ROD[1]075307.sswweb"
     )
 
     registros = carregar_relatorio(arquivo)
@@ -24,18 +23,20 @@ def test_carregar_e_filtrar_relatorio():
     filtrados = filtrar_registros(
         registros=registros,
         clientes_permitidos=CLIENTES_PERMITIDOS,
-        cidades_permitidas=CIDADES_PERMITIDAS,
-        unidade_emissora=UNIDADE_EMISSORA_PERMITIDA,
+        rotas_permitidas=ROTAS_PERMITIDAS,
     )
 
     assert isinstance(filtrados, list)
 
     for item in filtrados:
-        assert item["unidade_emissora"] == "JOI"
+        rota = (
+            item["unidade_emissora"],
+            item["cidade_destinatario"],
+        )
 
-        assert item["cidade_destinatario"] in {
-            "CURITIBA",
-            "FLORIANOPOLIS",
+        assert rota in {
+            ("JOI", "FLORIANOPOLIS"),
+            ("CWB", "CURITIBA"),
         }
 
 from modules.ocorrencia_73.parser import (
@@ -64,9 +65,7 @@ def test_filtrar_todas_nomenclaturas_clientes():
             ),
             "CLIENTE PAGADOR": cliente,
             "CIDADE DO DESTINATARIO": (
-                "CURITIBA"
-                if indice % 2
-                else "FLORIANOPOLIS"
+                "FLORIANOPOLIS"
             ),
             "UNIDADE EMISSORA": "JOI",
         })
@@ -74,11 +73,14 @@ def test_filtrar_todas_nomenclaturas_clientes():
     filtrados = filtrar_registros(
         registros=registros,
         clientes_permitidos=set(clientes),
-        cidades_permitidas={
-            "CURITIBA",
-            "FLORIANOPOLIS",
+        rotas_permitidas={
+            "JOI": {
+                "FLORIANOPOLIS",
+            },
+            "CWB": {
+                "CURITIBA",
+            },
         },
-        unidade_emissora="JOI",
     )
 
     assert len(filtrados) == 5
@@ -89,3 +91,59 @@ def test_filtrar_todas_nomenclaturas_clientes():
     }
 
     assert clientes_filtrados == set(clientes)
+
+def test_rotas_permitidas():
+    registros = [
+        {
+            "SERIE/NUMERO CTRC": "JOI111111-0",
+            "CLIENTE PAGADOR": "WHIRLPOOL SA",
+            "CIDADE DO DESTINATARIO": "FLORIANOPOLIS",
+            "UNIDADE EMISSORA": "JOI",
+        },
+        {
+            "SERIE/NUMERO CTRC": "JOI111112-0",
+            "CLIENTE PAGADOR": "WHIRLPOOL SA",
+            "CIDADE DO DESTINATARIO": "CURITIBA",
+            "UNIDADE EMISSORA": "JOI",
+        },
+        {
+            "SERIE/NUMERO CTRC": "CWB111113-0",
+            "CLIENTE PAGADOR": "WHIRLPOOL SA",
+            "CIDADE DO DESTINATARIO": "CURITIBA",
+            "UNIDADE EMISSORA": "CWB",
+        },
+        {
+            "SERIE/NUMERO CTRC": "CWB111114-0",
+            "CLIENTE PAGADOR": "WHIRLPOOL SA",
+            "CIDADE DO DESTINATARIO": "FLORIANOPOLIS",
+            "UNIDADE EMISSORA": "CWB",
+        },
+    ]
+
+    filtrados = filtrar_registros(
+        registros=registros,
+        clientes_permitidos={
+            "WHIRLPOOL SA",
+        },
+        rotas_permitidas={
+            "JOI": {
+                "FLORIANOPOLIS",
+            },
+            "CWB": {
+                "CURITIBA",
+            },
+        },
+    )
+
+    assert len(filtrados) == 2
+
+    assert {
+        (
+            item["unidade_emissora"],
+            item["cidade_destinatario"],
+        )
+        for item in filtrados
+    } == {
+        ("JOI", "FLORIANOPOLIS"),
+        ("CWB", "CURITIBA"),
+    }

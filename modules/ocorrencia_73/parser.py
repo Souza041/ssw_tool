@@ -308,8 +308,7 @@ def encontrar_coluna(
 def filtrar_registros(
     registros: list[dict],
     clientes_permitidos: set[str],
-    cidades_permitidas: set[str],
-    unidade_emissora: str,
+    rotas_permitidas: set[str],
 ) -> list[dict]:
     if not registros:
         return []
@@ -338,14 +337,13 @@ def filtrar_registros(
         for cliente in clientes_permitidos
     }
 
-    cidades_normalizadas = {
-        normalizar_sem_acento(cidade)
-        for cidade in cidades_permitidas
+    rotas_normalizadas = {
+        normalizar_sem_acento(unidade): {
+            normalizar_sem_acento(cidade)
+            for cidade in cidades
+        }
+        for unidade, cidades in rotas_permitidas.items()
     }
-
-    unidade_normalizada = normalizar_sem_acento(
-        unidade_emissora
-    )
 
     filtrados = []
 
@@ -366,10 +364,12 @@ def filtrar_registros(
         if cliente not in clientes_normalizados:
             continue
 
-        if cidade not in cidades_normalizadas:
-            continue
+        cidades_validas = rotas_normalizadas.get(
+            unidade,
+            set(),
+        )
 
-        if unidade != unidade_normalizada:
+        if cidade not in cidades_validas:
             continue
 
         if not ctrc:
@@ -424,8 +424,7 @@ def decompor_ctrc(
 def diagnosticar_filtros(
     registros: list[dict],
     clientes_permitidos: set[str],
-    cidades_permitidas: set[str],
-    unidade_emissora: str,
+    rotas_permitidas: set[str],
 ) -> dict:
     if not registros:
         return {
@@ -459,14 +458,13 @@ def diagnosticar_filtros(
         for cliente in clientes_permitidos
     }
 
-    cidades_normalizadas = {
-        normalizar_sem_acento(cidade)
-        for cidade in cidades_permitidas
+    rotas_normalizadas = {
+        normalizar_sem_acento(unidade): {
+            normalizar_sem_acento(cidade)
+            for cidade in cidades
+        }
+        for unidade, cidades in rotas_permitidas.items()
     }
-
-    unidade_normalizada = normalizar_sem_acento(
-        unidade_emissora
-    )
 
     total_unidade = 0
     total_cidade = 0
@@ -513,36 +511,33 @@ def diagnosticar_filtros(
                 unidade_original
             )
 
-        atende_unidade = (
-            unidade == unidade_normalizada
+        cidades_validas = rotas_normalizadas.get(
+            unidade,
+            set(),
         )
-        atende_cidade = (
-            cidade in cidades_normalizadas
-        )
+
+        atende_rota = cidade in cidades_validas
+
         atende_cliente = (
             cliente in clientes_normalizados
         )
 
-        if atende_unidade:
-            total_unidade += 1
+        if atende_rota:
+            total_rota += 1
 
-        if atende_cidade:
-            total_cidade += 1
 
         if atende_cliente:
             total_cliente += 1
 
         if (
-            atende_unidade
-            and atende_cidade
+            atende_rota
             and atende_cliente
         ):
             total_completo += 1
 
     return {
         "total": len(registros),
-        "unidade": total_unidade,
-        "cidade": total_cidade,
+        "rota": total_rota,
         "cliente": total_cliente,
         "todos_filtros": total_completo,
         "clientes_encontrados": sorted(
