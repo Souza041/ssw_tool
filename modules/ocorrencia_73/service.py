@@ -407,6 +407,18 @@ class Ocorrencia73Service:
         )
 
         if not filtrados:
+
+            self.imprimir_resumo_auditoria(
+                total_relatorio=len(registros),
+                diagnostico=diagnostico,
+                total_filtrado=0,
+                total_consultado=0,
+                total_encontrado=0,
+                total_nao_encontrado=0,
+                total_erro=0,
+                dry_run=DRY_RUN,
+            )
+
             resultado = {
                 "success": True,
                 "triggered_by": triggered_by,
@@ -437,6 +449,33 @@ class Ocorrencia73Service:
                 "total_encontrado_op101": 0,
                 "total_nao_encontrado_op101": 0,
                 "total_erro_op101": 0,
+
+                "resumo_auditoria": {
+                    "total_op455": len(registros),
+                    "total_rotas_monitoradas": (
+                        diagnostico.get("rota", 0)
+                    ),
+                    "rotas": (
+                        diagnostico.get(
+                            "rotas_encontradas",
+                            {},
+                        )
+                    ),
+                    "total_clientes_monitorados": (
+                        diagnostico.get("cliente", 0)
+                    ),
+                    "total_apos_filtros": 0,
+                    "total_consultado_op101": 0,
+                    "total_encontrado_op101": 0,
+                    "total_nao_encontrado_op101": 0,
+                    "total_erro_op101": 0,
+                    "modo": (
+                        "dry_run"
+                        if DRY_RUN
+                        else "producao"
+                    ),
+                },
+
                 "itens": [],
                 "message": (
                     "Nenhum CTRC atendeu "
@@ -551,6 +590,21 @@ class Ocorrencia73Service:
             )
         )
 
+        self.imprimir_resumo_auditoria(
+            total_relatorio=len(registros),
+            diagnostico=diagnostico,
+            total_filtrado=len(filtrados),
+            total_consultado=len(
+                itens_consultados
+            ),
+            total_encontrado=total_encontrado,
+            total_nao_encontrado=(
+                total_nao_encontrado
+            ),
+            total_erro=total_erro,
+            dry_run=DRY_RUN,
+        )
+
         resultado = {
             "success": True,
             "triggered_by": triggered_by,
@@ -591,6 +645,41 @@ class Ocorrencia73Service:
             "total_erro_op101": (
                 total_erro
             ),
+
+            "resumo_auditoria": {
+                "total_op455": len(registros),
+                "total_rotas_monitoradas": (
+                    diagnostico.get("rota", 0)
+                ),
+                "rotas": (
+                    diagnostico.get(
+                        "rotas_encontradas",
+                        {},
+                    )
+                ),
+                "total_clientes_monitorados": (
+                    diagnostico.get("cliente", 0)
+                ),
+                "total_apos_filtros": len(
+                    filtrados
+                ),
+                "total_consultado_op101": len(
+                    itens_consultados
+                ),
+                "total_encontrado_op101": (
+                    total_encontrado
+                ),
+                "total_nao_encontrado_op101": (
+                    total_nao_encontrado
+                ),
+                "total_erro_op101": total_erro,
+                "modo": (
+                    "dry_run"
+                    if DRY_RUN
+                    else "producao"
+                ),
+            },
+
             "itens": itens_consultados,
         }
 
@@ -637,3 +726,98 @@ class Ocorrencia73Service:
         )
 
         return arquivo_saida
+
+    def imprimir_resumo_auditoria(
+        self,
+        *,
+        total_relatorio: int,
+        diagnostico: dict,
+        total_filtrado: int,
+        total_consultado: int,
+        total_encontrado: int,
+        total_nao_encontrado: int,
+        total_erro: int,
+        dry_run: bool,
+    ) -> None:
+        rotas_encontradas = (
+            diagnostico.get("rotas_encontradas")
+            or {}
+        )
+
+        print()
+        print("=" * 62)
+        print("AUDITORIA - BOT OCORRENCIA 73")
+        print("=" * 62)
+
+        print(
+            f"Total de registros na OP455........: "
+            f"{total_relatorio}"
+        )
+
+        print(
+            f"Registros nas rotas monitoradas....: "
+            f"{diagnostico.get('rota', 0)}"
+        )
+
+        if rotas_encontradas:
+            for rota, total in sorted(
+                rotas_encontradas.items()
+            ):
+                print(
+                    f"  {rota:<32}: {total}"
+                )
+        else:
+            print(
+                "  Nenhuma rota monitorada encontrada."
+            )
+
+        print(
+            f"Registros dos clientes monitorados.: "
+            f"{diagnostico.get('cliente', 0)}"
+        )
+
+        print(
+            f"Registros após todos os filtros.....: "
+            f"{total_filtrado}"
+        )
+
+        print("-" * 62)
+
+        print(
+            f"CTRCs enviados para consulta OP101..: "
+            f"{total_consultado}"
+        )
+
+        print(
+            f"CTRCs encontrados na OP101..........: "
+            f"{total_encontrado}"
+        )
+
+        print(
+            f"CTRCs não encontrados na OP101......: "
+            f"{total_nao_encontrado}"
+        )
+
+        print(
+            f"Erros técnicos na consulta OP101....: "
+            f"{total_erro}"
+        )
+
+        print("-" * 62)
+
+        print(
+            f"Modo de execução.....................: "
+            f"{'SIMULACAO - DRY RUN' if dry_run else 'PRODUCAO'}"
+        )
+
+        if dry_run:
+            print(
+                "Ocorrências lançadas................: 0"
+            )
+            print(
+                "Motivo...............................: "
+                "modo seguro habilitado"
+            )
+
+        print("=" * 62)
+        print()
