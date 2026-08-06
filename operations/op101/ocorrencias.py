@@ -2,8 +2,7 @@ import re
 import time
 
 from dataclasses import asdict, dataclass
-from datetime import date
-
+from datetime import date, datetime
 from html import unescape
 
 
@@ -20,19 +19,6 @@ class CTRCConsultado:
     def to_dict(self) -> dict:
         return asdict(self)
 
-@dataclass
-class OcorrenciaHistorico:
-    codigo: str
-    descricao: str
-    data_hora: str = ""
-    familia: str = ""
-    unidade: str = ""
-    usuario: str = ""
-    complemento: str = ""
-    ocorrencia_ssw: str = ""
-
-    def to_dict(self) -> dict:
-        return asdict(self)
 
 @dataclass
 class OcorrenciaHistorico:
@@ -48,6 +34,17 @@ class OcorrenciaHistorico:
     def to_dict(self) -> dict:
         return asdict(self)
 
+
+@dataclass
+class ResultadoLancamento:
+    success: bool
+    codigo: str
+    mensagem: str
+    resposta: str = ""
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+    
 class OP101Ocorrencias:
     """
     Consulta CTRCs na OP101.
@@ -92,6 +89,36 @@ class OP101Ocorrencias:
             )
 
         return texto
+
+    @staticmethod
+    def _data_tela_ssw(
+        valor: date | str,
+    ) -> str:
+        if isinstance(valor, date):
+            return (
+                f"{valor.day}/"
+                f"{valor.month}/"
+                f"{str(valor.year)[2:]}"
+            )
+
+        texto = str(valor or "").strip()
+
+        if re.fullmatch(r"\d{6}", texto):
+            return (
+                f"{int(texto[0:2])}/"
+                f"{int(texto[2:4])}/"
+                f"{texto[4:6]}"
+            )
+
+        if re.fullmatch(
+            r"\d{1,2}/\d{1,2}/\d{2}",
+            texto,
+        ):
+            return texto
+
+        raise ValueError(
+            "Data inválida para a tela da OP101."
+        )
 
     def abrir(self, unidade: str) -> None:
         """
@@ -357,16 +384,9 @@ class OP101Ocorrencias:
                 "seq_ctrc não informado para abrir ocorrências."
             )
 
-        if isinstance(data_referencia, date):
-            data_tela = data_referencia.strftime(
-                "%-d/%-m/%y"
-            )
-        else:
-            texto = str(data_referencia or "").strip()
-
-            data_tela = self._data_tela_ssw(
-                data_referencia
-            )
+        data_tela = self._data_tela_ssw(
+            data_referencia
+        )
 
         response = self.client.post(
             "/bin/ssw0053",
@@ -614,4 +634,227 @@ class OP101Ocorrencias:
                 73,
             )
             is not None
+        )
+
+    @staticmethod
+    def _data_lancamento_ssw(
+        valor: date | str,
+    ) -> str:
+        if isinstance(valor, date):
+            return valor.strftime("%d%m%y")
+
+        texto = str(valor or "").strip()
+
+        if re.fullmatch(r"\d{6}", texto):
+            return texto
+
+        if re.fullmatch(
+            r"\d{1,2}/\d{1,2}/\d{2,4}",
+            texto,
+        ):
+            partes = texto.split("/")
+
+            dia = int(partes[0])
+            mes = int(partes[1])
+            ano = int(partes[2])
+
+            if ano >= 2000:
+                ano -= 2000
+
+            return f"{dia:02d}{mes:02d}{ano:02d}"
+
+        raise ValueError(
+            "Data inválida para lançamento da ocorrência."
+        )
+
+
+    @staticmethod
+    def _hora_lancamento_ssw(
+        valor: str | None = None,
+    ) -> str:
+        if valor:
+            texto = re.sub(
+                r"\D",
+                "",
+                str(valor),
+            )
+
+            if len(texto) != 4:
+                raise ValueError(
+                    "Hora deve estar no formato HHMM."
+                )
+
+            return texto
+
+        return datetime.now().strftime("%H%M")
+
+    def consultar_codigo_ocorrencia(
+        self,
+        codigo: str | int,
+    ) -> str:
+        codigo = str(codigo).strip()
+
+        response = self.client.get(
+            "/bin/ssw0385",
+            params={
+                "tipo": "ocorrencia",
+                "key": codigo,
+                "dummy": self._dummy(),
+            },
+        )
+
+        return response.text
+
+    def lancar_ocorrencia_73(
+        self,
+        *,
+        seq_ctrc: str,
+        familia: str,
+        data_ocorrencia: date | str,
+        hora_ocorrencia: str | None = None,
+        observacao: str = (
+            "LANCAMENTO AUTOMATICO - BOT OCORRENCIA 73"
+        ),
+        local: str = "",
+    ) -> ResultadoLancamento:
+        """
+        Lança a ocorrência 73 no CTRC.
+
+        Deve ser chamado apenas após confirmar que a ocorrência
+        ainda não existe no histórico.
+        """
+
+        seq_ctrc = self._normalizar_numero(
+            seq_ctrc
+        )
+
+        familia = str(
+            familia or "ROD"
+        ).strip().upper()
+
+        if not seq_ctrc:
+            raise ValueError(
+                "seq_ctrc não informado para lançamento."
+            )
+
+        data_ssw = self._data_lancamento_ssw(
+            data_ocorrencia
+        )
+
+        hora_ssw = self._hora_lancamento_ssw(
+            hora_ocorrencia
+        )
+
+        # Reproduz a consulta feita pela tela antes do lançamento.
+        self.consultar_codigo_ocorrencia(
+            73
+        )
+
+        response = self.client.post(
+            "/bin/ssw0122",
+            {
+                "act": "II3",
+                "f3": "73",
+                "ocor_descr": (
+                    "ENTREGA SERA REALIZADA AMANHA"
+                ),
+                "f4": data_ssw,
+                "f5": hora_ssw,
+                "f6": observacao,
+                "f8": "N",
+                "f11": "N",
+                "dd_f_t_data_ini": "",
+                "dd_f_t_data_fin": "",
+                "dd_f_t_ser_ctrc": "",
+                "dd_f_t_ser_nf": "",
+                "dd_f_t_nro_pedido": "",
+                "seq_instr": "0",
+                "detalhe_oco": "",
+                "detalhe_ins": "",
+                "tipoFoto": "instr_foto",
+                "nomeFoto": "",
+                "extraFoto": "",
+                "nomeFotoUsed": "",
+                "ctrl_gelo_tp_produto": "",
+                "ctrl_gelo_tp_gelo": "",
+                "ctrl_gelo_data_inicio": "",
+                "ctrl_gelo_hora_inicio": "",
+                "ctrl_gelo_prazo": "",
+                "seq_ctrc": seq_ctrc,
+                "data_ini_inf": (
+                    self._data_tela_ssw(
+                        data_ocorrencia
+                    )
+                ),
+                "data_fin_inf": "30/12/99",
+                "local": local or "",
+                "FAMILIA": familia,
+                "dummy": self._dummy(),
+            },
+        )
+
+        texto = str(
+            response.text or ""
+        )
+
+        texto_normalizado = texto.lower()
+
+        indicadores_erro = (
+            "erro",
+            "não foi possível",
+            "nao foi possivel",
+            "ocorrência inválida",
+            "ocorrencia invalida",
+            "campo obrigatório",
+            "campo obrigatorio",
+        )
+
+        if any(
+            indicador in texto_normalizado
+            for indicador in indicadores_erro
+        ):
+            return ResultadoLancamento(
+                success=False,
+                codigo="73",
+                mensagem=(
+                    "SSW retornou erro ao lançar ocorrência 73."
+                ),
+                resposta=texto[:2000],
+            )
+
+        return ResultadoLancamento(
+            success=True,
+            codigo="73",
+            mensagem=(
+                "Ocorrência 73 enviada ao SSW."
+            ),
+            resposta=texto[:2000],
+        )
+
+    def confirmar_ocorrencia_73(
+        self,
+        *,
+        serie: str,
+        numero: str,
+        seq_ctrc: str,
+        local: str,
+        familia: str,
+        data_referencia: date | str,
+    ) -> OcorrenciaHistorico | None:
+        html = self.abrir_ocorrencias(
+            serie=serie,
+            numero=numero,
+            seq_ctrc=seq_ctrc,
+            local=local,
+            familia=familia,
+            data_referencia=data_referencia,
+        )
+
+        historico = self.listar_ocorrencias(
+            html
+        )
+
+        return self.encontrar_ocorrencia(
+            historico,
+            73,
         )

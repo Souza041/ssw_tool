@@ -27,6 +27,30 @@ from ssw.client import SSWClient
 
 TIMEZONE = ZoneInfo("America/Sao_Paulo")
 
+MAX_LANCAMENTOS = int(
+    os.getenv(
+        "OCORRENCIA_73_MAX_LANCAMENTOS",
+        "1",
+    )
+)
+
+CTRC_TESTE = (
+    os.getenv(
+        "OCORRENCIA_73_CTRC_TESTE",
+        "",
+    )
+    .strip()
+    .upper()
+)
+
+OBSERVACAO_LANCAMENTO = (
+    os.getenv(
+        "OCORRENCIA_73_OBSERVACAO",
+        "LANCAMENTO AUTOMATICO - BOT OCORRENCIA 73",
+    )
+    .strip()
+)
+
 
 class Ocorrencia73Service:
     def __init__(self) -> None:
@@ -416,6 +440,10 @@ class Ocorrencia73Service:
                 total_encontrado=0,
                 total_nao_encontrado=0,
                 total_erro=0,
+                total_ja_existia=0,
+                total_pendente_lancamento=0,
+                total_lancado=0,
+                total_erro_lancamento=0,
                 dry_run=DRY_RUN,
             )
 
@@ -504,6 +532,9 @@ class Ocorrencia73Service:
 
         itens_consultados = []
 
+        total_lancado = 0
+        total_erro_lancamento = 0
+
         for indice, item in enumerate(
             filtrados,
             start=1,
@@ -531,9 +562,20 @@ class Ocorrencia73Service:
                     item_processado = {
                         **item,
                         "op101": consulta.to_dict(),
-                        "historico_ocorrencias": [],
-                        "ocorrencia_73": None,
-                        "status": "nao_encontrado",
+                        "historico_ocorrencias": [
+                            ocorrencia.to_dict()
+                            for ocorrencia in historico
+                        ],
+                        "total_historico_ocorrencias": len(
+                            historico
+                        ),
+                        "ocorrencia_73": (
+                            ocorrencia_73.to_dict()
+                            if ocorrencia_73
+                            else None
+                        ),
+                        "lancamento": lancamento,
+                        "status": status,
                     }
 
                 else:
@@ -565,11 +607,73 @@ class Ocorrencia73Service:
                         ocorrencia_73 is not None
                     )
 
-                    status = (
-                        "ja_existia"
-                        if ja_existia
-                        else "pendente_lancamento"
-                    )
+                    if ja_existia:
+                        status = "ja_existia"
+                        lancamento = None
+
+                    elif DRY_RUN:
+                        status = "pendente_lancamento"
+                        lancamento = None
+
+                    else:
+                        ctrc_chave = (
+                            f"{item['serie']}"
+                            f"{item['numero']}"
+                        )
+
+                        if (
+                            CTRC_TESTE
+                            and ctrc_chave != CTRC_TESTE
+                        ):
+                            status = "ignorado_fora_teste"
+                            lancamento = None
+
+                        elif total_lancado >= MAX_LANCAMENTOS:
+                            status = "ignorado_limite"
+                            lancamento = None
+
+                        else:
+                            resultado_lancamento = (
+                                op101.lancar_ocorrencia_73(
+                                    seq_ctrc=consulta.seq_ctrc,
+                                    familia=consulta.familia,
+                                    data_ocorrencia=data_referencia,
+                                    observacao=(
+                                        OBSERVACAO_LANCAMENTO
+                                    ),
+                                    local=consulta.local,
+                                )
+                            )
+
+                            confirmada = (
+                                op101.confirmar_ocorrencia_73(
+                                    serie=item["serie"],
+                                    numero=item["numero"],
+                                    seq_ctrc=consulta.seq_ctrc,
+                                    local=consulta.local,
+                                    familia=consulta.familia,
+                                    data_referencia=data_referencia,
+                                )
+                            )
+
+                            if (
+                                resultado_lancamento.success
+                                and confirmada
+                            ):
+                                status = "lancada"
+                                total_lancado += 1
+                            else:
+                                status = "erro_lancamento"
+                                total_erro_lancamento += 1
+
+                            lancamento = {
+                                **resultado_lancamento.to_dict(),
+                                "confirmada_no_historico": (
+                                    confirmada.to_dict()
+                                    if confirmada
+                                    else None
+                                ),
+                            }
 
                     print(
                         "[OP101] "
@@ -633,9 +737,37 @@ class Ocorrencia73Service:
             if item["status"] == "pendente_lancamento"
         )
 
-        total_encontrado = (
-            total_ja_existia
-            + total_pendente_lancamento
+        total_lancado = sum(
+            1
+            for item in itens_consultados
+            if item["status"] == "lancada"
+        )
+
+        total_erro_lancamento = sum(
+            1
+            for item in itens_consultados
+            if item["status"] == "erro_lancamento"
+        )
+
+        total_ignorado_fora_teste = sum(
+            1
+            for item in itens_consultados
+            if item["status"] == "ignorado_fora_teste"
+        )
+
+        total_ignorado_limite = sum(
+            1
+            for item in itens_consultados
+            if item["status"] == "ignorado_limite"
+        )
+
+        total_encontrado = sum(
+            1
+            for item in itens_consultados
+            if item["status"] not in {
+                "nao_encontrado",
+                "erro_consulta",
+            }
         )
 
         total_nao_encontrado = sum(
@@ -672,8 +804,10 @@ class Ocorrencia73Service:
             total_pendente_lancamento=(
                 total_pendente_lancamento
             ),
-            total_lancado=0,
-            total_erro_lancamento=0,
+            total_lancado=total_lancado,
+            total_erro_lancamento=(
+                total_erro_lancamento
+            ),
             dry_run=DRY_RUN,
         )
 
@@ -711,6 +845,20 @@ class Ocorrencia73Service:
             "total_encontrado_op101": (
                 total_encontrado
             ),
+            "total_ja_existia": total_ja_existia,
+            "total_pendente_lancamento": (
+                total_pendente_lancamento
+            ),
+            "total_lancado": total_lancado,
+            "total_erro_lancamento": (
+                total_erro_lancamento
+            ),
+            "total_ignorado_fora_teste": (
+                total_ignorado_fora_teste
+            ),
+            "total_ignorado_limite": (
+                total_ignorado_limite
+            ),
             "total_nao_encontrado_op101": (
                 total_nao_encontrado
             ),
@@ -740,6 +888,14 @@ class Ocorrencia73Service:
                 ),
                 "total_encontrado_op101": (
                     total_encontrado
+                ),
+                "total_ja_existia": total_ja_existia,
+                "total_pendente_lancamento": (
+                    total_pendente_lancamento
+                ),
+                "total_lancado": total_lancado,
+                "total_erro_lancamento": (
+                    total_erro_lancamento
                 ),
                 "total_nao_encontrado_op101": (
                     total_nao_encontrado
@@ -907,9 +1063,6 @@ class Ocorrencia73Service:
         )
 
         if dry_run:
-            print(
-                "Ocorrências lançadas................: 0"
-            )
             print(
                 "Motivo...............................: "
                 "modo seguro habilitado"
