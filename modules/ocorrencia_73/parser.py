@@ -424,15 +424,15 @@ def decompor_ctrc(
 def diagnosticar_filtros(
     registros: list[dict],
     clientes_permitidos: set[str],
-    rotas_permitidas: set[str],
+    rotas_permitidas: dict[str, set[str]],
 ) -> dict:
     if not registros:
         return {
             "total": 0,
-            "unidade": 0,
-            "cidade": 0,
+            "rota": 0,
             "cliente": 0,
             "todos_filtros": 0,
+            "rotas_encontradas": {},
             "clientes_encontrados": [],
             "cidades_encontradas": [],
             "unidades_encontradas": [],
@@ -463,17 +463,20 @@ def diagnosticar_filtros(
             normalizar_sem_acento(cidade)
             for cidade in cidades
         }
-        for unidade, cidades in rotas_permitidas.items()
+        for unidade, cidades in (
+            rotas_permitidas.items()
+        )
     }
 
-    total_unidade = 0
-    total_cidade = 0
+    total_rota = 0
     total_cliente = 0
     total_completo = 0
 
     clientes_encontrados = set()
     cidades_encontradas = set()
     unidades_encontradas = set()
+
+    rotas_encontradas: dict[str, int] = {}
 
     for registro in registros:
         cliente_original = normalizar_texto(
@@ -511,12 +514,16 @@ def diagnosticar_filtros(
                 unidade_original
             )
 
-        cidades_validas = rotas_normalizadas.get(
-            unidade,
-            set(),
+        cidades_validas = (
+            rotas_normalizadas.get(
+                unidade,
+                set(),
+            )
         )
 
-        atende_rota = cidade in cidades_validas
+        atende_rota = (
+            cidade in cidades_validas
+        )
 
         atende_cliente = (
             cliente in clientes_normalizados
@@ -525,6 +532,19 @@ def diagnosticar_filtros(
         if atende_rota:
             total_rota += 1
 
+            chave_rota = (
+                f"{unidade_original}"
+                f" -> "
+                f"{cidade_original}"
+            )
+
+            rotas_encontradas[chave_rota] = (
+                rotas_encontradas.get(
+                    chave_rota,
+                    0,
+                )
+                + 1
+            )
 
         if atende_cliente:
             total_cliente += 1
@@ -540,6 +560,11 @@ def diagnosticar_filtros(
         "rota": total_rota,
         "cliente": total_cliente,
         "todos_filtros": total_completo,
+        "rotas_encontradas": dict(
+            sorted(
+                rotas_encontradas.items()
+            )
+        ),
         "clientes_encontrados": sorted(
             clientes_encontrados
         ),
