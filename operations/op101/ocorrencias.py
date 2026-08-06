@@ -3,7 +3,8 @@ import time
 
 from dataclasses import asdict, dataclass
 from datetime import date
-from typing import Optional
+
+from html import unescape
 
 
 @dataclass
@@ -19,6 +20,33 @@ class CTRCConsultado:
     def to_dict(self) -> dict:
         return asdict(self)
 
+@dataclass
+class OcorrenciaHistorico:
+    codigo: str
+    descricao: str
+    data_hora: str = ""
+    familia: str = ""
+    unidade: str = ""
+    usuario: str = ""
+    complemento: str = ""
+    ocorrencia_ssw: str = ""
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+@dataclass
+class OcorrenciaHistorico:
+    codigo: str
+    descricao: str
+    data_hora: str = ""
+    familia: str = ""
+    unidade: str = ""
+    usuario: str = ""
+    complemento: str = ""
+    ocorrencia_ssw: str = ""
+
+    def to_dict(self) -> dict:
+        return asdict(self)
 
 class OP101Ocorrencias:
     """
@@ -304,6 +332,73 @@ class OP101Ocorrencias:
             for indicador in indicadores
         )
 
+    def abrir_ocorrencias(
+        self,
+        *,
+        serie: str,
+        numero: str,
+        seq_ctrc: str,
+        local: str,
+        familia: str,
+        data_referencia: date | str,
+    ) -> str:
+        """
+        Abre o histórico de ocorrências do CTRC pela OP101.
+
+        Esta função apenas consulta. Nenhuma ocorrência é lançada.
+        """
+
+        serie = self._normalizar_serie(serie)
+        numero = self._normalizar_numero(numero)
+        seq_ctrc = self._normalizar_numero(seq_ctrc)
+
+        if not seq_ctrc:
+            raise ValueError(
+                "seq_ctrc não informado para abrir ocorrências."
+            )
+
+        if isinstance(data_referencia, date):
+            data_tela = data_referencia.strftime(
+                "%-d/%-m/%y"
+            )
+        else:
+            texto = str(data_referencia or "").strip()
+
+            data_tela = self._data_tela_ssw(
+                data_referencia
+            )
+
+        response = self.client.post(
+            "/bin/ssw0053",
+            {
+                "act": "O",
+                "aviso_resgate": "#aviso_resgate#",
+                "dd_f_t_data_ini": "",
+                "dd_f_t_data_fin": "",
+                "dd_f_t_ser_ctrc": "",
+                "dd_f_t_ser_nf": "",
+                "dd_f_t_nro_pedido": "",
+                "g_ctrc_ser_ctrc": serie,
+                "g_ctrc_nro_ctrc": numero,
+                "gw_nro_nf_ini": "0",
+                "g_ctrc_nf_vol_ini": "0",
+                "gw_ctrc_nr_sscc": "",
+                "g_ctrc_nro_ctl_form": "0",
+                "gw_ctrc_parc_nro_ctrc_parc": "0",
+                "g_ctrc_c_chave_fis": "",
+                "gw_gaiola_codigo": "0",
+                "gw_pallet_codigo": "0",
+                "local": local or "Q",
+                "data_ini_inf": data_tela,
+                "data_fin_inf": data_tela,
+                "seq_ctrc": seq_ctrc,
+                "FAMILIA": familia or "ROD",
+                "dummy": self._dummy(),
+            },
+        )
+
+        return response.text
+
     def consultar_ctrc(
         self,
         serie: str,
@@ -380,4 +475,143 @@ class OP101Ocorrencias:
             local=dados["local"] or "Q",
             familia=dados["familia"] or "ROD",
             mensagem="CTRC localizado com sucesso.",
+        )
+
+    @staticmethod
+    def _limpar_campo_xml(
+        valor: str,
+    ) -> str:
+        texto = unescape(
+            str(valor or "")
+        )
+
+        texto = re.sub(
+            r"<[^>]+>",
+            "",
+            texto,
+        )
+
+        texto = texto.replace(
+            "\xa0",
+            " ",
+        )
+
+        texto = " ".join(
+            texto.split()
+        )
+
+        return texto.strip()
+
+    @classmethod
+    def listar_ocorrencias(
+        cls,
+        html: str,
+    ) -> list[OcorrenciaHistorico]:
+        """
+        Converte as linhas XML da tela de ocorrências em objetos.
+
+        Na tela da OP101:
+        - f0: data/hora
+        - f1: família
+        - f2: unidade
+        - f4/f12: usuário
+        - f5: código e descrição da ocorrência
+        - f6: informações complementares
+        - f10: ocorrência equivalente no SSW
+        """
+
+        html = unescape(
+            str(html or "")
+        )
+
+        registros_xml = re.findall(
+            r"<r>(.*?)</r>",
+            html,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+
+        ocorrencias = []
+
+        for registro_xml in registros_xml:
+            campos = {}
+
+            for indice in range(13):
+                match = re.search(
+                    rf"<f{indice}>(.*?)</f{indice}>",
+                    registro_xml,
+                    flags=re.IGNORECASE | re.DOTALL,
+                )
+
+                campos[f"f{indice}"] = (
+                    cls._limpar_campo_xml(
+                        match.group(1)
+                    )
+                    if match
+                    else ""
+                )
+
+            campo_ocorrencia = campos["f5"]
+
+            match_codigo = re.match(
+                r"^\s*(\d+)\s*-\s*(.*)$",
+                campo_ocorrencia,
+            )
+
+            if not match_codigo:
+                continue
+
+            codigo = match_codigo.group(1).strip()
+            descricao = match_codigo.group(2).strip()
+
+            usuario = campos["f12"]
+
+            if not usuario:
+                usuario = re.sub(
+                    r"#u#|#/u#|\|\d+",
+                    "",
+                    campos["f4"],
+                    flags=re.IGNORECASE,
+                ).strip()
+
+            ocorrencias.append(
+                OcorrenciaHistorico(
+                    codigo=codigo,
+                    descricao=descricao,
+                    data_hora=campos["f0"],
+                    familia=campos["f1"],
+                    unidade=campos["f2"],
+                    usuario=usuario,
+                    complemento=campos["f6"],
+                    ocorrencia_ssw=campos["f10"],
+                )
+            )
+
+        return ocorrencias
+
+    @staticmethod
+    def encontrar_ocorrencia(
+        ocorrencias: list[OcorrenciaHistorico],
+        codigo: str | int,
+    ) -> OcorrenciaHistorico | None:
+        codigo_procurado = str(
+            codigo
+        ).strip()
+
+        for ocorrencia in ocorrencias:
+            if ocorrencia.codigo == codigo_procurado:
+                return ocorrencia
+
+        return None
+
+    @classmethod
+    def possui_ocorrencia_73(
+        cls,
+        ocorrencias: list[OcorrenciaHistorico],
+    ) -> bool:
+        return (
+            cls.encontrar_ocorrencia(
+                ocorrencias,
+                73,
+            )
+            is not None
         )

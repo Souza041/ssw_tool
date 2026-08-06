@@ -527,15 +527,73 @@ class Ocorrencia73Service:
                     )
                 )
 
-                item_processado = {
-                    **item,
-                    "op101": consulta.to_dict(),
-                    "status": (
-                        "consultado"
-                        if consulta.encontrado
-                        else "nao_encontrado"
-                    ),
-                }
+                if not consulta.encontrado:
+                    item_processado = {
+                        **item,
+                        "op101": consulta.to_dict(),
+                        "historico_ocorrencias": [],
+                        "ocorrencia_73": None,
+                        "status": "nao_encontrado",
+                    }
+
+                else:
+                    html_ocorrencias = (
+                        op101.abrir_ocorrencias(
+                            serie=item["serie"],
+                            numero=item["numero"],
+                            seq_ctrc=consulta.seq_ctrc,
+                            local=consulta.local,
+                            familia=consulta.familia,
+                            data_referencia=data_referencia,
+                        )
+                    )
+
+                    historico = (
+                        op101.listar_ocorrencias(
+                            html_ocorrencias
+                        )
+                    )
+
+                    ocorrencia_73 = (
+                        op101.encontrar_ocorrencia(
+                            historico,
+                            73,
+                        )
+                    )
+
+                    ja_existia = (
+                        ocorrencia_73 is not None
+                    )
+
+                    status = (
+                        "ja_existia"
+                        if ja_existia
+                        else "pendente_lancamento"
+                    )
+
+                    print(
+                        "[OP101] "
+                        f"{item['serie']}{item['numero']} "
+                        f"-> {status}"
+                    )
+
+                    item_processado = {
+                        **item,
+                        "op101": consulta.to_dict(),
+                        "historico_ocorrencias": [
+                            ocorrencia.to_dict()
+                            for ocorrencia in historico
+                        ],
+                        "total_historico_ocorrencias": len(
+                            historico
+                        ),
+                        "ocorrencia_73": (
+                            ocorrencia_73.to_dict()
+                            if ocorrencia_73
+                            else None
+                        ),
+                        "status": status,
+                    }
 
             except Exception as erro:
                 item_processado = {
@@ -563,13 +621,21 @@ class Ocorrencia73Service:
                 item_processado
             )
 
-        total_encontrado = sum(
+        total_ja_existia = sum(
             1
             for item in itens_consultados
-            if (
-                item["status"]
-                == "consultado"
-            )
+            if item["status"] == "ja_existia"
+        )
+
+        total_pendente_lancamento = sum(
+            1
+            for item in itens_consultados
+            if item["status"] == "pendente_lancamento"
+        )
+
+        total_encontrado = (
+            total_ja_existia
+            + total_pendente_lancamento
         )
 
         total_nao_encontrado = sum(
@@ -602,6 +668,12 @@ class Ocorrencia73Service:
                 total_nao_encontrado
             ),
             total_erro=total_erro,
+            total_ja_existia=total_ja_existia,
+            total_pendente_lancamento=(
+                total_pendente_lancamento
+            ),
+            total_lancado=0,
+            total_erro_lancamento=0,
             dry_run=DRY_RUN,
         )
 
@@ -737,6 +809,10 @@ class Ocorrencia73Service:
         total_encontrado: int,
         total_nao_encontrado: int,
         total_erro: int,
+        total_ja_existia: int,
+        total_pendente_lancamento: int,
+        total_lancado: int,
+        total_erro_lancamento: int,
         dry_run: bool,
     ) -> None:
         rotas_encontradas = (
@@ -801,6 +877,26 @@ class Ocorrencia73Service:
         print(
             f"Erros técnicos na consulta OP101....: "
             f"{total_erro}"
+        )
+
+        print(
+            f"Já possuíam ocorrência 73...........: "
+            f"{total_ja_existia}"
+        )
+
+        print(
+            f"Pendentes de lançamento.............: "
+            f"{total_pendente_lancamento}"
+        )
+
+        print(
+            f"Ocorrências lançadas................: "
+            f"{total_lancado}"
+        )
+
+        print(
+            f"Ocorrências com erro................: "
+            f"{total_erro_lancamento}"
         )
 
         print("-" * 62)
