@@ -18,11 +18,19 @@ GRUPOS_CNPJ = {
 }
 
 GRUPOS_ATIVOS_MVP = {
-    "Electrolux": GRUPOS_CNPJ["Electrolux"],
-    "LG": GRUPOS_CNPJ["LG"],
-    "Britania": GRUPOS_CNPJ["Britania"],
+    "Magazine": GRUPOS_CNPJ["Magazine"],
     "Whirlpool": GRUPOS_CNPJ["Mlog"],
-    "Muller": GRUPOS_CNPJ["Muller"],
-    "Samsung": GRUPOS_CNPJ["Samsung"],
+    "Electrolux": GRUPOS_CNPJ["Electrolux"],
+    "Penske": GRUPOS_CNPJ["Penske"],
+    "Fastshop": GRUPOS_CNPJ["Fastshop"],
+    "Ipanema": GRUPOS_CNPJ["Ipanema"],
+    "Panasonic": GRUPOS_CNPJ["Panasonic"],
     "Carrefour": GRUPOS_CNPJ["Carrefour"],
+    "LG": GRUPOS_CNPJ["LG"],
+    "Metalfrio": GRUPOS_CNPJ["Metalfrio"],
+    "Springer": GRUPOS_CNPJ["Springer"],
+    "Samsung": GRUPOS_CNPJ["Samsung"],
+    "Britania": GRUPOS_CNPJ["Britania"],
+    "Muller": GRUPOS_CNPJ["Muller"],
+    "Leonfer": GRUPOS_CNPJ["Leonfer"],
 }

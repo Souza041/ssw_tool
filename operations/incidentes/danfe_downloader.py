@@ -148,7 +148,7 @@ class XMLCTeDownloader:
         texto = str(ctrc or "").strip().upper()
 
         match = re.match(
-            r"^([A-Z]{3})(\d+)",
+            r"^([A-Z]{2}[A-Z0-9])(\d+)-(\d+)$",
             texto,
         )
 
