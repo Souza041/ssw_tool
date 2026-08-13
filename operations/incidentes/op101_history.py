@@ -20,7 +20,7 @@ class OP101History:
         # JOI 813812
         # JOI813812
         match = re.search(
-            r"([A-Z]{3})\D*(\d{6})(?:\D*\d)?",
+            r"([A-Z]{2}[A-Z0-9])\D*(\d{6})(?:\D*\d)?",
             texto,
         )
 

@@ -9,7 +9,7 @@ from ssw.utils import data_barra_curta, data_ddmmaa, dummy
 def split_ctrc(serie_numero: str) -> tuple[str, str]:
     texto = str(serie_numero).strip().upper()
 
-    match = re.search(r"([A-Z]{3})\D*(\d{6})(?:\D*\d)?", texto)
+    match = re.search(r"([A-Z]{2}[A-Z0-9])\D*(\d{6})(?:\D*\d)?", texto)
 
     if not match:
         raise ValueError(f"Formato de CTRC inválido: {serie_numero}")
