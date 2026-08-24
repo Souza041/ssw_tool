@@ -31,6 +31,7 @@ from operations.op101.comprovantes import OP101Comprovantes
 from operations.op101.batch_comprovantes import processar_planilha_comprovantes
 
 from operations.incidentes.workflow import executar_incidentes_op930
+from operations.debitos.batch import processar_planilha_debitos
 
 router = APIRouter()
 templates = Jinja2Templates(directory="web/templates")
@@ -380,6 +381,176 @@ def op488_run(
         url=f"/jobs/{job.id}",
         status_code=303,
     )
+
+
+@router.get("/debitos", response_class=HTMLResponse)
+def debitos_form(request: Request):
+    redirect = validar_login(request)
+    if redirect:
+        return redirect
+
+    return templates.TemplateResponse("debitos.html", {"request": request})
+
+
+@router.post("/debitos")
+async def debitos_run(
+    request: Request,
+    arquivo_excel: UploadFile = File(...),
+    modo: str = Form("completo"),
+):
+    try:
+        client = exigir_client(request)
+    except RuntimeError:
+        return RedirectResponse(
+            "/login",
+            status_code=303,
+        )
+
+    modo = str(modo or "").strip().lower()
+
+    modos_validos = {
+        "completo",
+        "op475",
+        "op506",
+    }
+
+    if modo not in modos_validos:
+        return templates.TemplateResponse(
+            "debitos.html",
+            {
+                "request": request,
+                "error": (
+                    "Modo de processamento inválido."
+                ),
+            },
+            status_code=400,
+        )
+
+    uploads_dir = Path("uploads")
+    uploads_dir.mkdir(exist_ok=True)
+
+    nome_seguro = Path(
+        arquivo_excel.filename or "debitos.xlsx"
+    ).name
+
+    input_file = (
+        uploads_dir
+        / (
+            f"debitos_"
+            f"{uuid.uuid4().hex[:8]}_"
+            f"{nome_seguro}"
+        )
+    )
+
+    with input_file.open("wb") as f:
+        f.write(
+            await arquivo_excel.read()
+        )
+
+    output_file = (
+        Path("downloads")
+        / (
+            f"debitos_processado_"
+            f"{uuid.uuid4().hex[:8]}.xlsx"
+        )
+    )
+
+    job = criar_job()
+
+    nomes_modo = {
+        "completo": "OP475 + OP506",
+        "op475": "Somente OP475",
+        "op506": "Somente OP506",
+    }
+
+    add_log(
+        job,
+        "Job de lançamento de débitos criado."
+    )
+
+    add_log(
+        job,
+        (
+            "Modo selecionado: "
+            f"{nomes_modo[modo]}."
+        ),
+    )
+
+    executar_job(
+        job,
+        executar_debitos_job,
+        client,
+        input_file,
+        output_file,
+        modo,
+    )
+
+    return RedirectResponse(
+        url=f"/jobs/{job.id}",
+        status_code=303,
+    )
+
+
+def executar_debitos_job(
+    job,
+    client: SSWClient,
+    input_file: Path,
+    output_file: Path,
+    modo: str,
+) -> list[dict]:
+
+    nomes_modo = {
+        "completo": "OP475 + OP506",
+        "op475": "Somente OP475",
+        "op506": "Somente OP506",
+    }
+
+    descricao_modo = nomes_modo.get(
+        modo,
+        modo,
+    )
+
+    add_log(
+        job,
+        "Sessão SSW carregada."
+    )
+
+    add_log(
+        job,
+        f"Iniciando fluxo: {descricao_modo}."
+    )
+
+    arquivo_saida = processar_planilha_debitos(
+        client=client,
+        input_file=input_file,
+        output_file=output_file,
+        modo=modo,
+        job=job,
+    )
+
+    add_log(
+        job,
+        (
+            "Planilha final gerada: "
+            f"{arquivo_saida.name}"
+        ),
+    )
+
+    arquivos = [{
+        "name": arquivo_saida.name,
+        "url": (
+            f"/downloads/"
+            f"{arquivo_saida.name}"
+        ),
+        "periodo": (
+            "Lançamento de Débitos - "
+            f"{descricao_modo}"
+        ),
+    }]
+
+    job.result_files = arquivos
+
+    return arquivos
 
 @router.get("/op001", response_class=HTMLResponse)
 def op001_form(request: Request):

@@ -53,3 +53,7 @@ data/incidentes/history/*
 # Mantém somente a estrutura das pastas
 !data/incidentes/current/.gitkeep
 !data/incidentes/history/.gitkeep
+
+debug_op475/
+outputs/metricas_snapshots/
+temp/

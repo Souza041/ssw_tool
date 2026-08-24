@@ -1,0 +1,357 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="topbar">
+    <h1>Lançamento de Débitos</h1>
+    <p>
+        Execute o lançamento na OP475, a indenização na OP506
+        ou o fluxo completo automaticamente.
+    </p>
+</div>
+
+<div class="card">
+    <h3>OP475 + OP506 - Indenizações</h3>
+
+    <form method="post" enctype="multipart/form-data">
+
+        <label>Modo de processamento</label>
+
+        <div class="debitos-mode-grid">
+
+            <label class="debitos-mode-card active">
+                <input
+                    type="radio"
+                    name="modo"
+                    value="completo"
+                    checked
+                >
+
+                <span class="debitos-mode-title">
+                    Fluxo completo
+                </span>
+
+                <span class="debitos-mode-description">
+                    Executa a OP475, captura o número do lançamento
+                    e conclui automaticamente a indenização na OP506.
+                </span>
+
+                <span class="debitos-mode-flow">
+                    OP475 → OP506
+                </span>
+            </label>
+
+            <label class="debitos-mode-card">
+                <input
+                    type="radio"
+                    name="modo"
+                    value="op475"
+                >
+
+                <span class="debitos-mode-title">
+                    Somente lançamento
+                </span>
+
+                <span class="debitos-mode-description">
+                    Executa apenas o lançamento do débito e grava
+                    o número gerado na coluna LANÇ.
+                </span>
+
+                <span class="debitos-mode-flow">
+                    OP475
+                </span>
+            </label>
+
+            <label class="debitos-mode-card">
+                <input
+                    type="radio"
+                    name="modo"
+                    value="op506"
+                >
+
+                <span class="debitos-mode-title">
+                    Somente indenização
+                </span>
+
+                <span class="debitos-mode-description">
+                    Executa apenas a indenização utilizando o número
+                    já existente na coluna LANÇ da planilha.
+                </span>
+
+                <span class="debitos-mode-flow">
+                    OP506
+                </span>
+            </label>
+
+        </div>
+
+        <div
+            id="modo-info"
+            class="debitos-info"
+        >
+            <strong>Fluxo completo selecionado.</strong>
+            A automação executará a OP475 e utilizará automaticamente
+            o lançamento criado para concluir a OP506.
+        </div>
+
+        <label for="arquivo_excel">
+            Planilha Excel
+        </label>
+
+        <input
+            id="arquivo_excel"
+            type="file"
+            name="arquivo_excel"
+            accept=".xlsx,.xls,.csv"
+            required
+        >
+
+        <button type="submit">
+            Processar lançamentos
+        </button>
+    </form>
+
+    <div class="debitos-rules">
+        <strong>Como funciona</strong>
+
+        <p id="regra-processamento">
+            No fluxo completo, a OP475 cria o débito e a OP506
+            utiliza automaticamente o número do lançamento gerado.
+        </p>
+    </div>
+
+    <p>Colunas utilizadas pela automação:</p>
+
+    <div class="debitos-columns">
+        <code>Valor</code>
+        <code>MOTIVO</code>
+        <code>NF</code>
+        <code>CTRC</code>
+        <code>UNIDADE</code>
+        <code>LANÇ</code>
+        <code>Vcto</code>
+        <code>SKU</code>
+        <code>Concatenado Campo Histórico SSW475</code>
+        <code>CNPJ LANC</code>
+    </div>
+
+    <br>
+
+    <a class="back" href="/">
+        ← Voltar ao dashboard
+    </a>
+</div>
+
+<style>
+    .debitos-mode-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin: 8px 0 20px;
+    }
+
+    .debitos-mode-card {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        min-height: 170px;
+        padding: 18px;
+        margin: 0;
+        border: 2px solid var(--border);
+        border-radius: 14px;
+        background: #fff;
+        cursor: pointer;
+        transition: .15s ease;
+    }
+
+    .debitos-mode-card:hover {
+        border-color: #93c5fd;
+        transform: translateY(-1px);
+    }
+
+    .debitos-mode-card.active {
+        border-color: var(--primary);
+        background: #eff6ff;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, .08);
+    }
+
+    .debitos-mode-card input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+    }
+
+    .debitos-mode-title {
+        display: block;
+        font-size: 15px;
+        font-weight: 700;
+        color: var(--text);
+        margin-bottom: 8px;
+    }
+
+    .debitos-mode-description {
+        display: block;
+        flex: 1;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.5;
+    }
+
+    .debitos-mode-flow {
+        display: inline-block;
+        align-self: flex-start;
+        margin-top: 14px;
+        padding: 5px 9px;
+        border-radius: 8px;
+        background: #dbeafe;
+        color: #1d4ed8;
+        font-size: 12px;
+        font-weight: 700;
+    }
+
+    .debitos-info {
+        padding: 14px 16px;
+        margin-bottom: 22px;
+        border: 1px solid #bfdbfe;
+        border-radius: 12px;
+        background: #eff6ff;
+        color: #1e3a8a;
+        font-size: 13px;
+        line-height: 1.6;
+    }
+
+    .debitos-rules {
+        margin-top: 24px;
+        padding: 16px;
+        border-radius: 12px;
+        background: #f8fafc;
+        border: 1px solid var(--border);
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.6;
+    }
+
+    .debitos-rules strong {
+        color: var(--text);
+    }
+
+    .debitos-rules p {
+        margin: 6px 0 0;
+    }
+
+    .debitos-columns {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+    }
+
+    @media (max-width: 900px) {
+        .debitos-mode-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .debitos-mode-card {
+            min-height: auto;
+        }
+    }
+</style>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function () {
+        const radios = document.querySelectorAll(
+            'input[name="modo"]'
+        );
+
+        const cards = document.querySelectorAll(
+            ".debitos-mode-card"
+        );
+
+        const info = document.getElementById(
+            "modo-info"
+        );
+
+        const regra = document.getElementById(
+            "regra-processamento"
+        );
+
+        const mensagens = {
+            completo: {
+                info:
+                    "<strong>Fluxo completo selecionado.</strong> " +
+                    "A automação executará a OP475 e utilizará " +
+                    "automaticamente o lançamento criado para " +
+                    "concluir a OP506.",
+
+                regra:
+                    "No fluxo completo, a OP475 cria o débito e " +
+                    "a OP506 utiliza automaticamente o número " +
+                    "do lançamento gerado."
+            },
+
+            op475: {
+                info:
+                    "<strong>Somente OP475 selecionada.</strong> " +
+                    "A automação realizará apenas o lançamento " +
+                    "do débito e gravará o número gerado na " +
+                    "coluna LANÇ da planilha processada.",
+
+                regra:
+                    "Linhas que já possuem número na coluna LANÇ " +
+                    "não serão lançadas novamente."
+            },
+
+            op506: {
+                info:
+                    "<strong>Somente OP506 selecionada.</strong> " +
+                    "A automação utilizará o número informado " +
+                    "na coluna LANÇ para realizar a indenização.",
+
+                regra:
+                    "Neste modo, a coluna LANÇ deve estar " +
+                    "preenchida com um lançamento válido da OP475."
+            }
+        };
+
+        function atualizarModo() {
+            const selecionado = document.querySelector(
+                'input[name="modo"]:checked'
+            );
+
+            if (!selecionado) {
+                return;
+            }
+
+            cards.forEach(function (card) {
+                card.classList.remove("active");
+            });
+
+            const card = selecionado.closest(
+                ".debitos-mode-card"
+            );
+
+            if (card) {
+                card.classList.add("active");
+            }
+
+            const mensagem = mensagens[
+                selecionado.value
+            ];
+
+            if (!mensagem) {
+                return;
+            }
+
+            info.innerHTML = mensagem.info;
+            regra.textContent = mensagem.regra;
+        }
+
+        radios.forEach(function (radio) {
+            radio.addEventListener(
+                "change",
+                atualizarModo
+            );
+        });
+
+        atualizarModo();
+    });
+</script>
+{% endblock %}
