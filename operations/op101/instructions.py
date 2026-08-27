@@ -5,6 +5,21 @@ from ssw.client import SSWClient
 from ssw.settings import settings
 from ssw.utils import data_barra_curta, data_ddmmaa, dummy
 
+def possui_oc_entrega_realizada(html: str) -> bool:
+    if not html:
+        return False
+
+    texto = re.sub(r"\s+", " ", html).upper()
+
+    padroes = [
+        r"\b0?1\s*-\s*ENTREGA REALIZADA NORMALMENTE\b",
+        r"\b0?1\s*-\s*ENTREGA REALIZADA\b",
+    ]
+
+    return any(
+        re.search(padrao, texto, flags=re.IGNORECASE)
+        for padrao in padroes
+    )
 
 def split_ctrc(serie_numero: str) -> tuple[str, str]:
     texto = str(serie_numero).strip().upper()
@@ -45,11 +60,11 @@ class OP101Instructions:
 
         return match.group(1)
 
-    def buscar_ctrc(self, numero_ctrc: str) -> None:
+    def buscar_ctrc(self, numero_ctrc: str) -> str:
         hoje = datetime.now()
         inicio = hoje - timedelta(days=90)
 
-        self.client.post(
+        response = self.client.post(
             "/bin/ssw0053",
             {
                 "act": "P1",
@@ -61,11 +76,17 @@ class OP101Instructions:
             },
         )
 
-    def abrir_ocorrencias(self, numero_ctrc: str, seq_ctrc: str) -> None:
+        return response.text
+
+    def abrir_ocorrencias(
+        self,
+        numero_ctrc: str,
+        seq_ctrc: str,
+    ) -> str:
         hoje = datetime.now()
         inicio = hoje - timedelta(days=90)
 
-        self.client.post(
+        response = self.client.post(
             "/bin/ssw0053",
             {
                 "act": "O",
@@ -77,6 +98,8 @@ class OP101Instructions:
                 "dummy": dummy(),
             },
         )
+
+        return response.text
 
     def salvar_instrucao(
         self,
@@ -102,10 +125,36 @@ class OP101Instructions:
             },
         )
 
-    def lancar_instrucao(self, serie_numero_ctrc: str, texto: str) -> None:
+    def lancar_instrucao(
+        self,
+        serie_numero_ctrc: str,
+        texto: str,
+    ) -> str:
         serie, numero = split_ctrc(serie_numero_ctrc)
 
         seq_ctrc = self.consultar_sequencial(numero)
-        self.buscar_ctrc(numero)
-        self.abrir_ocorrencias(numero, seq_ctrc)
-        self.salvar_instrucao(numero, seq_ctrc, texto)
+
+        html_ctrc = self.buscar_ctrc(numero)
+
+        # Primeira proteção:
+        # CTRC já está entregue na tela principal da OP101.
+        if possui_oc_entrega_realizada(html_ctrc):
+            return "IGNORADO"
+
+        html_ocorrencias = self.abrir_ocorrencias(
+            numero,
+            seq_ctrc,
+        )
+
+        # Segunda proteção:
+        # valida novamente imediatamente antes de salvar.
+        if possui_oc_entrega_realizada(html_ocorrencias):
+            return "IGNORADO"
+
+        self.salvar_instrucao(
+            numero,
+            seq_ctrc,
+            texto,
+        )
+
+        return "OK"

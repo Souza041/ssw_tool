@@ -92,15 +92,26 @@ def processar_instrucoes_gestao(
 
     sucesso = 0
     falha = 0
+    ignorados = 0
 
     for idx, ctrc in enumerate(ctrcs, start=1):
         try:
             log(f"Lançando instrução {idx}/{len(ctrcs)} | CTRC={ctrc}")
 
-            op101.lancar_instrucao(
+            resultado = op101.lancar_instrucao(
                 serie_numero_ctrc=ctrc,
                 texto=texto_instrucao,
             )
+
+            if resultado == "IGNORADO":
+                ignorados += 1
+
+                log(
+                    f"Instrução ignorada | CTRC={ctrc} | "
+                    "motivo=OC 01 / entrega já realizada"
+                )
+
+                continue
 
             sucesso += 1
             log(f"Instrução lançada com sucesso | CTRC={ctrc}")
@@ -109,4 +120,9 @@ def processar_instrucoes_gestao(
             falha += 1
             log(f"Falha OP101 | CTRC={ctrc} | erro={exc}")
 
-    log(f"Lançamento OP101 finalizado. Sucesso={sucesso} | Falha={falha}")
+    log(
+        f"Lançamento OP101 finalizado. "
+        f"Sucesso={sucesso} | "
+        f"Ignorados={ignorados} | "
+        f"Falha={falha}"
+    )
