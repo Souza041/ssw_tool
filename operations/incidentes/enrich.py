@@ -70,6 +70,11 @@ def enriquecer_base_com_op101(
 
             base.at[
                 indice,
+                "TIPO_OPERACAO",
+            ] = "NAO_IDENTIFICADO"
+
+            base.at[
+                indice,
                 "STATUS_VALIDACAO_DEBITO",
             ] = "PENDENTE"
 
@@ -102,18 +107,36 @@ def enriquecer_base_com_op101(
                 )
 
             historico = historicos_cache[ctrc]
+
             ocorrencias = historico["ocorrencias"]
             ultima = historico["ultima_ocorrencia"]
-            ultimo_registro = historico.get("ultimo_registro")
+            ultimo_registro = historico.get(
+                "ultimo_registro"
+            )
 
             sequencial_ctrc = str(
                 historico.get("sequencial", "")
             ).strip()
 
+            tipo_operacao = str(
+                historico.get(
+                    "tipo_operacao",
+                    "NAO_IDENTIFICADO",
+                )
+            ).strip().upper()
+
+            if not tipo_operacao:
+                tipo_operacao = "NAO_IDENTIFICADO"
+
             base.at[
                 indice,
                 "SEQUENCIAL_CTRC",
             ] = sequencial_ctrc
+
+            base.at[
+                indice,
+                "TIPO_OPERACAO",
+            ] = tipo_operacao
 
             base.at[
                 indice,
@@ -318,6 +341,11 @@ def enriquecer_base_com_op101(
                 indice,
                 "SEQUENCIAL_CTRC",
             ] = ""
+
+            base.at[
+                indice,
+                "TIPO_OPERACAO",
+            ] = "NAO_IDENTIFICADO"
 
             log(
                 f"Erro OP101 | CTRC={ctrc} | erro={exc}"

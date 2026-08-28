@@ -143,6 +143,49 @@ class OP101History:
         return valor.strip()
 
     @staticmethod
+    def identificar_tipo_operacao(html: str) -> str:
+        """
+        Identifica a natureza da operação pela tela principal da OP101.
+
+        Retornos:
+            REVERSA
+            COLETA
+            NAO_IDENTIFICADO
+        """
+        texto = unquote(
+            unescape(html or "")
+        )
+
+        texto = re.sub(
+            r"<[^>]+>",
+            " ",
+            texto,
+        )
+
+        texto = re.sub(
+            r"\s+",
+            " ",
+            texto,
+        )
+
+        texto = texto.upper().strip()
+
+        # A própria OP101 identifica explicitamente
+        # os documentos de logística reversa.
+        if (
+            "CT-E REVERSA" in texto
+            or "CTE REVERSA" in texto
+        ):
+            return "REVERSA"
+
+        # Quando não há marcação de reversa, tratamos
+        # o CTRC convencional como operação de coleta.
+        if texto:
+            return "COLETA"
+
+        return "NAO_IDENTIFICADO"
+
+    @staticmethod
     def normalizar_codigo_ocorrencia(valor: str) -> str:
         texto = str(valor or "").strip()
 
@@ -317,10 +360,18 @@ class OP101History:
 
         # Mantemos a abertura do CTRC antes da aba de ocorrências,
         # reproduzindo o fluxo do SSW.
-        self.abrir_ctrc(
+        #
+        # Aproveitamos a própria tela principal para identificar
+        # se o documento pertence a uma operação convencional
+        # ou de logística reversa.
+        html_ctrc = self.abrir_ctrc(
             serie=serie,
             numero=numero,
             sequencial=sequencial,
+        )
+
+        tipo_operacao = self.identificar_tipo_operacao(
+            html_ctrc
         )
 
         html_ocorrencias = self.abrir_ocorrencias(
@@ -352,6 +403,8 @@ class OP101History:
             "serie": serie,
             "numero": numero,
             "sequencial": sequencial,
+
+            "tipo_operacao": tipo_operacao,
 
             "ocorrencias": ocorrencias,
 
