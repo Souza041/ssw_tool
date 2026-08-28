@@ -16,7 +16,9 @@
 
     var chartInstances = {
         dailyEvolution: null,
-        debitStatus: null
+        debitStatus: null,
+        operationType: null,
+        ratePerThousand: null
     };
 
     var elements = {
@@ -100,6 +102,10 @@
             'filterProducts'
         ),
 
+        operationTypes: document.getElementById(
+            'filterOperationTypes'
+        ),
+
         metaUpdatedAt: document.getElementById(
             'metaUpdatedAt'
         ),
@@ -162,6 +168,14 @@
 
         debitStatusChart: document.getElementById(
             'debitStatusChart'
+        ),
+
+        operationTypeChart: document.getElementById(
+            'operationTypeChart'
+        ),
+
+        ratePerThousandChart: document.getElementById(
+            'ratePerThousandChart'
         ),
 
         occurrencesRankingChart: document.getElementById(
@@ -449,6 +463,18 @@
             elements.products
         );
 
+        appendSelectValues(
+            parameters,
+            'produtos',
+            elements.products
+        );
+
+        appendSelectValues(
+            parameters,
+            'tipos_operacao',
+            elements.operationTypes
+        );
+
         var query = parameters.toString();
 
         return query
@@ -522,7 +548,8 @@
             elements.occurrences,
             elements.debitStatus,
             elements.debitRules,
-            elements.products
+            elements.products,
+            elements.operationTypes
         ].forEach(
             clearMultipleSelect
         );
@@ -627,6 +654,12 @@
             options.produtos || [],
             selected.produtos
         );
+
+        populateSelect(
+            elements.operationTypes,
+            options.tipos_operacao || [],
+            selected.tipos_operacao
+        );
     }
 
 
@@ -665,6 +698,11 @@
             produtos:
                 getSelectedValues(
                     elements.products
+                ),
+
+            tipos_operacao:
+                getSelectedValues(
+                    elements.operationTypes
                 )
         };
     }
@@ -814,6 +852,11 @@
         restoreSelectValues(
             elements.products,
             filters.produtos
+        );
+
+        restoreSelectValues(
+            elements.operationTypes,
+            filters.tipos_operacao
         );
     }
 
@@ -994,6 +1037,27 @@
             )
         );
 
+        renderOperationTypeChart(
+            getChartData(
+                charts,
+                [
+                    'tipos_operacao',
+                    'tipo_operacao',
+                    'operation_types'
+                ]
+            )
+        );
+
+        renderRatePerThousandChart(
+            getChartData(
+                charts,
+                [
+                    'taxa_por_mil',
+                    'rate_per_thousand'
+                ]
+            )
+        );
+
         renderRankingList(
             elements.occurrencesRankingChart,
             getChartData(
@@ -1108,7 +1172,6 @@
         );
     }
 
-
     function getChartData(
         charts,
         possibleKeys
@@ -1138,6 +1201,209 @@
         return [];
     }
 
+    function renderRatePerThousandChart(rows) {
+        var container = elements.ratePerThousandChart;
+
+        if (!container) {
+            return;
+        }
+
+        if (
+            chartInstances.ratePerThousand
+            && typeof chartInstances.ratePerThousand.destroy === 'function'
+        ) {
+            chartInstances.ratePerThousand.destroy();
+            chartInstances.ratePerThousand = null;
+        }
+
+        rows = Array.isArray(rows)
+            ? rows
+            : [];
+
+        if (!rows.length) {
+            container.innerHTML = (
+                '<div class="chart-empty">'
+                + 'Sem dados para o período.'
+                + '</div>'
+            );
+
+            return;
+        }
+
+        var categories = rows.map(function (row) {
+            return String(
+                row.ocorrencia || '—'
+            );
+        });
+
+        var values = rows.map(function (row) {
+            return Number(
+                row.taxa_por_mil || 0
+            );
+        });
+
+        var options = {
+            chart: {
+                type: 'bar',
+                height: 300,
+                toolbar: {
+                    show: false
+                }
+            },
+
+            series: [
+                {
+                    name: 'Taxa por mil',
+                    data: values
+                }
+            ],
+
+            plotOptions: {
+                bar: {
+                    horizontal: true,
+                    borderRadius: 4,
+                    barHeight: '55%',
+
+                    dataLabels: {
+                        position: 'top',
+                        hideOverflowingLabels: false
+                    }
+                }
+            },
+
+            dataLabels: {
+                enabled: true,
+
+                formatter: function (value) {
+                    return formatRatePerThousand(
+                        value
+                    );
+                },
+
+                textAnchor: 'start',
+                offsetX: 8,
+
+                style: {
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    colors: [
+                        '#526078'
+                    ]
+                },
+
+                background: {
+                    enabled: false
+                },
+
+                dropShadow: {
+                    enabled: false
+                }
+            },
+
+            xaxis: {
+                categories: categories,
+
+                labels: {
+                    formatter: function (value) {
+                        return formatDecimal(
+                            value
+                        );
+                    }
+                }
+            },
+
+            yaxis: {
+                labels: {
+                    formatter: function (value) {
+                        return String(value);
+                    }
+                }
+            },
+
+            tooltip: {
+                custom: function (context) {
+                    var index = (
+                        context.dataPointIndex
+                    );
+
+                    var row = rows[index] || {};
+
+                    return (
+                        '<div class="chart-tooltip">'
+                        + '<strong>Ocorrência '
+                        + escapeHtml(
+                            row.ocorrencia || '—'
+                        )
+                        + '</strong>'
+                        + '<br>'
+                        + formatInteger(
+                            row.quantidade || 0
+                        )
+                        + ' CTRCs'
+                        + '<br>'
+                        + formatRatePerThousand(
+                            row.taxa_por_mil || 0
+                        )
+                        + ' por 1.000'
+                        + '<br>'
+                        + '<small>'
+                        + 'Base: '
+                        + formatInteger(
+                            row.total_ctrcs_emitidos || 0
+                        )
+                        + ' CTRCs emitidos'
+                        + '</small>'
+                        + '</div>'
+                    );
+                }
+            },
+
+            legend: {
+                show: false
+            },
+
+            grid: {
+                borderColor: 'rgba(148, 163, 184, 0.15)',
+
+                padding: {
+                    right:48
+                }
+            },
+        };
+
+        chartInstances.ratePerThousand = (
+            new ApexCharts(
+                container,
+                options
+            )
+        );
+
+        chartInstances.ratePerThousand.render();
+    }
+
+    function formatDecimal(value) {
+        var number = Number(value);
+
+        if (!Number.isFinite(number)) {
+            number = 0;
+        }
+
+        return number.toLocaleString(
+            'pt-BR',
+            {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            }
+        );
+    }
+
+
+    function formatRatePerThousand(value) {
+        return (
+            formatDecimal(value)
+            + '‰'
+        );
+    }
 
     function normalizeChartData(data) {
         if (!data) {
@@ -1744,6 +2010,235 @@
         chartInstances.debitStatus.render();
     }
 
+    function renderOperationTypeChart(rows) {
+        if (!elements.operationTypeChart) {
+            return;
+        }
+
+        destroyChart(
+            'operationType'
+        );
+
+        var normalized = normalizeRows(
+            rows,
+            [
+                'tipo_operacao',
+                'operacao',
+                'categoria',
+                'label'
+            ],
+            [
+                'quantidade',
+                'total',
+                'count',
+                'value'
+            ]
+        );
+
+        if (!normalized.length) {
+            renderEmptyChart(
+                elements.operationTypeChart
+            );
+
+            return;
+        }
+
+        if (typeof ApexCharts === 'undefined') {
+            renderChartLibraryError(
+                elements.operationTypeChart
+            );
+
+            return;
+        }
+
+        var labels = normalized.map(
+            function (item) {
+                return formatOperationType(
+                    item.label
+                );
+            }
+        );
+
+        var values = normalized.map(
+            function (item) {
+                return item.value;
+            }
+        );
+
+        var total = values.reduce(
+            function (sum, value) {
+                return sum + value;
+            },
+            0
+        );
+
+        var options = {
+            chart: {
+                type: 'donut',
+                height: 300,
+
+                fontFamily:
+                    'Inter, system-ui, sans-serif',
+
+                toolbar: {
+                    show: false
+                },
+
+                animations: {
+                    enabled: true,
+                    easing: 'easeinout',
+                    speed: 450
+                }
+            },
+
+            series: values,
+
+            labels: labels,
+
+            colors: [
+                '#2f5edb',
+                '#8b5cf6',
+                '#94a3b8'
+            ],
+
+            stroke: {
+                width: 3,
+                colors: [
+                    '#ffffff'
+                ]
+            },
+
+            dataLabels: {
+                enabled: false
+            },
+
+            legend: {
+                show: true,
+                position: 'right',
+                horizontalAlign: 'center',
+
+                fontSize: '12px',
+                fontWeight: 500,
+
+                labels: {
+                    colors: '#526078'
+                },
+
+                markers: {
+                    width: 8,
+                    height: 8,
+                    radius: 8
+                },
+
+                formatter: function (
+                    seriesName,
+                    opts
+                ) {
+                    var value =
+                        opts.w.globals
+                            .series[
+                                opts.seriesIndex
+                            ];
+
+                    var percentage =
+                        total > 0
+                            ? (
+                                value /
+                                total
+                            ) * 100
+                            : 0;
+
+                    return (
+                        seriesName +
+                        '  ' +
+                        formatInteger(value) +
+                        ' · ' +
+                        formatPercentage(
+                            percentage
+                        )
+                    );
+                }
+            },
+
+            plotOptions: {
+                pie: {
+                    donut: {
+                        size: '70%',
+
+                        labels: {
+                            show: true,
+
+                            name: {
+                                show: true,
+                                offsetY: 22,
+                                color: '#8692a6',
+                                fontSize: '11px',
+
+                                formatter:
+                                    function () {
+                                        return 'CTRCs';
+                                    }
+                            },
+
+                            value: {
+                                show: true,
+                                offsetY: -12,
+                                color: '#172033',
+                                fontSize: '22px',
+                                fontWeight: 700,
+
+                                formatter:
+                                    function (value) {
+                                        return formatInteger(
+                                            value
+                                        );
+                                    }
+                            },
+
+                            total: {
+                                show: true,
+                                showAlways: true,
+                                label: 'CTRCs',
+                                color: '#8692a6',
+                                fontSize: '11px',
+
+                                formatter:
+                                    function () {
+                                        return formatInteger(
+                                            total
+                                        );
+                                    }
+                            }
+                        }
+                    }
+                }
+            },
+
+            tooltip: {
+                y: {
+                    formatter: function (value) {
+                        return (
+                            formatInteger(value) +
+                            (
+                                value === 1
+                                    ? ' CTRC'
+                                    : ' CTRCs'
+                            )
+                        );
+                    }
+                }
+            }
+        };
+
+        chartInstances.operationType =
+            new ApexCharts(
+                elements.operationTypeChart,
+                options
+            );
+
+        chartInstances.operationType.render();
+    }
+
 
     function getStatusColor(status) {
         var normalized = normalizeText(
@@ -2157,7 +2652,7 @@
             elements.attentionTableBody
                 .appendChild(
                     createEmptyRow(
-                        12,
+                        13,
                         'Nenhum registro exige atenção.'
                     )
                 );
@@ -2260,6 +2755,20 @@
                         'filial'
                     ]
                 ) || '—'
+            );
+
+            appendTextCell(
+                row,
+                formatOperationType(
+                    getFirstValue(
+                        record,
+                        [
+                            'tipo_operacao',
+                            'operacao'
+                        ]
+                    )
+                ),
+                'table-code'
             );
 
             appendTextCell(
@@ -2430,6 +2939,21 @@
         );
     }
 
+    function formatOperationType(value) {
+        var operation = normalizeText(value);
+
+        var labels = {
+            coleta: 'Distribuição',
+            reversa: 'Reversa',
+            nao_identificado:
+                'Não identificado'
+        };
+
+        return (
+            labels[operation] ||
+            String(value || '—')
+        );
+    }
 
     function createEmptyRow(
         colspan,

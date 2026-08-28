@@ -31,6 +31,45 @@ def encontrar_coluna(df: pd.DataFrame, possibilidades: list[str]) -> str:
 
     raise ValueError(f"Coluna não encontrada entre: {possibilidades}")
 
+def extrair_volume_op930(
+    file_path: Path,
+    grupo: str,
+    cnpj: str,
+) -> pd.DataFrame:
+    df = carregar_relatorio_op930(file_path)
+    df = normalizar_colunas(df)
+
+    df = df.loc[
+        :,
+        [
+            col
+            for col in df.columns
+            if str(col) != "0"
+        ],
+    ]
+
+    # Mantemos a base completa da OP930.
+    # Aqui ainda NÃO filtramos ocorrências.
+    base = df.copy()
+
+    # Remove somente documentos cancelados,
+    # seguindo a mesma regra da auditoria.
+    if "CANCELADO" in base.columns:
+        cancelado = (
+            base["CANCELADO"]
+            .astype(str)
+            .str.strip()
+            .str.upper()
+        )
+
+        base = base[
+            cancelado != "SIM"
+        ].copy()
+
+    base["GRUPO_CLIENTE"] = grupo
+    base["CNPJ_GRUPO"] = cnpj
+
+    return base
 
 def tratar_op930(file_path: Path, grupo: str, cnpj: str) -> pd.DataFrame:
     df = carregar_relatorio_op930(file_path)

@@ -307,6 +307,17 @@
                                 multiple
                             ></select>
                         </div>
+
+                        <div class="form-field">
+                            <label for="filterOperationTypes">
+                                Tipo de operação
+                            </label>
+
+                            <select
+                                id="filterOperationTypes"
+                                multiple
+                            ></select>
+                        </div>
                     </form>
                 </section>
 
@@ -550,160 +561,217 @@
 
                     <div class="analytics-grid">
 
-                        <!-- Evolução diária -->
+                        <!-- LINHA 1 -->
+                        <div class="analytics-overview-grid">
 
-                        <article
-                            class="analytics-card analytics-card--evolution"
-                        >
-                            <div class="analytics-card__header">
-                                <div>
-                                    <h3 class="analytics-card__title">
-                                        Evolução diária
-                                    </h3>
+                            <!-- Evolução diária -->
+                            <article
+                                class="analytics-card analytics-card--evolution"
+                            >
+                                <div class="analytics-card__header">
+                                    <div>
+                                        <h3 class="analytics-card__title">
+                                            Evolução diária
+                                        </h3>
 
-                                    <p class="analytics-card__description">
-                                        Volume de incidentes no período
-                                    </p>
+                                        <p class="analytics-card__description">
+                                            Volume de incidentes no período
+                                        </p>
+                                    </div>
+
+                                    <span class="analytics-card__period">
+                                        Período selecionado
+                                    </span>
                                 </div>
 
-                                <span class="analytics-card__period">
-                                    Período selecionado
-                                </span>
-                            </div>
-
-                            <div
-                                class="analytics-chart analytics-chart--line"
-                                id="dailyEvolutionChart"
-                            ></div>
-                        </article>
+                                <div
+                                    class="analytics-chart analytics-chart--line"
+                                    id="dailyEvolutionChart"
+                                ></div>
+                            </article>
 
 
-                        <!-- Status dos débitos -->
+                            <!-- Indicador -->
+                            <article
+                                class="analytics-card analytics-card--status"
+                            >
+                                <div class="analytics-card__header">
+                                    <div>
+                                        <h3 class="analytics-card__title">
+                                            Indicador
+                                        </h3>
 
-                        <article
-                            class="analytics-card analytics-card--status"
-                        >
-                            <div class="analytics-card__header">
-                                <div>
-                                    <h3 class="analytics-card__title">
-                                        Status dos débitos
-                                    </h3>
-
-                                    <p class="analytics-card__description">
-                                        Distribuição da validação atual
-                                    </p>
-                                </div>
-                            </div>
-
-                            <div
-                                class="analytics-chart analytics-chart--donut"
-                                id="debitStatusChart"
-                            ></div>
-                        </article>
-
-
-                        <!-- Ocorrências -->
-
-                        <article class="analytics-card">
-                            <div class="analytics-card__header">
-                                <div>
-                                    <h3 class="analytics-card__title">
-                                        Principais códigos de ocorrência
-                                    </h3>
-
-                                    <p class="analytics-card__description">
-                                        Códigos com maior volume de registros
-                                    </p>
+                                        <p class="analytics-card__description">
+                                            Distribuição da validação atual
+                                        </p>
+                                    </div>
                                 </div>
 
-                                <span class="analytics-card__badge">
-                                    Top 10
-                                </span>
-                            </div>
+                                <div
+                                    class="analytics-chart analytics-chart--donut"
+                                    id="debitStatusChart"
+                                ></div>
+                            </article>
 
-                            <div
-                                class="ranking-list"
-                                id="occurrencesRankingChart"
-                            ></div>
-                        </article>
+                        </div>
 
 
-                        <!-- Grupos -->
+                        <!-- LINHA 2 -->
+                        <div class="analytics-three-grid">
 
-                        <article class="analytics-card">
-                            <div class="analytics-card__header">
-                                <div>
-                                    <h3 class="analytics-card__title">
-                                        Grupos de clientes
-                                    </h3>
+                            <!-- Natureza da operação -->
+                            <article
+                                class="analytics-card analytics-card--status"
+                            >
+                                <div class="analytics-card__header">
+                                    <div>
+                                        <h3 class="analytics-card__title">
+                                            Natureza da operação
+                                        </h3>
 
-                                    <p class="analytics-card__description">
-                                        Concentração por grupo econômico
-                                    </p>
+                                        <p class="analytics-card__description">
+                                            Relação entre distribuição e reversa
+                                        </p>
+                                    </div>
                                 </div>
 
-                                <span class="analytics-card__badge">
-                                    Top 10
-                                </span>
-                            </div>
-
-                            <div
-                                class="ranking-list"
-                                id="clientGroupsChart"
-                            ></div>
-                        </article>
+                                <div
+                                    class="analytics-chart analytics-chart--donut"
+                                    id="operationTypeChart"
+                                ></div>
+                            </article>
 
 
-                        <!-- Unidades -->
+                            <!-- Ocorrências -->
+                            <article class="analytics-card">
+                                <div class="analytics-card__header">
+                                    <div>
+                                        <h3 class="analytics-card__title">
+                                            Principais códigos de ocorrência
+                                        </h3>
 
-                        <article class="analytics-card">
-                            <div class="analytics-card__header">
-                                <div>
-                                    <h3 class="analytics-card__title">
-                                        Unidades
-                                    </h3>
+                                        <p class="analytics-card__description">
+                                            Códigos com maior volume de registros
+                                        </p>
+                                    </div>
 
-                                    <p class="analytics-card__description">
-                                        Filiais com maior volume de incidentes
-                                    </p>
+                                    <span class="analytics-card__badge">
+                                        Top 10
+                                    </span>
                                 </div>
 
-                                <span class="analytics-card__badge">
-                                    Top 10
-                                </span>
-                            </div>
-
-                            <div
-                                class="ranking-list"
-                                id="unitsRankingChart"
-                            ></div>
-                        </article>
+                                <div
+                                    class="ranking-list"
+                                    id="occurrencesRankingChart"
+                                ></div>
+                            </article>
 
 
-                        <!-- Produtos -->
+                            <!-- Grupos -->
+                            <article class="analytics-card">
+                                <div class="analytics-card__header">
+                                    <div>
+                                        <h3 class="analytics-card__title">
+                                            Grupos de clientes
+                                        </h3>
 
-                        <article class="analytics-card">
-                            <div class="analytics-card__header">
-                                <div>
-                                    <h3 class="analytics-card__title">
-                                        Produtos predominantes
-                                    </h3>
+                                        <p class="analytics-card__description">
+                                            Concentração por grupo econômico
+                                        </p>
+                                    </div>
 
-                                    <p class="analytics-card__description">
-                                        Produtos mais presentes nas ocorrências
-                                    </p>
+                                    <span class="analytics-card__badge">
+                                        Top 10
+                                    </span>
                                 </div>
 
-                                <span class="analytics-card__badge">
-                                    Top 10
-                                </span>
-                            </div>
+                                <div
+                                    class="ranking-list"
+                                    id="clientGroupsChart"
+                                ></div>
+                            </article>
 
-                            <div
-                                class="ranking-list"
-                                id="productsRankingChart"
-                            ></div>
-                        </article>
+                        </div>
+
+
+                        <!-- LINHA 3 -->
+                        <div class="analytics-three-grid">
+
+                            <!-- Unidades -->
+                            <article class="analytics-card">
+                                <div class="analytics-card__header">
+                                    <div>
+                                        <h3 class="analytics-card__title">
+                                            Unidades
+                                        </h3>
+
+                                        <p class="analytics-card__description">
+                                            Filiais com maior volume de incidentes
+                                        </p>
+                                    </div>
+
+                                    <span class="analytics-card__badge">
+                                        Top 10
+                                    </span>
+                                </div>
+
+                                <div
+                                    class="ranking-list"
+                                    id="unitsRankingChart"
+                                ></div>
+                            </article>
+
+
+                            <!-- Taxa por Mil -->
+                            <article class="analytics-card">
+                                <div class="analytics-card__header">
+                                    <div>
+                                        <h3 class="analytics-card__title">
+                                            Taxa por Mil
+                                        </h3>
+
+                                        <p class="analytics-card__description">
+                                            Ocorrências a cada 1.000 CTRCs
+                                        </p>
+                                    </div>
+
+                                    <span class="analytics-card__badge">
+                                        Top 10
+                                    </span>
+                                </div>
+
+                                <div
+                                    class="ranking-list"
+                                    id="ratePerThousandChart"
+                                ></div>
+                            </article>
+
+
+                            <!-- Produtos -->
+                            <article class="analytics-card">
+                                <div class="analytics-card__header">
+                                    <div>
+                                        <h3 class="analytics-card__title">
+                                            Produtos predominantes
+                                        </h3>
+
+                                        <p class="analytics-card__description">
+                                            Produtos mais presentes nas ocorrências
+                                        </p>
+                                    </div>
+
+                                    <span class="analytics-card__badge">
+                                        Top 10
+                                    </span>
+                                </div>
+
+                                <div
+                                    class="ranking-list"
+                                    id="productsRankingChart"
+                                ></div>
+                            </article>
+
+                        </div>
 
                     </div>
                 </section>
@@ -819,6 +887,7 @@
                                     <th>Grupo</th>
                                     <th>Cliente</th>
                                     <th>Unidade</th>
+                                    <th>Tipo operação</th>
                                     <th>Ocorrência</th>
                                     <th>Status</th>
                                     <th>Regra</th>
@@ -832,7 +901,7 @@
                             <tbody id="attentionTableBody">
                                 <tr>
                                     <td
-                                        colspan="12"
+                                        colspan="13"
                                         class="table-empty"
                                     >
                                         Nenhum registro exige atenção.

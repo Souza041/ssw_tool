@@ -1257,3 +1257,49 @@ button:disabled {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+
+.analytics-rankings-grid .analytics-card {
+    min-width: 0;
+}
+
+@media (max-width: 1180px) {
+    .analytics-rankings-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.analytics-overview-grid {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns:
+        minmax(0, 2fr)
+        minmax(320px, 1fr);
+    gap: 16px;
+}
+
+.analytics-three-grid {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns:
+        repeat(3, minmax(0, 1fr));
+    gap: 16px;
+}
+
+.analytics-overview-grid .analytics-card,
+.analytics-three-grid .analytics-card {
+    min-width: 0;
+}
+
+@media (max-width: 1180px) {
+    .analytics-three-grid {
+        grid-template-columns:
+            repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 900px) {
+    .analytics-overview-grid,
+    .analytics-three-grid {
+        grid-template-columns: 1fr;
+    }
+}

@@ -3,7 +3,13 @@ from pathlib import Path
 import pandas as pd
 
 from operations.op930.clientes import GRUPOS_ATIVOS_MVP
-from operations.op930.parser import tratar_op930
+from operations.op930.parser import (
+    extrair_volume_op930,
+    tratar_op930,
+)
+from modules.incidentes.volume_publisher import (
+    VolumePublisher,
+)
 from operations.op930.report import OP930Report
 from operations.incidentes.enrich import enriquecer_base_com_op101
 from operations.incidentes.op101_history import OP101History
@@ -50,6 +56,7 @@ def executar_incidentes_op930(
     op930 = OP930Report(client)
 
     bases = []
+    volumes = []
 
     total = sum(len(cnpjs) for cnpjs in grupos.values())
     atual = 0
@@ -106,6 +113,23 @@ def executar_incidentes_op930(
 
             log(f"Arquivo baixado: {arquivo.name}")
 
+            log(
+                f"Extraindo volume bruto de {arquivo.name}..."
+            )
+
+            volume = extrair_volume_op930(
+                file_path=arquivo,
+                grupo=grupo,
+                cnpj=cnpj,
+            )
+
+            volumes.append(volume)
+
+            log(
+                f"{grupo}: {len(volume)} linhas "
+                "na base bruta de volume."
+            )
+
             log(f"Tratando relatório {arquivo.name}...")
 
             base = tratar_op930(
@@ -136,7 +160,43 @@ def executar_incidentes_op930(
     if not bases:
         raise ValueError("Nenhuma base gerada.")
 
+    if not volumes:
+        raise ValueError(
+            "Nenhuma base de volume OP930 foi gerada."
+        )
+
     log("Consolidando bases...")
+
+    base_volume = pd.concat(
+        volumes,
+        ignore_index=True,
+    )
+
+    volume_dir = (
+        output_dir
+        / "op930"
+        / "volume"
+    )
+
+    volume_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    arquivo_volume = (
+        volume_dir
+        / "volume_ctrcs_op930.xlsx"
+    )
+
+    base_volume.to_excel(
+        arquivo_volume,
+        index=False,
+    )
+
+    log(
+        "Base de volume OP930 gerada: "
+        f"{len(base_volume)} registros."
+    )
 
     base_final = pd.concat(
         bases,
@@ -312,6 +372,38 @@ def executar_incidentes_op930(
         log(
             "Históricos antigos removidos: "
             f"{publicacao['history_removed']}"
+        )
+
+    # ---------------------------------------------------------
+    # 7. Publica a base de volume para o dashboard
+    # ---------------------------------------------------------
+
+    volume_publisher = VolumePublisher()
+
+    publicacao_volume = (
+        volume_publisher.publish(
+            arquivo_volume
+        )
+    )
+
+    log(
+        "Base de volume publicada para o dashboard: "
+        f"{publicacao_volume['current']}"
+    )
+
+    log(
+        "Histórico de volume gerado: "
+        f"{publicacao_volume['history']}"
+    )
+
+    if (
+        publicacao_volume[
+            "history_removed"
+        ] > 0
+    ):
+        log(
+            "Históricos antigos de volume removidos: "
+            f"{publicacao_volume['history_removed']}"
         )
 
     return arquivo_auditoria

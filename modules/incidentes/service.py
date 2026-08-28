@@ -7,6 +7,7 @@ import pandas as pd
 
 from modules.incidentes.filters import (
     aplicar_filtros_dashboard,
+    aplicar_filtros_volume,
     encontrar_coluna_logica,
     filtros_estao_ativos,
     gerar_todas_opcoes_filtro,
@@ -14,6 +15,9 @@ from modules.incidentes.filters import (
     normalizar_valor_filtro,
     serie_data,
     serie_texto,
+)
+from operations.incidentes.analytics import (
+    gerar_tipos_operacao,
 )
 from modules.incidentes.repository import (
     IncidentesRepository,
@@ -76,6 +80,15 @@ class IncidentesService:
             filtros,
         )
 
+        volume_original = (
+            self.repository.carregar_volume()
+        )
+
+        volume = aplicar_filtros_volume(
+            volume_original,
+            filtros,
+        )
+
         opcoes = gerar_todas_opcoes_filtro(
             auditoria_original
         )
@@ -111,7 +124,9 @@ class IncidentesService:
                 auditoria
             ),
             charts=self._gerar_graficos(
-                auditoria
+                auditoria,
+                volume,
+                filtros,
             ),
             rules=self._gerar_regras(
                 auditoria
@@ -350,6 +365,8 @@ class IncidentesService:
     def _gerar_graficos(
         self,
         df: pd.DataFrame,
+        volume: pd.DataFrame,
+        filtros: DashboardFilters,
     ) -> DashboardCharts:
         return DashboardCharts(
             evolucao_diaria=(
@@ -378,6 +395,13 @@ class IncidentesService:
                     ),
                     categoria="ocorrencia",
                     limite=10,
+                )
+            ),
+            taxa_por_mil=(
+                self._grafico_taxa_por_mil(
+                    df,
+                    volume,
+                    filtros,
                 )
             ),
             ranking_grupos_clientes=(
@@ -427,6 +451,249 @@ class IncidentesService:
                     limite=10,
                 )
             ),
+            tipos_operacao=(
+                self._grafico_tipos_operacao(df)
+            ),
+        )
+
+    def _grafico_tipos_operacao(
+        self,
+        df: pd.DataFrame,
+    ) -> ChartData:
+        analise = gerar_tipos_operacao(df)
+
+        rows = []
+
+        for _, linha in analise.iterrows():
+            rows.append(
+                {
+                    "tipo_operacao": str(
+                        linha["TIPO_OPERACAO"]
+                    ),
+                    "quantidade": int(
+                        linha["QUANTIDADE"]
+                    ),
+                    "percentual": float(
+                        linha["PERCENTUAL"]
+                    ),
+                }
+            )
+
+        return ChartData(
+            title="Natureza da operação",
+            category_key="tipo_operacao",
+            series=[
+                ChartSeries(
+                    key="quantidade",
+                    label="CTRCs",
+                )
+            ],
+            rows=rows,
+        )
+
+    def _grafico_taxa_por_mil(
+        self,
+        incidentes: pd.DataFrame,
+        volume: pd.DataFrame,
+        filtros: DashboardFilters,
+    ) -> ChartData:
+        base_incidentes = normalizar_colunas(
+            incidentes
+        )
+
+        base_volume = normalizar_colunas(
+            volume
+        )
+
+        coluna_ctrc_incidente = (
+            self._encontrar_coluna(
+                base_incidentes,
+                [
+                    "CTRC",
+                    "AN_CTRC",
+                    "NUMERO_CTRC",
+                    "NUM_CTRC",
+                    "CONHECIMENTO",
+                ],
+            )
+        )
+
+        coluna_ocorrencia = (
+            encontrar_coluna_logica(
+                base_incidentes,
+                "codigo_ocorrencia",
+            )
+        )
+
+        coluna_ctrc_volume = (
+            self._encontrar_coluna(
+                base_volume,
+                [
+                    "CTRC",
+                    "NUMERO_CTRC",
+                    "NUM_CTRC",
+                    "CONHECIMENTO",
+                ],
+            )
+        )
+
+        if (
+            base_incidentes.empty
+            or base_volume.empty
+            or coluna_ctrc_incidente is None
+            or coluna_ocorrencia is None
+            or coluna_ctrc_volume is None
+        ):
+            return ChartData(
+                title="Taxa por Mil",
+                category_key="ocorrencia",
+                series=[
+                    ChartSeries(
+                        key="taxa_por_mil",
+                        label="Taxa por mil",
+                    )
+                ],
+                rows=[],
+            )
+
+        # --------------------------------------------------
+        # Denominador
+        # --------------------------------------------------
+
+        ctrcs_volume = (
+            serie_texto(
+                base_volume,
+                coluna_ctrc_volume,
+            )
+        )
+
+        ctrcs_volume = ctrcs_volume[
+            ctrcs_volume.ne("")
+            & ctrcs_volume.str.lower().ne("nan")
+            & ctrcs_volume.str.lower().ne("none")
+        ]
+
+        total_ctrcs_emitidos = int(
+            ctrcs_volume.nunique()
+        )
+
+        if total_ctrcs_emitidos <= 0:
+            return ChartData(
+                title="Taxa por Mil",
+                category_key="ocorrencia",
+                series=[
+                    ChartSeries(
+                        key="taxa_por_mil",
+                        label="Taxa por mil",
+                    )
+                ],
+                rows=[],
+            )
+
+        # --------------------------------------------------
+        # Numerador
+        # --------------------------------------------------
+
+        temporaria = pd.DataFrame(
+            {
+                "CTRC": serie_texto(
+                    base_incidentes,
+                    coluna_ctrc_incidente,
+                ),
+                "OCORRENCIA": serie_texto(
+                    base_incidentes,
+                    coluna_ocorrencia,
+                ),
+            }
+        )
+
+        temporaria = temporaria[
+            temporaria["CTRC"].ne("")
+            & temporaria["OCORRENCIA"].ne("")
+        ].copy()
+
+        # Um mesmo CTRC conta uma única vez
+        # dentro de cada ocorrência.
+        temporaria = (
+            temporaria.drop_duplicates(
+                subset=[
+                    "CTRC",
+                    "OCORRENCIA",
+                ]
+            )
+        )
+
+        agrupado = (
+            temporaria
+            .groupby(
+                "OCORRENCIA",
+                dropna=False,
+            )
+            .agg(
+                QUANTIDADE=(
+                    "CTRC",
+                    "nunique",
+                )
+            )
+            .reset_index()
+        )
+
+        agrupado["TAXA_POR_MIL"] = (
+            agrupado["QUANTIDADE"]
+            / total_ctrcs_emitidos
+            * 1000
+        )
+
+        agrupado = (
+            agrupado
+            .sort_values(
+                by=[
+                    "TAXA_POR_MIL",
+                    "QUANTIDADE",
+                ],
+                ascending=[
+                    False,
+                    False,
+                ],
+            )
+            .head(10)
+        )
+
+        rows = []
+
+        for _, linha in agrupado.iterrows():
+            rows.append(
+                {
+                    "ocorrencia": str(
+                        linha["OCORRENCIA"]
+                    ),
+                    "quantidade": int(
+                        linha["QUANTIDADE"]
+                    ),
+                    "taxa_por_mil": round(
+                        float(
+                            linha[
+                                "TAXA_POR_MIL"
+                            ]
+                        ),
+                        2,
+                    ),
+                    "total_ctrcs_emitidos": (
+                        total_ctrcs_emitidos
+                    ),
+                }
+            )
+
+        return ChartData(
+            title="Taxa por Mil",
+            category_key="ocorrencia",
+            series=[
+                ChartSeries(
+                    key="taxa_por_mil",
+                    label="Taxa por mil",
+                )
+            ],
+            rows=rows,
         )
 
     def _grafico_status_debitos(
@@ -861,6 +1128,12 @@ class IncidentesService:
                             "unidade",
                         )
                     ),
+                    tipo_operacao=(
+                        self._valor_logico_linha(
+                            linha,
+                            "tipo_operacao",
+                        )
+                    ),
                     codigo_ocorrencia=(
                         self._valor_logico_linha(
                             linha,
@@ -1204,6 +1477,12 @@ class IncidentesService:
                 "UNID_OCOR",
                 "UNIDADE_OCOR",
                 "UNIDADE",
+            ],
+            "tipo_operacao": [
+                "TIPO_OPERACAO",
+                "AN_TIPO_OPERACAO",
+                "TIPO_DE_OPERACAO",
+                "OPERACAO",
             ],
             "codigo_ocorrencia": [
                 "COD_OCOR",

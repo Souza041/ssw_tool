@@ -124,6 +124,9 @@ def dashboard_api(
     produtos: Optional[List[str]] = Query(
         default=None,
     ),
+    tipos_operacao: Optional[List[str]] = Query(
+        default=None,
+    ),
 ):
     """
     Retorna todos os dados necessários para montar
@@ -149,6 +152,7 @@ def dashboard_api(
                 regras_debito or []
             ),
             produtos=produtos or [],
+            tipos_operacao=tipos_operacao or [],
         )
 
         return service.dashboard(

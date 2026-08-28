@@ -429,6 +429,15 @@ def preparar_base_analitica(
         ],
     )
 
+    coluna_tipo_operacao = encontrar_coluna(
+        base,
+        [
+            "TIPO_OPERACAO",
+            "OPERACAO",
+            "TIPO_DE_OPERACAO",
+        ],
+    )
+
     aliases_texto = {
         "AN_CTRC": coluna_ctrc,
         "AN_CLIENTE": coluna_cliente,
@@ -442,6 +451,7 @@ def preparar_base_analitica(
         "AN_PRODUTO": coluna_produto,
         "AN_SKU": coluna_sku,
         "AN_STATUS_PARSER": coluna_status_parser,
+        "AN_TIPO_OPERACAO": coluna_tipo_operacao,
     }
 
     for destino, origem in aliases_texto.items():
@@ -463,6 +473,21 @@ def preparar_base_analitica(
     base["AN_STATUS_PARSER"] = (
         base["AN_STATUS_PARSER"]
         .str.upper()
+    )
+
+    base["AN_TIPO_OPERACAO"] = (
+        base["AN_TIPO_OPERACAO"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+        .replace(
+            {
+                "": "NAO_IDENTIFICADO",
+                "NAN": "NAO_IDENTIFICADO",
+                "NONE": "NAO_IDENTIFICADO",
+            }
+        )
     )
 
     base["AN_VALOR_CARGA"] = serie_numerica(
@@ -1059,6 +1084,80 @@ def gerar_status_debitos(
         ]
     ]
 
+def gerar_tipos_operacao(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
+    base = preparar_base_analitica(df)
+
+    base = base[
+        base["AN_CTRC"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .ne("")
+    ].copy()
+
+    base = base[
+        base["AN_TIPO_OPERACAO"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .ne("")
+    ].copy()
+
+    if base.empty:
+        return pd.DataFrame(
+            columns=[
+                "TIPO_OPERACAO",
+                "QUANTIDADE",
+                "PERCENTUAL",
+            ]
+        )
+
+    # Para este indicador, cada CTRC deve ser
+    # contabilizado somente uma vez.
+    base = base.drop_duplicates(
+        subset=["AN_CTRC"],
+        keep="first",
+    )
+
+    resultado = (
+        base
+        .groupby(
+            "AN_TIPO_OPERACAO",
+            dropna=False,
+        )
+        .agg(
+            QUANTIDADE=(
+                "AN_CTRC",
+                "nunique",
+            ),
+        )
+        .reset_index()
+        .rename(
+            columns={
+                "AN_TIPO_OPERACAO":
+                    "TIPO_OPERACAO",
+            }
+        )
+        .sort_values(
+            "QUANTIDADE",
+            ascending=False,
+        )
+        .reset_index(drop=True)
+    )
+
+    resultado["PERCENTUAL"] = percentual(
+        resultado["QUANTIDADE"]
+    )
+
+    return resultado[
+        [
+            "TIPO_OPERACAO",
+            "QUANTIDADE",
+            "PERCENTUAL",
+        ]
+    ]
 
 def gerar_regras_debito(
     df: pd.DataFrame,

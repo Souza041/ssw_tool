@@ -66,6 +66,13 @@ ALIASES_COLUNAS = {
         "PRODUTO_PREDOMINANTE",
         "PRODUTO",
     ],
+
+    "tipo_operacao": [
+        "TIPO_OPERACAO",
+        "AN_TIPO_OPERACAO",
+        "TIPO_DE_OPERACAO",
+        "OPERACAO",
+    ],
 }
 
 
@@ -359,6 +366,10 @@ def aplicar_filtros_dashboard(
             "produto",
             filtros.produtos,
         ),
+        (
+            "tipo_operacao",
+            filtros.tipos_operacao,
+        ),
     ]
 
     for nome_logico, valores in configuracoes:
@@ -375,6 +386,70 @@ def aplicar_filtros_dashboard(
 
     return base.reset_index(drop=True)
 
+def aplicar_filtros_volume(
+    df: pd.DataFrame,
+    filtros: DashboardFilters,
+) -> pd.DataFrame:
+    """
+    Aplica ao denominador apenas filtros que podem
+    ser representados corretamente na OP930 bruta.
+
+    Período:
+        usa EMISSAO_CTRC.
+
+    Dimensões suportadas:
+        grupo de cliente
+        cliente
+
+    Não aplica:
+        unidade
+        ocorrência
+        status de débito
+        regra de débito
+        produto
+        tipo de operação
+    """
+    base = normalizar_colunas(df)
+
+    coluna_data = encontrar_coluna(
+        base,
+        [
+            "EMISSAO_CTRC",
+            "DATA_EMISSAO_CTRC",
+        ],
+    )
+
+    base = aplicar_filtro_periodo(
+        base,
+        coluna=coluna_data,
+        data_inicial=filtros.data_inicial,
+        data_final=filtros.data_final,
+    )
+
+    configuracoes = [
+        (
+            "grupo_cliente",
+            filtros.grupos_clientes,
+        ),
+        (
+            "cliente",
+            filtros.clientes,
+        ),
+    ]
+
+    for nome_logico, valores in configuracoes:
+        coluna = encontrar_coluna_logica(
+            base,
+            nome_logico,
+        )
+
+        base = aplicar_filtro_lista(
+            base,
+            coluna=coluna,
+            valores=valores,
+        )
+
+    return base.reset_index(drop=True)
 
 def filtros_estao_ativos(
     filtros: DashboardFilters,
@@ -393,6 +468,7 @@ def filtros_estao_ativos(
         filtros.status_debito,
         filtros.regras_debito,
         filtros.produtos,
+        filtros.tipos_operacao,
     ]
 
     return any(bool(valores) for valores in listas)
@@ -507,5 +583,10 @@ def gerar_todas_opcoes_filtro(
         "produtos": gerar_opcoes_filtro(
             df,
             "produto",
+        ),
+
+        "tipos_operacao": gerar_opcoes_filtro(
+            df,
+            "tipo_operacao",
         ),
     }

@@ -24,6 +24,7 @@ class DashboardFilters(BaseModel):
     status_debito: List[str] = Field(default_factory=list)
     regras_debito: List[str] = Field(default_factory=list)
     produtos: List[str] = Field(default_factory=list)
+    tipos_operacao: List[str] = Field(default_factory=list)
 
     @field_validator(
         "grupos_clientes",
@@ -33,6 +34,7 @@ class DashboardFilters(BaseModel):
         "status_debito",
         "regras_debito",
         "produtos",
+        "tipos_operacao",
         mode="before",
     )
     @classmethod
@@ -134,6 +136,10 @@ class DashboardFilterOptions(BaseModel):
         default_factory=list
     )
 
+    tipos_operacao: List[FilterOption] = Field(
+        default_factory=list
+    )
+
 
 class DashboardKPIs(BaseModel):
     """
@@ -218,10 +224,15 @@ class DashboardCharts(BaseModel):
 
     status_debitos: Optional[ChartData] = None
     ranking_ocorrencias: Optional[ChartData] = None
+
+    taxa_por_mil: Optional[ChartData] = None
+    
     ranking_grupos_clientes: Optional[ChartData] = None
     ranking_clientes: Optional[ChartData] = None
     ranking_unidades: Optional[ChartData] = None
     ranking_produtos: Optional[ChartData] = None
+
+    tipos_operacao: Optional[ChartData] = None
 
 
 class DebitRuleRow(BaseModel):
@@ -253,6 +264,8 @@ class AttentionRecord(BaseModel):
     grupo_cliente: str = ""
     cliente: str = ""
     unidade: str = ""
+
+    tipo_operacao: str = ""
 
     codigo_ocorrencia: str = ""
     descricao_ocorrencia: str = ""

@@ -353,3 +353,28 @@ class IncidentesRepository:
         return self.carregar_aba(
             "EVOLUCAO_DIARIA"
         )
+
+    def carregar_volume(
+        self,
+    ) -> pd.DataFrame:
+        arquivo = Path(
+            "data/incidentes/volume/current/"
+            "volume_atual.xlsx"
+        )
+
+        if not arquivo.exists():
+            return pd.DataFrame()
+
+        base = pd.read_excel(
+            arquivo,
+        )
+
+        base.columns = [
+            str(coluna)
+            .strip()
+            .upper()
+            for coluna
+            in base.columns
+        ]
+
+        return base
