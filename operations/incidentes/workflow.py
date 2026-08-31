@@ -2,6 +2,8 @@ from pathlib import Path
 
 import pandas as pd
 
+import gc
+
 from operations.op930.clientes import GRUPOS_ATIVOS_MVP
 from operations.op930.parser import (
     extrair_volume_op930,
@@ -123,7 +125,49 @@ def executar_incidentes_op930(
                 cnpj=cnpj,
             )
 
-            volumes.append(volume)
+            quantidade_bruta = len(volume)
+
+            log(
+                f"{grupo}: "
+                f"{quantidade_bruta} linhas na base bruta de volume."
+            )
+
+            if not volume.empty:
+                if "CTRC" not in volume.columns:
+                    raise ValueError(
+                        f"Coluna CTRC não encontrada "
+                        f"na base de volume de {grupo}."
+                    )
+
+                volume["CTRC"] = (
+                    volume["CTRC"]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                )
+
+                volume = volume[
+                    volume["CTRC"].ne("")
+                    & volume["CTRC"].str.lower().ne("nan")
+                ].copy()
+
+                volume = (
+                    volume
+                    .drop_duplicates(
+                        subset=["CTRC"],
+                        keep="first",
+                    )
+                    .reset_index(drop=True)
+                )
+
+                log(
+                    f"{grupo}: volume reduzido de "
+                    f"{quantidade_bruta} para "
+                    f"{len(volume)} CTRCs únicos."
+                )
+
+                if not volume.empty:
+                    volumes.append(volume)
 
             log(
                 f"{grupo}: {len(volume)} linhas "
@@ -167,9 +211,66 @@ def executar_incidentes_op930(
 
     log("Consolidando bases...")
 
+    # ---------------------------------------------------------
+    # VOLUME TOTAL DE CTRCs
+    # ---------------------------------------------------------
+
     base_volume = pd.concat(
         volumes,
         ignore_index=True,
+    )
+
+    log(
+        "Base de volume OP930 consolidada: "
+        f"{len(base_volume)} registros brutos."
+    )
+
+    if "CTRC" not in base_volume.columns:
+        raise ValueError(
+            "Coluna CTRC não encontrada na base de volume OP930."
+        )
+
+    # Normaliza CTRC
+    base_volume["CTRC"] = (
+        base_volume["CTRC"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+
+    # Remove CTRCs vazios / inválidos
+    base_volume = base_volume[
+        base_volume["CTRC"].ne("")
+        & base_volume["CTRC"].str.lower().ne("nan")
+    ].copy()
+
+    # ---------------------------------------------------------
+    # IMPORTANTE:
+    # Para o denominador da Taxa por Mil precisamos de CTRCs
+    # únicos, e não de todas as linhas de ocorrência da OP930.
+    # ---------------------------------------------------------
+
+    base_volume = (
+        base_volume
+        .drop_duplicates(
+            subset=["CTRC"],
+            keep="first",
+        )
+        .reset_index(drop=True)
+    )
+
+    log(
+        "Base de volume OP930 reduzida para "
+        f"{len(base_volume)} CTRCs únicos."
+    )
+
+    # A lista original pode conter centenas de milhares de linhas.
+    # Não precisamos mais dela daqui para frente.
+    del volumes
+    gc.collect()
+
+    log(
+        "Memória das bases brutas de volume liberada."
     )
 
     volume_dir = (
@@ -188,6 +289,11 @@ def executar_incidentes_op930(
         / "volume_ctrcs_op930.xlsx"
     )
 
+    log(
+        "Salvando base de volume OP930 "
+        f"com {len(base_volume)} CTRCs únicos..."
+    )
+
     base_volume.to_excel(
         arquivo_volume,
         index=False,
@@ -198,19 +304,24 @@ def executar_incidentes_op930(
         f"{len(base_volume)} registros."
     )
 
+    # ---------------------------------------------------------
+    # BASE DE INCIDENTES
+    # ---------------------------------------------------------
+
     base_final = pd.concat(
         bases,
         ignore_index=True,
     )
 
     log(
-        f"Base consolidada inicial: "
+        "Base consolidada inicial: "
         f"{len(base_final)} registros."
     )
 
     # ---------------------------------------------------------
     # 1. Salva o consolidado inicial, antes da consulta OP101
     # ---------------------------------------------------------
+
     output_file = (
         consolidado_dir
         / "incidentes_op930_base.xlsx"
