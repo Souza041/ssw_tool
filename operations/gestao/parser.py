@@ -14,11 +14,10 @@ def timestamp() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
-COLUNAS_TRATADAS = [
+COLUNAS_OBRIGATORIAS = [
     "Serie/Numero CTRC",
     "Data de Emissao",
     "Tipo do Documento",
-    "CNPJ Pagador",
     "Cliente Pagador",
     "Cliente Destinatario",
     "Cidade de Entrega",
@@ -27,9 +26,11 @@ COLUNAS_TRATADAS = [
     "Numero da Nota Fiscal",
     "Mercadoria",
     "Codigo da Ultima Ocorrencia",
-    "Data da Ultima Ocorrencia",
-    "Descricao da Ultima Ocorrencia",
     "Previsao de Entrega",
+]
+
+COLUNAS_OPCIONAIS = [
+    "Descricao da Ultima Ocorrencia",
     "Entrega Programada",
     "Data da Entrega Realizada",
 ]
@@ -180,12 +181,25 @@ def filtrar_tipos_documento_permitidos(df: pd.DataFrame) -> pd.DataFrame:
     ].copy()
 
 def montar_base_tratada(df: pd.DataFrame) -> pd.DataFrame:
-    missing = [col for col in COLUNAS_TRATADAS if col not in df.columns]
+    missing = [
+        col
+        for col in COLUNAS_OBRIGATORIAS
+        if col not in df.columns
+    ]
 
     if missing:
-        raise ValueError(f"Colunas obrigatórias ausentes na OP455: {missing}")
+        raise ValueError(
+            f"Colunas obrigatórias ausentes na OP455: {missing}"
+        )
 
-    base = df[COLUNAS_TRATADAS].copy()
+    # Cria as colunas opcionais que não vieram no relatório do SSW.
+    for col in COLUNAS_OPCIONAIS:
+        if col not in df.columns:
+            df[col] = ""
+
+    base = df[
+        COLUNAS_OBRIGATORIAS + COLUNAS_OPCIONAIS
+    ].copy()
 
     for col in base.columns:
         base[col] = base[col].map(limpar_texto)

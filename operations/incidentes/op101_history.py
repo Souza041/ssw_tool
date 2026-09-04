@@ -1,4 +1,5 @@
 import re
+import unicodedata
 from datetime import datetime, timedelta
 from html import unescape
 from urllib.parse import unquote
@@ -144,46 +145,39 @@ class OP101History:
 
     @staticmethod
     def identificar_tipo_operacao(html: str) -> str:
-        """
-        Identifica a natureza da operação pela tela principal da OP101.
-
-        Retornos:
-            REVERSA
-            COLETA
-            NAO_IDENTIFICADO
-        """
-        texto = unquote(
-            unescape(html or "")
-        )
-
-        texto = re.sub(
-            r"<[^>]+>",
-            " ",
-            texto,
-        )
-
-        texto = re.sub(
-            r"\s+",
-            " ",
-            texto,
-        )
-
+        texto = unquote(unescape(html or ""))
+        texto = re.sub(r"<[^>]+>", " ", texto)
+        texto = re.sub(r"\s+", " ", texto)
         texto = texto.upper().strip()
 
-        # A própria OP101 identifica explicitamente
-        # os documentos de logística reversa.
-        if (
-            "CT-E REVERSA" in texto
-            or "CTE REVERSA" in texto
+        texto = unicodedata.normalize(
+            "NFKD",
+            texto,
+        ).encode(
+            "ASCII",
+            "ignore",
+        ).decode(
+            "ASCII",
+        )
+
+        if not texto:
+            return "NAO_IDENTIFICADO"
+
+        indicadores_reversa = (
+            "CT-E REVERSA",
+            "CTE REVERSA",
+            "DEVOLUCAO (DEVOLUCAO)",
+            "DEVOLUCAO DO CTRC",
+            "CTRC GERADO COMO DEVOLUCAO",
+        )
+
+        if any(
+            indicador in texto
+            for indicador in indicadores_reversa
         ):
             return "REVERSA"
 
-        # Quando não há marcação de reversa, tratamos
-        # o CTRC convencional como operação de coleta.
-        if texto:
-            return "COLETA"
-
-        return "NAO_IDENTIFICADO"
+        return "COLETA"
 
     @staticmethod
     def normalizar_codigo_ocorrencia(valor: str) -> str:
