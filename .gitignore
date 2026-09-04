@@ -63,3 +63,6 @@ data/incidentes/volume/history/*
 debug_op475/
 outputs/metricas_snapshots/
 temp/
+
+temp/
+outputs/metricas_snapshots/
