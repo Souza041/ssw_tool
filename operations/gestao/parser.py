@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pandas as pd
 
-from datetime import datetime
 
 OUTPUT_DIR = Path("outputs")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -29,11 +28,14 @@ COLUNAS_OBRIGATORIAS = [
     "Previsao de Entrega",
 ]
 
+
 COLUNAS_OPCIONAIS = [
+    "Data da Ultima Ocorrencia",
     "Descricao da Ultima Ocorrencia",
     "Entrega Programada",
     "Data da Entrega Realizada",
 ]
+
 
 TIPOS_DOCUMENTO_BLOQUEADOS = {
     "DEVOLUCAO",
@@ -41,6 +43,7 @@ TIPOS_DOCUMENTO_BLOQUEADOS = {
     "COMPLEMETAR FRETE",
     "CORTESIA",
 }
+
 
 def limpar_texto(value: object) -> str:
     if value is None:
@@ -58,7 +61,13 @@ def carregar_sswweb_455(file_path: Path) -> pd.DataFrame:
     header: list[str] = []
     rows: list[list[str]] = []
 
-    with open(file_path, "r", encoding="latin1", errors="ignore", newline="") as file:
+    with open(
+        file_path,
+        "r",
+        encoding="latin1",
+        errors="ignore",
+        newline="",
+    ) as file:
         reader = csv.reader(file, delimiter=";")
 
         for row in reader:
@@ -68,18 +77,30 @@ def carregar_sswweb_455(file_path: Path) -> pd.DataFrame:
             tipo = limpar_texto(row[0])
 
             if tipo == "1":
-                header = [limpar_texto(col) for col in row[1:]]
+                header = [
+                    limpar_texto(col)
+                    for col in row[1:]
+                ]
                 continue
 
             if tipo == "2":
-                rows.append([limpar_texto(col) for col in row[1:]])
+                rows.append(
+                    [
+                        limpar_texto(col)
+                        for col in row[1:]
+                    ]
+                )
                 continue
 
     if not header:
-        raise ValueError(f"Cabeçalho tipo '1' não encontrado em: {file_path.name}")
+        raise ValueError(
+            f"Cabeçalho tipo '1' não encontrado em: {file_path.name}"
+        )
 
     if not rows:
-        raise ValueError(f"Dados tipo '2' não encontrados em: {file_path.name}")
+        raise ValueError(
+            f"Dados tipo '2' não encontrados em: {file_path.name}"
+        )
 
     normalized_rows = []
 
@@ -92,7 +113,10 @@ def carregar_sswweb_455(file_path: Path) -> pd.DataFrame:
 
         normalized_rows.append(row)
 
-    return pd.DataFrame(normalized_rows, columns=header)
+    return pd.DataFrame(
+        normalized_rows,
+        columns=header,
+    )
 
 
 def formatar_data_br(series: pd.Series) -> pd.Series:
@@ -114,6 +138,7 @@ def normalizar_codigo_oc(series: pd.Series) -> pd.Series:
         .str.lstrip("0")
         .replace("", "0")
     )
+
 
 def normalizar_texto_filtro(value: object) -> str:
     return (
@@ -144,13 +169,19 @@ def classificar_mercadoria(value: object) -> str:
     return "OUTROS"
 
 
-def filtrar_mercadorias_permitidas(df: pd.DataFrame) -> pd.DataFrame:
+def filtrar_mercadorias_permitidas(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
     if "Mercadoria" not in df.columns:
-        raise ValueError("Coluna 'Mercadoria' não encontrada no relatório 455.")
+        raise ValueError(
+            "Coluna 'Mercadoria' não encontrada no relatório 455."
+        )
 
     base = df.copy()
 
-    base["TIPO_MERCADORIA"] = base["Mercadoria"].map(classificar_mercadoria)
+    base["TIPO_MERCADORIA"] = (
+        base["Mercadoria"].map(classificar_mercadoria)
+    )
 
     permitidos = {
         "ECOMMERCE",
@@ -163,9 +194,14 @@ def filtrar_mercadorias_permitidas(df: pd.DataFrame) -> pd.DataFrame:
         base["TIPO_MERCADORIA"].isin(permitidos)
     ].copy()
 
-def filtrar_tipos_documento_permitidos(df: pd.DataFrame) -> pd.DataFrame:
+
+def filtrar_tipos_documento_permitidos(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
     if "Tipo do Documento" not in df.columns:
-        raise ValueError("Coluna 'Tipo do Documento' não encontrada no relatório 455.")
+        raise ValueError(
+            "Coluna 'Tipo do Documento' não encontrada no relatório 455."
+        )
 
     base = df.copy()
 
@@ -177,10 +213,15 @@ def filtrar_tipos_documento_permitidos(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     return base[
-        ~tipo_normalizado.isin(TIPOS_DOCUMENTO_BLOQUEADOS)
+        ~tipo_normalizado.isin(
+            TIPOS_DOCUMENTO_BLOQUEADOS
+        )
     ].copy()
 
-def montar_base_tratada(df: pd.DataFrame) -> pd.DataFrame:
+
+def montar_base_tratada(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
     missing = [
         col
         for col in COLUNAS_OBRIGATORIAS
@@ -192,13 +233,18 @@ def montar_base_tratada(df: pd.DataFrame) -> pd.DataFrame:
             f"Colunas obrigatórias ausentes na OP455: {missing}"
         )
 
-    # Cria as colunas opcionais que não vieram no relatório do SSW.
+    #
+    # O SSW pode remover algumas colunas informativas do OP455.
+    # Quando isso acontecer, criamos a coluna vazia para manter
+    # compatibilidade com o restante do sistema.
+    #
     for col in COLUNAS_OPCIONAIS:
         if col not in df.columns:
             df[col] = ""
 
     base = df[
-        COLUNAS_OBRIGATORIAS + COLUNAS_OPCIONAIS
+        COLUNAS_OBRIGATORIAS
+        + COLUNAS_OPCIONAIS
     ].copy()
 
     for col in base.columns:
@@ -212,20 +258,31 @@ def montar_base_tratada(df: pd.DataFrame) -> pd.DataFrame:
         "Data da Entrega Realizada",
     ]
 
+    #
+    # Formata somente as colunas que realmente existem.
+    # Isso evita KeyError caso o layout do SSW mude novamente.
+    #
     for col in colunas_data:
-        base[col] = formatar_data_br(base[col])
+        if col in base.columns:
+            base[col] = formatar_data_br(base[col])
 
-    base["Codigo da Ultima Ocorrencia"] = normalizar_codigo_oc(
-        base["Codigo da Ultima Ocorrencia"]
+    base["Codigo da Ultima Ocorrencia"] = (
+        normalizar_codigo_oc(
+            base["Codigo da Ultima Ocorrencia"]
+        )
     )
 
     base = filtrar_mercadorias_permitidas(base)
+
     base = filtrar_tipos_documento_permitidos(base)
 
     return base
 
 
-def filtrar_emissao_recente(df: pd.DataFrame, dias: int = 1) -> pd.DataFrame:
+def filtrar_emissao_recente(
+    df: pd.DataFrame,
+    dias: int = 1,
+) -> pd.DataFrame:
     hoje = datetime.now().date()
     inicio = hoje - timedelta(days=dias)
 
@@ -242,17 +299,35 @@ def filtrar_emissao_recente(df: pd.DataFrame, dias: int = 1) -> pd.DataFrame:
     ].copy()
 
 
-def tratar_relatorio_455(file_path: Path) -> tuple[Path, pd.DataFrame]:
+def tratar_relatorio_455(
+    file_path: Path,
+) -> tuple[Path, pd.DataFrame]:
     df_raw = carregar_sswweb_455(file_path)
+
     base_tratada = montar_base_tratada(df_raw)
 
-    # Para bater com o arquivo tratado que você mandou:
-    # mantém emissão de hoje e ontem.
-    #base_tratada = filtrar_emissao_recente(base_tratada, dias=1)
+    # Mantemos todo o período gerado pelo OP455.
+    #
+    # Caso queira voltar a limitar somente emissão recente:
+    #
+    # base_tratada = filtrar_emissao_recente(
+    #     base_tratada,
+    #     dias=1,
+    # )
 
-    output_file = OUTPUT_DIR / f"base_455_tratada_{timestamp()}.xlsx"
+    output_file = (
+        OUTPUT_DIR
+        / f"base_455_tratada_{timestamp()}.xlsx"
+    )
 
-    with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
-        base_tratada.to_excel(writer, index=False, sheet_name="base_tratada")
+    with pd.ExcelWriter(
+        output_file,
+        engine="openpyxl",
+    ) as writer:
+        base_tratada.to_excel(
+            writer,
+            index=False,
+            sheet_name="base_tratada",
+        )
 
     return output_file, base_tratada
