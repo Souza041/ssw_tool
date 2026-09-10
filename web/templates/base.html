@@ -29,14 +29,36 @@
 
         .layout {
             min-height: 100vh;
-            display: grid;
-            grid-template-columns: 260px 1fr;
+            display: block;
         }
 
         aside {
+            position: fixed;
+            inset: 0 auto 0 0;
+            width: 260px;
+            height: 100vh;
+            overflow-y: auto;
+            overflow-x: hidden;
+
             background: #0f172a;
             color: white;
             padding: 28px 22px;
+
+            scrollbar-width: thin;
+            scrollbar-color: #475569 transparent;
+        }
+
+        aside::-webkit-scrollbar {
+            width: 7px;
+        }
+
+        aside::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        aside::-webkit-scrollbar-thumb {
+            background: #475569;
+            border-radius: 10px;
         }
 
         .brand {
@@ -66,6 +88,8 @@
         }
 
         main {
+            min-height: 100vh;
+            margin-left: 260px;
             padding: 36px;
         }
 
@@ -211,14 +235,18 @@
 
         @media (max-width: 800px) {
             .layout {
-                grid-template-columns: 1fr;
+                display: block;
             }
 
             aside {
                 position: relative;
+                width: 100%;
+                height: auto;
+                overflow: visible;
             }
 
             main {
+                margin-left: 0;
                 padding: 22px;
             }
         }
@@ -247,6 +275,7 @@
             <a href="/debitos">OP475 + OP506 - Débitos</a>
             <a href="/op101-comprovantes">OP101 - Validar Comprovantes</a>
             <a href="/incidentes-op930">OP930 - Incidentes</a>
+            <a href="/documentos">Documentos GCE</a>
             <a href="/logout" class="menu-item logout">🚪 Sair</a>
         </nav>
         {% endif %}

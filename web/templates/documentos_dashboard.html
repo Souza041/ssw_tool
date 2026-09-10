@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+.doc-head{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;margin-bottom:24px}.doc-head h1{margin:0}.doc-head p{color:#64748b;margin:8px 0 0}.refresh{width:auto;padding:10px 16px;text-decoration:none;background:#1d4ed8;color:#fff;border-radius:10px;font-weight:600}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:14px;margin-bottom:24px}.stat{background:#fff;border:1px solid #e2e8f0;border-radius:15px;padding:18px}.stat small{color:#64748b;display:block;margin-bottom:8px}.stat strong{font-size:28px}.danger strong{color:#b91c1c}.warn strong{color:#b45309}.table-wrap{background:#fff;border:1px solid #e2e8f0;border-radius:15px;overflow:auto}.table-wrap h2{font-size:18px;padding:18px 20px;margin:0;border-bottom:1px solid #e2e8f0}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:12px 14px;border-bottom:1px solid #f1f5f9;white-space:nowrap}th{color:#64748b;font-weight:600;background:#f8fafc}.badge{display:inline-block;padding:5px 8px;border-radius:999px;font-size:11px;font-weight:700}.badge-danger{background:#fee2e2;color:#991b1b}.badge-warn{background:#fef3c7;color:#92400e}.badge-muted{background:#e2e8f0;color:#475569}.empty{padding:24px;color:#64748b}
+</style>
+<div class="doc-head"><div><h1>Documentos GCE</h1><p>Acompanhamento de prazo e divergências Portal × SSW</p></div><a class="refresh" href="/documentos">Atualizar</a></div>
+<div class="cards">
+  <div class="stat"><small>Total de alertas</small><strong>{{ dashboard["totals"]["alerts"] }}</strong></div>
+  <div class="stat danger"><small>Vencidos</small><strong>{{ dashboard["totals"]["overdue"] }}</strong></div>
+  <div class="stat danger"><small>Críticos — 5 dias</small><strong>{{ dashboard["totals"]["critical"] }}</strong></div>
+  <div class="stat warn"><small>Avisos — 10 dias</small><strong>{{ dashboard["totals"]["warning_10"] }}</strong></div>
+  <div class="stat warn"><small>Avisos — 20 dias</small><strong>{{ dashboard["totals"]["warning_20"] }}</strong></div>
+  <div class="stat"><small>Sem OC 01</small><strong>{{ dashboard["totals"]["without_delivery"] }}</strong></div>
+</div>
+<div class="table-wrap">
+<h2>Documentos prioritários</h2>
+{% if dashboard["items"] %}
+<table><thead><tr><th>Criticidade</th><th>Nota</th><th>CTRC</th><th>Destinatário</th><th>Entrega</th><th>Vencimento</th><th>Dias</th><th>Escaneamentos</th><th>Parceiro</th></tr></thead><tbody>
+{% for item in dashboard["items"] %}
+<tr><td><span class="badge {% if item["alert_type"] == 'VENCIDO' or item["alert_type"] == 'ALERTA_5' %}badge-danger{% elif item["alert_type"] in ['ALERTA_10','ALERTA_20'] %}badge-warn{% else %}badge-muted{% endif %}">{{ item["alert_type"] }}</span></td><td>{{ item["details"]["invoice_number"] if item["details"] else '-' }}</td><td>{{ item["details"]["ctrc"] if item["details"] else '-' }}</td><td>{{ item["details"]["recipient_name"] if item["details"] else '-' }}</td><td>{{ item["delivery_date"] or '-' }}</td><td>{{ item["deadline_date"] or '-' }}</td><td>{{ item["days_remaining"] if item["days_remaining"] is not none else '-' }}</td><td>{{ item["details"]["scan_count"] if item["details"] else 0 }}</td><td>{{ item["details"]["scan_partners"] if item["details"] else '-' }}</td></tr>
+{% endfor %}
+</tbody></table>
+{% else %}<div class="empty">Nenhum alerta encontrado.</div>{% endif %}
+</div>
+{% endblock %}

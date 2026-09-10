@@ -16,6 +16,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from modules.incidentes.router import (
     router as incidentes_router,
 )
+from modules.documentos.web import router as documentos_router
 
 from modules.ocorrencia_73.scheduler import (
     iniciar_scheduler_ocorrencia_73,
@@ -70,6 +71,7 @@ app.include_router(metricas_router)
 app.include_router(
     incidentes_router
 )
+app.include_router(documentos_router)
 
 @app.on_event("startup")
 def startup_event():
