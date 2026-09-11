@@ -47,6 +47,7 @@ class OP455Report:
             "f35": "E",
             "f37": "B",
             "f38": "F",
+            "f39": "",
             "basico": "N",
             "dummy": dummy(),
         }
@@ -204,15 +205,89 @@ class OP455Report:
             "ibscbs": "A",
             "f29": "A",
             "f30": "A",
+
             "f35": "E",
-            "f37": "B",
-            "f38": "F",
+
+            # Dados complementares
+            "f37": "F",
+            "f38": "B",
+            "f39": "",
+
             "basico": "N",
             "dummy": dummy(),
         }
 
+        response = self.client.post(
+            "/bin/ssw0230",
+            payload,
+        )
+
+        return response.text
+
+    def gerar_relatorio_documentos(
+        self,
+        data_inicial: str,
+        data_final: str,
+    ) -> str:
+        """Gera a OP455 com o layout exigido pelo módulo Documentos GCE."""
+        payload = {
+            "act": "E1",
+            "cod_emp_ctb": "00",
+            "f3": "A",
+            "reg_tipo": "E",
+            "f5": "R",
+            "f8": "T",
+            "f9": data_inicial,
+            "f10": data_final,
+            "f18": "T",
+            "f19": "T",
+            "f20": "S",
+            "f21": "X",
+            "f22": "T",
+            "f23": "A",
+            "f25": "T",
+            "f26": "A",
+            "f27": "A",
+            "f28": "T",
+            "ibscbs": "A",
+            "f29": "A",
+            "f30": "A",
+            "f35": "e",
+            "f37": "F",
+            "f38": "C",
+            "f39": "D",
+            "basico": "N",
+            "dummy": dummy(),
+        }
         response = self.client.post("/bin/ssw0230", payload)
         return response.text
+
+    def gerar_e_baixar_documentos(
+        self,
+        output_dir: Path,
+        data_inicial: str,
+        data_final: str,
+        timeout_seconds: int = 300,
+    ) -> Path:
+        self.open(unidade="MTZ")
+        html = self.gerar_relatorio_documentos(data_inicial, data_final)
+
+        if "Informe a unidade" in html:
+            raise ValueError(
+                "SSW retornou: Informe a unidade. Verifique a unidade MTZ na OP455."
+            )
+
+        info_direto = self.extrair_arquivo_direto(html)
+        if info_direto:
+            return self.baixar_arquivo_direto(info_direto, output_dir)
+
+        return OP156Queue(self.client).baixar_por_opcao(
+            output_dir=output_dir,
+            opcao="455 - Fretes Expedidos/Recebidos - CTRCs",
+            unidade="MTZ",
+            timeout_seconds=timeout_seconds,
+            intervalo=5,
+        )
 
     def gerar_relatorio_ocorrencia_73(
         self,
@@ -472,5 +547,3 @@ class OP455Report:
             f"{arquivo.name} | "
             f"{len(cabecalho)} colunas"
         )
-    
-        

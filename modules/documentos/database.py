@@ -2,19 +2,32 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import os
+from pathlib import Path
 from typing import Iterator
 
 import pymysql
 from pymysql.connections import Connection
+from dotenv import load_dotenv
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(PROJECT_ROOT / ".env")
+
+
+def _required_env(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise ValueError(f"Variável obrigatória ausente: {name}")
+    return value
 
 
 def get_connection(*, autocommit: bool = False) -> Connection:
     return pymysql.connect(
-        host=os.getenv("DOCUMENTOS_DB_HOST", "documentosgce.mysql.dbaas.com.br"),
+        host=_required_env("DOCUMENTOS_DB_HOST"),
         port=int(os.getenv("DOCUMENTOS_DB_PORT", "3306")),
-        user=os.getenv("DOCUMENTOS_DB_USER", "documentosgce"),
-        password=os.getenv("DOCUMENTOS_DB_PASSWORD", "Rodobras@2026"),
-        database=os.getenv("DOCUMENTOS_DB_NAME", "documentosgce"),
+        user=_required_env("DOCUMENTOS_DB_USER"),
+        password=_required_env("DOCUMENTOS_DB_PASSWORD"),
+        database=_required_env("DOCUMENTOS_DB_NAME"),
         charset="utf8mb4",
         cursorclass=pymysql.cursors.DictCursor,
         autocommit=autocommit,
