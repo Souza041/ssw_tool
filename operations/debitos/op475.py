@@ -90,6 +90,24 @@ class OP475Despesas:
             .replace("@", ".")
         )
 
+    @staticmethod
+    def _data_emissao_por_vencimento(
+        vencimento: str,
+    ) -> str:
+        vencimento = str(
+            vencimento or ""
+        ).strip()
+
+        if len(vencimento) != 6 or not vencimento.isdigit():
+            raise ValueError(
+                f"Data de vencimento inválida: {vencimento}"
+            )
+
+        mes = vencimento[2:4]
+        ano = vencimento[4:6]
+
+        return f"01{mes}{ano}"
+
     # =========================================================
     # ABERTURA
     # =========================================================
@@ -1013,8 +1031,9 @@ class OP475Despesas:
         ).strip().upper()
 
         data_emissao = (
-            datetime.now()
-            .strftime("%d%m%y")
+            self._data_emissao_por_vencimento(
+                vencimento
+            )
         )
 
         valor_tela = (
