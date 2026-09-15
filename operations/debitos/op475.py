@@ -921,11 +921,50 @@ class OP475Despesas:
             decoded
         )
 
-        normalizada = (
-            self._normalizar_texto(
+        normalizada = self._normalizar_texto(
+            mensagem
+        )
+
+        #
+        # O SSW exige confirmação quando alguma parcela
+        # possui vencimento anterior à data corrente.
+        #
+        if (
+            "data de vencimento anterior a data corrente"
+            in normalizada
+        ):
+            print(
+                "[OP475] Aviso de vencimento anterior "
+                "à data corrente. Confirmando CONTINUAR."
+            )
+
+            payload_continuar = payload.copy()
+
+            #
+            # No card do SSW:
+            #
+            # Corrigir  = S
+            # Continuar = N
+            #
+            payload_continuar["btn_5164"] = "N"
+
+            response = self.client.post(
+                "/bin/ssw0094",
+                payload_continuar,
+                retries=1,
+            )
+
+            decoded = decodificar_html(
+                response.text
+            )
+
+            mensagem = texto_limpo(
+                decoded
+            )
+
+            normalizada = self._normalizar_texto(
                 mensagem
             )
-        )
 
         duplicado = (
             "ja existe um lancamento" in normalizada
