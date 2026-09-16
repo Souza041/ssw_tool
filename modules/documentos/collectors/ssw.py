@@ -41,7 +41,15 @@ class SSWDocumentsCollector:
         op455_dir.mkdir(parents=True, exist_ok=True)
         op930_dir.mkdir(parents=True, exist_ok=True)
 
-        client = SSWClient(unidade="MTZ")
+        self.config.validate_ssw()
+
+        client = SSWClient(
+            dominio=self.config.ssw_dominio,
+            cpf=self.config.ssw_cpf,
+            usuario=self.config.ssw_usuario,
+            senha=self.config.ssw_senha,
+            unidade=self.config.ssw_unidade,
+        )
         try:
             client.login()
             client.open_menu()

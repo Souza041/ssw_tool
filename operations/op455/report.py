@@ -269,25 +269,71 @@ class OP455Report:
         data_final: str,
         timeout_seconds: int = 300,
     ) -> Path:
-        self.open(unidade="MTZ")
-        html = self.gerar_relatorio_documentos(data_inicial, data_final)
+        opcao = "455 - Fretes Expedidos/Recebidos - CTRCs"
+        unidade = "MTZ"
+
+        fila = OP156Queue(self.client)
+
+        # Abre obrigatoriamente a OP455 em MTZ.
+        self.open(unidade=unidade)
+
+        # Guarda todos os relatórios 455 que já estavam na fila.
+        ids_existentes = self.capturar_ids_fila(
+            fila=fila,
+            opcao=opcao,
+            unidade=unidade,
+        )
+
+        print(
+            "[OP455 DOCUMENTOS] IDs existentes antes da solicitação: "
+            f"{sorted(ids_existentes)}"
+        )
+
+        # Solicita especificamente o relatório de Documentos.
+        html = self.gerar_relatorio_documentos(
+            data_inicial=data_inicial,
+            data_final=data_final,
+        )
 
         if "Informe a unidade" in html:
             raise ValueError(
-                "SSW retornou: Informe a unidade. Verifique a unidade MTZ na OP455."
+                "SSW retornou: Informe a unidade. "
+                "Verifique a unidade MTZ na OP455."
             )
 
+        # Alguns relatórios podem vir diretamente na resposta.
         info_direto = self.extrair_arquivo_direto(html)
-        if info_direto:
-            return self.baixar_arquivo_direto(info_direto, output_dir)
 
-        return OP156Queue(self.client).baixar_por_opcao(
+        if info_direto:
+            arquivo = self.baixar_arquivo_direto(
+                info=info_direto,
+                output_dir=output_dir,
+            )
+
+            print(
+                "[OP455 DOCUMENTOS] Arquivo baixado diretamente: "
+                f"{arquivo.name}"
+            )
+
+            return arquivo
+
+        # Se foi para a OP156, aceita SOMENTE um ID novo,
+        # criado depois da solicitação acima.
+        arquivo = fila.baixar_por_opcao(
             output_dir=output_dir,
-            opcao="455 - Fretes Expedidos/Recebidos - CTRCs",
-            unidade="MTZ",
+            opcao=opcao,
+            unidade=unidade,
             timeout_seconds=timeout_seconds,
             intervalo=5,
+            ignorar_ids=ids_existentes,
         )
+
+        print(
+            "[OP455 DOCUMENTOS] Novo relatório baixado: "
+            f"{arquivo.name}"
+        )
+
+        return arquivo
 
     def gerar_relatorio_ocorrencia_73(
         self,

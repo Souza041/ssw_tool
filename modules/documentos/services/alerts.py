@@ -139,7 +139,10 @@ def refresh_alerts(reference_date: date | None = None) -> AlertRefreshStats:
                 counters["warning_20"] += 1
             else:
                 counters["normal"] += 1
-            if row["has_oc10"]:
+
+            has_oc10 = bool(row["has_oc10"])
+
+            if has_oc10:
                 counters["oc10"] += 1
 
             details = {
@@ -162,26 +165,135 @@ def refresh_alerts(reference_date: date | None = None) -> AlertRefreshStats:
                 "reference_date": reference_date.isoformat(),
             }
             with connection.cursor() as cursor:
+                # 1. Encerra qualquer estado OPEN anterior que não represente
+                # mais a classificação atual deste documento.
                 cursor.execute(
                     """
-                    INSERT INTO document_alerts (
-                        portal_document_id, ssw_document_id, alert_type,
-                        status, delivery_date, deadline_date, days_remaining, details
-                    ) VALUES (%s, %s, %s, 'OPEN', %s, %s, %s, %s)
-                    ON DUPLICATE KEY UPDATE
-                        ssw_document_id = VALUES(ssw_document_id),
-                        status = IF(document_alerts.status = 'RESOLVED', 'OPEN', document_alerts.status),
-                        delivery_date = VALUES(delivery_date),
-                        days_remaining = VALUES(days_remaining),
-                        details = VALUES(details),
-                        resolved_at = IF(VALUES(alert_type) = 'VENCIDO', document_alerts.resolved_at, NULL)
+                    UPDATE document_alerts
+                    SET
+                        status = 'RESOLVED',
+                        resolved_at = NOW()
+                    WHERE portal_document_id = %s
+                    AND status = 'OPEN'
+                    AND (
+                            alert_type <> %s
+                            OR NOT (deadline_date <=> %s)
+                        )
                     """,
                     (
-                        row["portal_document_id"], row["ssw_document_id"], alert_type,
-                        delivery_date, deadline_date, days_remaining,
-                        json.dumps(details, ensure_ascii=False, default=str),
+                        row["portal_document_id"],
+                        alert_type,
+                        deadline_date,
                     ),
                 )
+
+                # 2. Procura explicitamente o alerta atual.
+                #
+                # Usamos <=> porque é o operador NULL-safe do MySQL:
+                # NULL <=> NULL = TRUE.
+                #
+                # Isso resolve SEM_OC_01 sem depender da UNIQUE KEY,
+                # que permite vários NULLs.
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM document_alerts
+                    WHERE portal_document_id = %s
+                    AND alert_type = %s
+                    AND deadline_date <=> %s
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (
+                        row["portal_document_id"],
+                        alert_type,
+                        deadline_date,
+                    ),
+                )
+
+                existing_alert = cursor.fetchone()
+
+                if existing_alert:
+                    # 3A. A fase já existiu: reutilizamos a linha.
+                    cursor.execute(
+                        """
+                        UPDATE document_alerts
+                        SET
+                            ssw_document_id = %s,
+                            status = 'OPEN',
+                            delivery_date = %s,
+                            deadline_date = %s,
+                            days_remaining = %s,
+                            details = %s,
+                            resolved_at = NULL
+                        WHERE id = %s
+                        """,
+                        (
+                            row["ssw_document_id"],
+                            delivery_date,
+                            deadline_date,
+                            days_remaining,
+                            json.dumps(
+                                details,
+                                ensure_ascii=False,
+                                default=str,
+                            ),
+                            existing_alert["id"],
+                        ),
+                    )
+
+                else:
+                    # 3B. É uma fase realmente nova: cria o histórico.
+                    cursor.execute(
+                        """
+                        INSERT INTO document_alerts (
+                            portal_document_id,
+                            ssw_document_id,
+                            alert_type,
+                            status,
+                            delivery_date,
+                            deadline_date,
+                            days_remaining,
+                            has_oc10,
+                            details
+                        ) VALUES (
+                            %s, %s, %s, 'OPEN',
+                            %s, %s, %s, %s, %s
+                        )
+                        ON DUPLICATE KEY UPDATE
+                            ssw_document_id = VALUES(ssw_document_id),
+                            alert_type = VALUES(alert_type),
+                            status = IF(
+                                document_alerts.status = 'RESOLVED',
+                                'OPEN',
+                                document_alerts.status
+                            ),
+                            deadline_date = VALUES(deadline_date),
+                            delivery_date = VALUES(delivery_date),
+                            days_remaining = VALUES(days_remaining),
+                            has_oc10 = VALUES(has_oc10),
+                            details = VALUES(details),
+                            resolved_at = IF(
+                                VALUES(alert_type) = 'VENCIDO',
+                                document_alerts.resolved_at,
+                                NULL
+                            )
+                        """,
+                        (
+                            row["portal_document_id"],
+                            row["ssw_document_id"],
+                            alert_type,
+                            delivery_date,
+                            deadline_date,
+                            days_remaining,
+                            int(has_oc10),
+                            json.dumps(
+                                details,
+                                ensure_ascii=False,
+                                default=str,
+                            ),
+                        ),
+                    )
             counters["created_or_updated"] += 1
 
     return AlertRefreshStats(**counters)

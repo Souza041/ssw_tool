@@ -341,3 +341,125 @@ class DocumentRepository:
                 cursor.execute(f"SELECT COUNT(*) AS total FROM {table}")
                 result[table] = int(cursor.fetchone()["total"])
         return result
+
+    @staticmethod
+    def find_document_ids_by_ctrc(
+        connection: Connection,
+        ctrc: str,
+    ) -> list[int]:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT DISTINCT id
+                FROM ssw_documents
+                WHERE ctrc = %s
+                """,
+                (ctrc,),
+            )
+
+            return [
+                int(row["id"])
+                for row in cursor.fetchall()
+            ]
+
+
+    @staticmethod
+    def find_occurrence_ctrcs_by_invoice(
+        connection: Connection,
+        invoice_number: str,
+    ) -> list[str]:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT DISTINCT ctrc
+                FROM ssw_occurrences
+                WHERE invoice_number = %s
+                AND canceled = 0
+                AND ctrc IS NOT NULL
+                AND ctrc <> ''
+                """,
+                (invoice_number,),
+            )
+
+            return [
+                str(row["ctrc"]).strip()
+                for row in cursor.fetchall()
+                if row.get("ctrc")
+            ]
+
+    @staticmethod
+    def find_occurrence_ctrc_raws_by_invoice(
+        connection: Connection,
+        invoice_number: str,
+        invoice_series: str | None = None,
+    ) -> list[str]:
+        with connection.cursor() as cursor:
+            sql = """
+                SELECT DISTINCT ctrc_raw
+                FROM ssw_occurrences
+                WHERE invoice_number = %s
+                AND canceled = 0
+                AND ctrc_raw IS NOT NULL
+                AND ctrc_raw <> ''
+            """
+
+            params = [invoice_number]
+
+            if invoice_series:
+                sql += " AND invoice_series = %s"
+                params.append(invoice_series)
+
+            cursor.execute(sql, tuple(params))
+
+            return [
+                str(row["ctrc_raw"]).strip()
+                for row in cursor.fetchall()
+                if row.get("ctrc_raw")
+            ]
+
+
+    @staticmethod
+    def find_document_ids_by_ctrc_raw(
+        connection: Connection,
+        ctrc_raw: str,
+    ) -> list[int]:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT DISTINCT id
+                FROM ssw_documents
+                WHERE ctrc_raw = %s
+                """,
+                (ctrc_raw,),
+            )
+
+            return [
+                int(row["id"])
+                for row in cursor.fetchall()
+            ]
+
+    @staticmethod
+    def find_document_ids_by_invoice(
+        connection: Connection,
+        invoice_number: str,
+        invoice_series: str | None = None,
+    ) -> list[int]:
+        with connection.cursor() as cursor:
+            sql = """
+                SELECT DISTINCT i.document_id
+                FROM ssw_document_invoices i
+                WHERE i.invoice_number = %s
+            """
+
+            params = [invoice_number]
+
+            if invoice_series:
+                sql += " AND i.invoice_series = %s"
+                params.append(invoice_series)
+
+            cursor.execute(sql, tuple(params))
+
+            return [
+                int(row["document_id"])
+                for row in cursor.fetchall()
+            ]

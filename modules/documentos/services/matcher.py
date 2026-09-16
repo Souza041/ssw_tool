@@ -63,19 +63,70 @@ class DocumentMatcher:
         occurrences: Iterable[OP930Occurrence],
     ) -> None:
         self.documents_by_invoice: dict[str, list[OP455Document]] = defaultdict(list)
+        self.documents_by_ctrc: dict[str, list[OP455Document]] = defaultdict(list)
+
         self.occurrences_by_ctrc: dict[str, list[OP930Occurrence]] = defaultdict(list)
+        self.occurrences_by_invoice: dict[str, list[OP930Occurrence]] = defaultdict(list)
 
         for document in documents:
+            self.documents_by_ctrc[document.ctrc].append(document)
+
             for invoice in document.invoices:
                 self.documents_by_invoice[invoice.number].append(document)
 
         for occurrence in occurrences:
             self.occurrences_by_ctrc[occurrence.ctrc].append(occurrence)
 
+            if occurrence.invoice_number:
+                self.occurrences_by_invoice[occurrence.invoice_number].append(occurrence)
+
     def match(self, portal: PortalDocument) -> DocumentMatch:
-        candidates = self.documents_by_invoice.get(portal.invoice_number, [])
+        candidates = self.documents_by_invoice.get(
+            portal.invoice_number,
+            [],
+        )
+
+        # Fallback:
+        # Portal NF -> OP930 NF -> CTRC -> OP455
         if not candidates:
-            return DocumentMatch(portal, None, [], "NOT_FOUND", candidate_count=0)
+            occurrences_by_invoice = self.occurrences_by_invoice.get(
+                portal.invoice_number,
+                [],
+            )
+
+            candidate_ctrcs = {
+                occurrence.ctrc
+                for occurrence in occurrences_by_invoice
+                if occurrence.ctrc
+            }
+
+            if len(candidate_ctrcs) == 1:
+                ctrc = next(iter(candidate_ctrcs))
+
+                candidates = self.documents_by_ctrc.get(
+                    ctrc,
+                    [],
+                )
+
+            elif len(candidate_ctrcs) > 1:
+                return DocumentMatch(
+                    portal=portal,
+                    op455=None,
+                    occurrences=occurrences_by_invoice,
+                    status="AMBIGUOUS",
+                    score=0,
+                    candidate_count=len(candidate_ctrcs),
+                )
+
+        if not candidates:
+            return DocumentMatch(
+                portal=portal,
+                op455=None,
+                occurrences=[],
+                status="NOT_FOUND",
+                score=0,
+                candidate_count=0,
+            )
 
         ranked = sorted(
             ((_candidate_score(portal, candidate), candidate) for candidate in candidates),

@@ -300,17 +300,62 @@ class DocumentImportService:
         with transaction() as connection:
             for portal_record in portal_records:
                 result = matcher.match(portal_record)
-                match_counts[result.status] = match_counts.get(result.status, 0) + 1
+
+                status = result.status
+                score = result.score
+                candidate_count = result.candidate_count
+
                 ssw_document_id = (
-                    document_ids.get(id(result.op455)) if result.op455 is not None else None
+                    document_ids.get(id(result.op455))
+                    if result.op455 is not None
+                    else None
                 )
+
+                # Fallback histórico:
+                # Portal NF -> OP930 histórica -> CTRC -> OP455 histórico
+                if status == "NOT_FOUND":
+                    ctrcs = self.repository.find_occurrence_ctrcs_by_invoice(
+                        connection,
+                        portal_record.invoice_number,
+                    )
+
+                    ctrcs = list(dict.fromkeys(ctrcs))
+
+                    if len(ctrcs) == 1:
+                        document_ids_historicos = (
+                            self.repository.find_document_ids_by_ctrc(
+                                connection,
+                                ctrcs[0],
+                            )
+                        )
+
+                        if len(document_ids_historicos) == 1:
+                            status = "MATCHED"
+                            score = 1
+                            candidate_count = 1
+                            ssw_document_id = document_ids_historicos[0]
+
+                        elif len(document_ids_historicos) > 1:
+                            status = "AMBIGUOUS"
+                            score = 0
+                            candidate_count = len(document_ids_historicos)
+
+                    elif len(ctrcs) > 1:
+                        status = "AMBIGUOUS"
+                        score = 0
+                        candidate_count = len(ctrcs)
+
+                match_counts[status] = (
+                    match_counts.get(status, 0) + 1
+                )
+
                 self.repository.upsert_match(
                     connection,
                     portal_document_id=portal_ids[id(portal_record)],
                     ssw_document_id=ssw_document_id,
-                    status=result.status,
-                    score=result.score,
-                    candidate_count=result.candidate_count,
+                    status=status,
+                    score=score,
+                    candidate_count=candidate_count,
                 )
 
         with transaction() as connection:

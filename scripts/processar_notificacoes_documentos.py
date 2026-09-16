@@ -13,11 +13,58 @@ from modules.documentos.services.notifications import process_notifications
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Processa notificações do Documentos GCE.")
-    parser.add_argument("--enviar", action="store_true", help="Dispara os e-mails; sem isso executa apenas prévia.")
-    parser.add_argument("--limite", type=int, default=None, help="Limita a quantidade de alertas processados.")
+    parser = argparse.ArgumentParser(
+        description="Processa notificações do Documentos GCE."
+    )
+
+    parser.add_argument(
+        "--enviar",
+        action="store_true",
+        help="Dispara os e-mails; sem isso executa apenas prévia.",
+    )
+
+    parser.add_argument(
+        "--limite",
+        type=int,
+        default=None,
+        help="Limita a quantidade de alertas processados.",
+    )
+
+    parser.add_argument(
+        "--tipo",
+        choices=["ALERTA_5", "VENCIDO"],
+        default=None,
+        help=(
+            "Processa somente um tipo de alerta. "
+            "Sem este parâmetro processa ALERTA_5 e VENCIDO."
+        ),
+    )
+
+    parser.add_argument(
+        "--forcar-teste",
+        action="store_true",
+        help=(
+            "Em modo de teste, permite reenviar alertas que já possuem "
+            "histórico SENT."
+        ),
+    )
+
     args = parser.parse_args()
-    print(json.dumps(process_notifications(send=args.enviar, limit=args.limite), ensure_ascii=False, indent=2))
+
+    result = process_notifications(
+        send=args.enviar,
+        limit=args.limite,
+        alert_type=args.tipo,
+        force_test=args.forcar_teste,
+    )
+
+    print(
+        json.dumps(
+            result,
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

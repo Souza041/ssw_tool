@@ -35,6 +35,12 @@ class DocumentosSettings:
     target_year: int = int(os.getenv("DOCUMENTOS_TARGET_YEAR", "2026"))
     op930_cnpj: str = os.getenv("DOCUMENTOS_OP930_CNPJ", "05117268000806").strip()
     op930_group: str = os.getenv("DOCUMENTOS_OP930_GROUP", "WHIRLPOOL").strip()
+    # SSW exclusivo do módulo Documentos GCE
+    ssw_dominio: str = os.getenv("DOCUMENTOS_SSW_DOMINIO", "").strip()
+    ssw_cpf: str = os.getenv("DOCUMENTOS_SSW_CPF", "").strip()
+    ssw_usuario: str = os.getenv("DOCUMENTOS_SSW_USUARIO", "").strip()
+    ssw_senha: str = os.getenv("DOCUMENTOS_SSW_SENHA", "")
+    ssw_unidade: str = os.getenv("DOCUMENTOS_SSW_UNIDADE", "MTZ").strip()
     ssw_report_timeout: int = int(os.getenv("DOCUMENTOS_SSW_REPORT_TIMEOUT", "600"))
 
     def validate_gce(self) -> None:
@@ -45,6 +51,27 @@ class DocumentosSettings:
             missing.append("GCE_PASSWORD")
         if missing:
             raise ValueError("Variáveis GCE ausentes: " + ", ".join(missing))
+
+    def validate_ssw(self) -> None:
+        required = {
+            "DOCUMENTOS_SSW_DOMINIO": self.ssw_dominio,
+            "DOCUMENTOS_SSW_CPF": self.ssw_cpf,
+            "DOCUMENTOS_SSW_USUARIO": self.ssw_usuario,
+            "DOCUMENTOS_SSW_SENHA": self.ssw_senha,
+            "DOCUMENTOS_SSW_UNIDADE": self.ssw_unidade,
+        }
+
+        missing = [
+            name
+            for name, value in required.items()
+            if not str(value).strip()
+        ]
+
+        if missing:
+            raise ValueError(
+                "Variáveis SSW do Documentos GCE ausentes: "
+                + ", ".join(missing)
+            )
 
 
 settings = DocumentosSettings()

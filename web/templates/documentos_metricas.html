@@ -1,0 +1,1520 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Indicadores | Documentos GCE</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background: #f4f7fb;
+            color: #0f172a;
+            font-family: Inter, Arial, sans-serif;
+        }
+
+        .page {
+            width: 100%;
+            max-width: 1680px;
+            margin: 0 auto;
+            padding: 32px 36px 50px;
+        }
+
+        /* =========================================================
+           HEADER
+        ========================================================= */
+
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 24px;
+            margin-bottom: 26px;
+        }
+
+        .header-main {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .header-icon {
+            width: 48px;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 14px;
+            background: #dbeafe;
+            color: #2563eb;
+            font-size: 21px;
+            font-weight: 800;
+        }
+
+        .page-header h1 {
+            margin: 0;
+            font-size: 27px;
+            line-height: 1.2;
+        }
+
+        .page-header p {
+            margin: 7px 0 0;
+            color: #64748b;
+            font-size: 13px;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .btn {
+            height: 40px;
+            padding: 0 16px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 10px;
+            border: 1px solid #dbe3ef;
+            background: #fff;
+            color: #334155;
+            text-decoration: none;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .btn-primary {
+            background: #2454db;
+            border-color: #2454db;
+            color: #fff;
+        }
+
+        /* =========================================================
+           FILTRO
+        ========================================================= */
+
+        .period-bar {
+            margin-bottom: 18px;
+            padding: 12px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 20px;
+
+            background: #fff;
+            border: 1px solid #dde5ef;
+            border-radius: 12px;
+        }
+
+        .period-label {
+            font-size: 12px;
+            color: #64748b;
+        }
+
+        .period-label strong {
+            margin-left: 5px;
+            color: #0f172a;
+        }
+
+        .period-options {
+            display: flex;
+            gap: 6px;
+        }
+
+        .period-option {
+            padding: 7px 11px;
+            border-radius: 8px;
+            color: #64748b;
+            text-decoration: none;
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        .period-option.active {
+            background: #eff6ff;
+            color: #2563eb;
+        }
+
+        /* =========================================================
+           CARDS
+        ========================================================= */
+
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 12px;
+            margin-bottom: 18px;
+        }
+
+        .card {
+            position: relative;
+            min-height: 125px;
+            padding: 18px;
+
+            background: #fff;
+            border: 1px solid #dde5ef;
+            border-radius: 13px;
+            overflow: hidden;
+        }
+
+        .card::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            width: 3px;
+            background: #3b82f6;
+        }
+
+        .card.danger::before {
+            background: #ef4444;
+        }
+
+        .card.warning::before {
+            background: #f59e0b;
+        }
+
+        .card.success::before {
+            background: #22c55e;
+        }
+
+        .card.neutral::before {
+            background: #64748b;
+        }
+
+        .card-label {
+            color: #64748b;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .card-value {
+            margin-top: 9px;
+            font-size: 29px;
+            font-weight: 800;
+            letter-spacing: -.5px;
+        }
+
+        .card-description {
+            margin-top: 7px;
+            color: #94a3b8;
+            font-size: 10px;
+        }
+
+        /* =========================================================
+           GRID PRINCIPAL
+        ========================================================= */
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: 1.45fr 1fr;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        .panel {
+            background: #fff;
+            border: 1px solid #dde5ef;
+            border-radius: 13px;
+            overflow: hidden;
+        }
+
+        .panel-header {
+            padding: 17px 19px;
+            border-bottom: 1px solid #edf1f6;
+        }
+
+        .panel-header h2 {
+            margin: 0;
+            font-size: 15px;
+        }
+
+        .panel-header p {
+            margin: 5px 0 0;
+            color: #94a3b8;
+            font-size: 10px;
+        }
+
+        .panel-body {
+            padding: 20px;
+        }
+
+        /* =========================================================
+           SITUAÇÃO DOCUMENTAL
+        ========================================================= */
+
+        .status-list {
+            display: grid;
+            gap: 15px;
+        }
+
+        .status-row {
+            display: grid;
+            grid-template-columns: 125px 1fr 50px;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .status-name {
+            font-size: 11px;
+            color: #475569;
+        }
+
+        .status-track {
+            height: 7px;
+            overflow: hidden;
+            border-radius: 20px;
+            background: #edf2f7;
+        }
+
+        .status-fill {
+            height: 100%;
+            border-radius: inherit;
+            background: #3b82f6;
+        }
+
+        .status-fill.danger {
+            background: #ef4444;
+        }
+
+        .status-fill.warning {
+            background: #f59e0b;
+        }
+
+        .status-fill.neutral {
+            background: #94a3b8;
+        }
+
+        .status-value {
+            text-align: right;
+            font-size: 11px;
+            font-weight: 800;
+        }
+
+        /* =========================================================
+           AUTOMAÇÃO
+        ========================================================= */
+
+        .automation-kpis {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            border: 1px solid #edf1f6;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .automation-kpi {
+            min-height: 85px;
+            padding: 15px;
+            border-right: 1px solid #edf1f6;
+            border-bottom: 1px solid #edf1f6;
+        }
+
+        .automation-kpi:nth-child(2n) {
+            border-right: 0;
+        }
+
+        .automation-kpi:nth-last-child(-n+2) {
+            border-bottom: 0;
+        }
+
+        .automation-kpi span {
+            display: block;
+            color: #94a3b8;
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: .05em;
+        }
+
+        .automation-kpi strong {
+            display: block;
+            margin-top: 7px;
+            font-size: 18px;
+        }
+
+        /* =========================================================
+           MOVIMENTAÇÃO
+        ========================================================= */
+
+        .movement {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+
+        .movement-item {
+            padding: 17px;
+            border: 1px solid #edf1f6;
+            border-radius: 10px;
+        }
+
+        .movement-item span {
+            color: #94a3b8;
+            font-size: 10px;
+        }
+
+        .movement-item strong {
+            display: block;
+            margin-top: 7px;
+            font-size: 22px;
+        }
+
+        .movement-panel {
+            margin-top: 16px;
+        }
+
+        .movement-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 20px;
+        }
+
+        .movement-period-balance {
+            padding: 6px 10px;
+            border-radius: 20px;
+            font-size: 9px;
+            font-weight: 800;
+        }
+
+        .balance-negative {
+            background: #fef2f2;
+            color: #dc2626;
+        }
+
+        .balance-positive {
+            background: #ecfdf5;
+            color: #15803d;
+        }
+
+        .balance-neutral {
+            background: #f1f5f9;
+            color: #64748b;
+        }
+
+        .movement-layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 330px;
+            gap: 28px;
+            align-items: stretch;
+        }
+
+        .movement-chart-area {
+            min-width: 0;
+        }
+
+        .movement-chart-container {
+            position: relative;
+            width: 100%;
+            height: 260px;
+        }
+
+        .movement-summary {
+            display: grid;
+            grid-template-columns: 1fr;
+            border: 1px solid #edf1f6;
+            border-radius: 11px;
+            overflow: hidden;
+        }
+
+        .movement-summary-item {
+            padding: 16px 18px;
+            border-bottom: 1px solid #edf1f6;
+        }
+
+        .movement-summary-item:last-child {
+            border-bottom: 0;
+        }
+
+        .movement-summary-item span {
+            display: block;
+            color: #64748b;
+            font-size: 10px;
+            font-weight: 600;
+        }
+
+        .movement-summary-item strong {
+            display: block;
+            margin-top: 5px;
+            color: #0f172a;
+            font-size: 22px;
+        }
+
+        .movement-summary-item small {
+            display: block;
+            margin-top: 3px;
+            color: #94a3b8;
+            font-size: 9px;
+        }
+
+        .movement-summary-item strong.value-danger {
+            color: #dc2626;
+        }
+
+        .movement-summary-item strong.value-success {
+            color: #15803d;
+        }
+
+        .movement-balance {
+            background: #fafcff;
+        }
+
+        .movement-empty {
+            min-height: 230px;
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 13px;
+
+            border: 1px dashed #dbe3ef;
+            border-radius: 11px;
+
+            background: #fbfdff;
+        }
+
+        .movement-empty-icon {
+            width: 40px;
+            height: 40px;
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
+
+            flex: 0 0 40px;
+
+            border-radius: 11px;
+
+            background: #eff6ff;
+            color: #2563eb;
+
+            font-size: 17px;
+            font-weight: 800;
+        }
+
+        .movement-empty strong {
+            display: block;
+            color: #334155;
+            font-size: 11px;
+        }
+
+        .movement-empty p {
+            margin: 4px 0 0;
+            color: #94a3b8;
+            font-size: 9px;
+        }
+
+        @media (max-width: 900px) {
+            .movement-layout {
+                grid-template-columns: 1fr;
+            }
+
+            .movement-summary {
+                grid-template-columns: repeat(3, 1fr);
+            }
+
+            .movement-summary-item {
+                border-bottom: 0;
+                border-right: 1px solid #edf1f6;
+            }
+
+            .movement-summary-item:last-child {
+                border-right: 0;
+            }
+        }
+
+        /* =========================================================
+           HISTÓRICO
+        ========================================================= */
+
+        .history-panel {
+            margin-top: 16px;
+        }
+
+        .table-wrap {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 11px;
+        }
+
+        th {
+            padding: 12px 16px;
+            background: #f8fafc;
+            color: #64748b;
+            text-align: left;
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: .04em;
+        }
+
+        td {
+            padding: 13px 16px;
+            border-top: 1px solid #edf1f6;
+            white-space: nowrap;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 5px 8px;
+            border-radius: 20px;
+            font-size: 9px;
+            font-weight: 800;
+        }
+
+        .badge-success {
+            background: #dcfce7;
+            color: #15803d;
+        }
+
+        .badge-error {
+            background: #fee2e2;
+            color: #b91c1c;
+        }
+
+        .text-danger {
+            color: #dc2626;
+            font-weight: 700;
+        }
+
+        @media (max-width: 1200px) {
+            .cards {
+                grid-template-columns: repeat(3, 1fr);
+            }
+
+            .metrics-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 760px) {
+            .page {
+                padding: 20px 14px;
+            }
+
+            .page-header,
+            .period-bar {
+                flex-direction: column;
+            }
+
+            .cards {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .movement {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .evolution-panel {
+            margin-bottom: 16px;
+        }
+
+        .evolution-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 20px;
+        }
+
+        .chart-legend {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 14px;
+        }
+
+        .chart-legend span {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+
+            color: #64748b;
+            font-size: 10px;
+            font-weight: 600;
+        }
+
+        .legend-dot {
+            width: 7px;
+            height: 7px;
+            display: inline-block;
+            border-radius: 50%;
+        }
+
+        .legend-dot.overdue {
+            background: #ef4444;
+        }
+
+        .legend-dot.alert5 {
+            background: #f97316;
+        }
+
+        .legend-dot.alert10 {
+            background: #f59e0b;
+        }
+
+        .legend-dot.alert20 {
+            background: #3b82f6;
+        }
+
+        .chart-container {
+            position: relative;
+            width: 100%;
+            height: 310px;
+        }
+
+        .chart-empty {
+            min-height: 245px;
+
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+
+            text-align: center;
+            color: #64748b;
+        }
+
+        .chart-empty-icon {
+            width: 42px;
+            height: 42px;
+
+            margin-bottom: 12px;
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
+
+            border-radius: 12px;
+
+            background: #eff6ff;
+            color: #2563eb;
+
+            font-size: 19px;
+            font-weight: 800;
+        }
+
+        .chart-empty strong {
+            color: #334155;
+            font-size: 13px;
+        }
+
+        .chart-empty p {
+            max-width: 470px;
+            margin: 7px auto 0;
+
+            color: #94a3b8;
+            font-size: 11px;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="page">
+
+    <header class="page-header">
+        <div class="header-main">
+
+            <div class="header-icon">▥</div>
+
+            <div>
+                <h1>Indicadores Documentais</h1>
+                <p>
+                    Desempenho operacional, prazos e saúde da automação
+                    Portal GCE × SSW
+                </p>
+            </div>
+
+        </div>
+
+        <div class="header-actions">
+            <a href="/documentos" class="btn">
+                ← Documentos
+            </a>
+        </div>
+    </header>
+
+    <div class="period-bar">
+
+        <div class="period-label">
+            Período analisado
+            <strong>Últimos {{ days }} dias</strong>
+        </div>
+
+        <div class="period-options">
+            <a href="?days=7"
+               class="period-option {% if days == 7 %}active{% endif %}">
+                7 dias
+            </a>
+
+            <a href="?days=30"
+               class="period-option {% if days == 30 %}active{% endif %}">
+                30 dias
+            </a>
+
+            <a href="?days=90"
+               class="period-option {% if days == 90 %}active{% endif %}">
+                90 dias
+            </a>
+        </div>
+
+    </div>
+
+    <section class="cards">
+
+        <article class="card">
+            <div class="card-label">Documentos monitorados</div>
+            <div class="card-value">
+                {{ dashboard.cards.monitored }}
+            </div>
+            <div class="card-description">
+                Base consolidada de acompanhamento
+            </div>
+        </article>
+
+        <article class="card danger">
+            <div class="card-label">Documentos vencidos</div>
+            <div class="card-value">
+                {{ dashboard.cards.overdue }}
+            </div>
+            <div class="card-description">
+                Prazo documental excedido
+            </div>
+        </article>
+
+        <article class="card warning">
+            <div class="card-label">Sem data de entrega</div>
+            <div class="card-value">
+                {{ dashboard.cards.without_delivery }}
+            </div>
+            <div class="card-description">
+                OC 01 ainda não localizada
+            </div>
+        </article>
+
+        <article class="card success">
+            <div class="card-label">Vínculos consolidados</div>
+            <div class="card-value">
+                {{ dashboard.cards.matched }}
+            </div>
+            <div class="card-description">
+                Documentos vinculados ao SSW
+            </div>
+        </article>
+
+        <article class="card neutral">
+            <div class="card-label">Pendências de vínculo</div>
+            <div class="card-value">
+                {{ dashboard.cards.pending_matching }}
+            </div>
+            <div class="card-description">
+                Ambíguos + não encontrados
+            </div>
+        </article>
+
+    </section>
+
+    <section class="panel evolution-panel">
+
+        <div class="panel-header evolution-header">
+            <div>
+                <h2>Evolução documental</h2>
+                <p>
+                    Comportamento dos prazos nos últimos {{ days }} dias
+                </p>
+            </div>
+
+            <div class="chart-legend">
+                <span>
+                    <i class="legend-dot overdue"></i>
+                    Vencidos
+                </span>
+
+                <span>
+                    <i class="legend-dot alert5"></i>
+                    Até 5 dias
+                </span>
+
+                <span>
+                    <i class="legend-dot alert10"></i>
+                    Até 10 dias
+                </span>
+
+                <span>
+                    <i class="legend-dot alert20"></i>
+                    Até 20 dias
+                </span>
+            </div>
+        </div>
+
+        <div class="panel-body">
+
+            {% if dashboard.history|length > 1 %}
+
+                <div class="chart-container">
+                    <canvas id="documentEvolutionChart"></canvas>
+                </div>
+
+            {% else %}
+
+                <div class="chart-empty">
+
+                    <div class="chart-empty-icon">↗</div>
+
+                    <strong>Histórico em formação</strong>
+
+                    <p>
+                        O primeiro snapshot foi registrado em
+                        {{ dashboard.latest.snapshot_date.strftime('%d/%m/%Y') }}.
+                        O gráfico será formado automaticamente conforme
+                        novas execuções diárias forem registradas.
+                    </p>
+
+                </div>
+
+            {% endif %}
+
+        </div>
+
+    </section>
+
+    <section class="metrics-grid">
+
+        <article class="panel">
+
+            <div class="panel-header">
+                <h2>Situação documental</h2>
+                <p>Distribuição atual dos documentos monitorados</p>
+            </div>
+
+            <div class="panel-body status-list">
+
+                {% set monitored = dashboard.cards.monitored or 1 %}
+                {% set latest = dashboard.latest %}
+
+                <div class="status-row">
+                    <div class="status-name">Vencidos</div>
+
+                    <div class="status-track">
+                        <div
+                            class="status-fill danger"
+                            style="width: {{ ((latest.overdue_count / monitored) * 100) | round(1) }}%">
+                        </div>
+                    </div>
+
+                    <div class="status-value">
+                        {{ latest.overdue_count }}
+                    </div>
+                </div>
+
+                <div class="status-row">
+                    <div class="status-name">Até 5 dias</div>
+
+                    <div class="status-track">
+                        <div
+                            class="status-fill warning"
+                            style="width: {{ ((latest.alert_5_count / monitored) * 100) | round(1) }}%">
+                        </div>
+                    </div>
+
+                    <div class="status-value">
+                        {{ latest.alert_5_count }}
+                    </div>
+                </div>
+
+                <div class="status-row">
+                    <div class="status-name">Até 10 dias</div>
+
+                    <div class="status-track">
+                        <div
+                            class="status-fill warning"
+                            style="width: {{ ((latest.alert_10_count / monitored) * 100) | round(1) }}%">
+                        </div>
+                    </div>
+
+                    <div class="status-value">
+                        {{ latest.alert_10_count }}
+                    </div>
+                </div>
+
+                <div class="status-row">
+                    <div class="status-name">Até 20 dias</div>
+
+                    <div class="status-track">
+                        <div
+                            class="status-fill"
+                            style="width: {{ ((latest.alert_20_count / monitored) * 100) | round(1) }}%">
+                        </div>
+                    </div>
+
+                    <div class="status-value">
+                        {{ latest.alert_20_count }}
+                    </div>
+                </div>
+
+                <div class="status-row">
+                    <div class="status-name">Sem entrega</div>
+
+                    <div class="status-track">
+                        <div
+                            class="status-fill neutral"
+                            style="width: {{ ((latest.without_delivery_count / monitored) * 100) | round(1) }}%">
+                        </div>
+                    </div>
+
+                    <div class="status-value">
+                        {{ latest.without_delivery_count }}
+                    </div>
+                </div>
+
+            </div>
+        </article>
+
+        <article class="panel">
+
+            <div class="panel-header">
+                <h2>Saúde da automação</h2>
+                <p>Execuções registradas nos últimos {{ days }} dias</p>
+            </div>
+
+            <div class="panel-body">
+
+                <div class="automation-kpis">
+
+                    <div class="automation-kpi">
+                        <span>Execuções</span>
+                        <strong>{{ dashboard.pipeline.total }}</strong>
+                    </div>
+
+                    <div class="automation-kpi">
+                        <span>Taxa de sucesso</span>
+                        <strong>
+                            {{ dashboard.pipeline.success_rate }}%
+                        </strong>
+                    </div>
+
+                    <div class="automation-kpi">
+                        <span>Tempo médio</span>
+                        <strong>
+                            {{ dashboard.pipeline.average_duration_label }}
+                        </strong>
+                    </div>
+
+                    <div class="automation-kpi">
+                        <span>Execuções com erro</span>
+                        <strong>
+                            {{ dashboard.pipeline.errors }}
+                        </strong>
+                    </div>
+
+                </div>
+
+            </div>
+        </article>
+
+    </section>
+
+    <article class="panel movement-panel">
+
+        <div class="panel-header movement-header">
+            <div>
+                <h2>Entrada × Regularização</h2>
+                <p>
+                    Movimentação documental nos últimos {{ days }} dias
+                </p>
+            </div>
+
+            <div class="movement-period-balance
+                {% if dashboard.movement.balance > 0 %}
+                    balance-negative
+                {% elif dashboard.movement.balance < 0 %}
+                    balance-positive
+                {% else %}
+                    balance-neutral
+                {% endif %}
+            ">
+                {% if dashboard.movement.balance > 0 %}
+                    ↑ Estoque aumentou
+                {% elif dashboard.movement.balance < 0 %}
+                    ↓ Estoque reduziu
+                {% else %}
+                    → Estoque estável
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="panel-body">
+
+            <div class="movement-layout">
+
+                <div class="movement-chart-area">
+
+                    {% if dashboard.history|length > 1 %}
+
+                        <div class="movement-chart-container">
+                            <canvas id="movementChart"></canvas>
+                        </div>
+
+                    {% else %}
+
+                        <div class="movement-empty">
+
+                            <div class="movement-empty-icon">↕</div>
+
+                            <div>
+                                <strong>
+                                    Histórico diário em formação
+                                </strong>
+
+                                <p>
+                                    A comparação diária será exibida
+                                    automaticamente após novos snapshots.
+                                </p>
+                            </div>
+
+                        </div>
+
+                    {% endif %}
+
+                </div>
+
+                <div class="movement-summary">
+
+                    <div class="movement-summary-item">
+                        <span>Entraram no período</span>
+
+                        <strong>
+                            {{ dashboard.movement.opened }}
+                        </strong>
+
+                        <small>
+                            Novos documentos em acompanhamento
+                        </small>
+                    </div>
+
+                    <div class="movement-summary-item">
+                        <span>Regularizados</span>
+
+                        <strong>
+                            {{ dashboard.movement.resolved }}
+                        </strong>
+
+                        <small>
+                            Documentos resolvidos no período
+                        </small>
+                    </div>
+
+                    <div class="movement-summary-item movement-balance">
+                        <span>Saldo do período</span>
+
+                        <strong
+                            class="
+                            {% if dashboard.movement.balance > 0 %}
+                                value-danger
+                            {% elif dashboard.movement.balance < 0 %}
+                                value-success
+                            {% endif %}
+                            "
+                        >
+                            {% if dashboard.movement.balance > 0 %}
+                                +
+                            {% endif %}
+                            {{ dashboard.movement.balance }}
+                        </strong>
+
+                        <small>
+                            {% if dashboard.movement.balance > 0 %}
+                                Mais entradas que regularizações
+                            {% elif dashboard.movement.balance < 0 %}
+                                Mais regularizações que entradas
+                            {% else %}
+                                Entradas e regularizações equilibradas
+                            {% endif %}
+                        </small>
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </article>
+
+    <article class="panel history-panel">
+
+        <div class="panel-header">
+            <h2>Histórico de processamentos</h2>
+            <p>
+                Execuções recentes da integração documental
+            </p>
+        </div>
+
+        <div class="table-wrap">
+
+            <table>
+
+                <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Data</th>
+                    <th>Status</th>
+                    <th>Duração</th>
+                    <th>Vínculos processados</th>
+                    <th>Pendências</th>
+                    <th>Alertas</th>
+                    <th>Notificações</th>
+                    <th>Falha</th>
+                </tr>
+                </thead>
+
+                <tbody>
+
+                {% for run in dashboard.pipeline_history %}
+
+                    <tr>
+
+                        <td>
+                            #{{ run.id }}
+                        </td>
+
+                        <td>
+                            {{ run.started_at.strftime('%d/%m/%Y %H:%M') }}
+                        </td>
+
+                        <td>
+                            {% if run.status == 'SUCCESS' %}
+                                <span class="badge badge-success">
+                                    Concluído
+                                </span>
+                            {% else %}
+                                <span class="badge badge-error">
+                                    Erro
+                                </span>
+                            {% endif %}
+                        </td>
+
+                        <td>
+                            {% if run.duration_seconds %}
+                                {% set minutes = run.duration_seconds // 60 %}
+                                {% set seconds = run.duration_seconds % 60 %}
+
+                                {% if minutes %}
+                                    {{ minutes }}min {{ seconds }}s
+                                {% else %}
+                                    {{ seconds }}s
+                                {% endif %}
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+
+                        <td>
+                            {{ run.matched_count or 0 }}
+                        </td>
+
+                        <td>
+                            {{ (run.ambiguous_count or 0) +
+                               (run.not_found_count or 0) }}
+                        </td>
+
+                        <td>
+                            {{ run.alerts_analyzed or 0 }}
+                        </td>
+
+                        <td>
+                            {{ run.notifications_sent or 0 }}
+                        </td>
+
+                        <td>
+                            {% if run.error_step %}
+                                <span class="text-danger">
+                                    {{ run.error_step }}
+                                </span>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+
+                    </tr>
+
+                {% endfor %}
+
+                </tbody>
+
+            </table>
+
+        </div>
+
+    </article>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+{% if dashboard.history|length > 1 %}
+
+<script>
+    /*
+     * ============================================================
+     * DADOS DOS GRÁFICOS
+     * ============================================================
+     */
+
+    const chartData = {
+        labels: {{ dashboard.chart.labels | tojson }},
+
+        // Evolução documental
+        overdue: {{ dashboard.chart.overdue | tojson }},
+        alert5: {{ dashboard.chart.alert_5 | tojson }},
+        alert10: {{ dashboard.chart.alert_10 | tojson }},
+        alert20: {{ dashboard.chart.alert_20 | tojson }},
+
+        // Entrada x Regularização
+        opened: {{ dashboard.chart.opened | tojson }},
+        resolved: {{ dashboard.chart.resolved | tojson }}
+    };
+
+
+    /*
+     * ============================================================
+     * GRÁFICO 1 — EVOLUÇÃO DOCUMENTAL
+     * ============================================================
+     */
+
+    const evolutionCanvas =
+        document.getElementById("documentEvolutionChart");
+
+    if (evolutionCanvas) {
+
+        new Chart(evolutionCanvas, {
+            type: "line",
+
+            data: {
+                labels: chartData.labels,
+
+                datasets: [
+                    {
+                        label: "Vencidos",
+                        data: chartData.overdue,
+                        borderColor: "#ef4444",
+                        backgroundColor: "#ef4444",
+                        borderWidth: 2,
+                        pointRadius: 3,
+                        pointHoverRadius: 5,
+                        tension: .35
+                    },
+                    {
+                        label: "Até 5 dias",
+                        data: chartData.alert5,
+                        borderColor: "#f97316",
+                        backgroundColor: "#f97316",
+                        borderWidth: 2,
+                        pointRadius: 3,
+                        pointHoverRadius: 5,
+                        tension: .35
+                    },
+                    {
+                        label: "Até 10 dias",
+                        data: chartData.alert10,
+                        borderColor: "#f59e0b",
+                        backgroundColor: "#f59e0b",
+                        borderWidth: 2,
+                        pointRadius: 3,
+                        pointHoverRadius: 5,
+                        tension: .35
+                    },
+                    {
+                        label: "Até 20 dias",
+                        data: chartData.alert20,
+                        borderColor: "#3b82f6",
+                        backgroundColor: "#3b82f6",
+                        borderWidth: 2,
+                        pointRadius: 3,
+                        pointHoverRadius: 5,
+                        tension: .35
+                    }
+                ]
+            },
+
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+
+                interaction: {
+                    mode: "index",
+                    intersect: false
+                },
+
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+
+                    tooltip: {
+                        padding: 10
+                    }
+                },
+
+                scales: {
+                    x: {
+                        grid: {
+                            display: false
+                        },
+
+                        ticks: {
+                            color: "#94a3b8",
+
+                            font: {
+                                size: 10
+                            }
+                        }
+                    },
+
+                    y: {
+                        beginAtZero: true,
+
+                        grid: {
+                            color: "#eef2f7"
+                        },
+
+                        ticks: {
+                            color: "#94a3b8",
+                            precision: 0,
+
+                            font: {
+                                size: 10
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+    }
+
+
+    /*
+     * ============================================================
+     * GRÁFICO 2 — ENTRADA X REGULARIZAÇÃO
+     * ============================================================
+     */
+
+    const movementCanvas =
+        document.getElementById("movementChart");
+
+    if (movementCanvas) {
+
+        new Chart(movementCanvas, {
+            type: "bar",
+
+            data: {
+                labels: chartData.labels,
+
+                datasets: [
+                    {
+                        label: "Entraram",
+                        data: chartData.opened,
+                        backgroundColor: "#3b82f6",
+                        borderRadius: 5,
+                        borderSkipped: false,
+                        maxBarThickness: 28
+                    },
+                    {
+                        label: "Regularizados",
+                        data: chartData.resolved,
+                        backgroundColor: "#22c55e",
+                        borderRadius: 5,
+                        borderSkipped: false,
+                        maxBarThickness: 28
+                    }
+                ]
+            },
+
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+
+                interaction: {
+                    mode: "index",
+                    intersect: false
+                },
+
+                plugins: {
+                    legend: {
+                        position: "top",
+                        align: "end",
+
+                        labels: {
+                            usePointStyle: true,
+                            pointStyle: "circle",
+                            boxWidth: 7,
+                            boxHeight: 7,
+                            color: "#64748b",
+
+                            font: {
+                                size: 10
+                            }
+                        }
+                    },
+
+                    tooltip: {
+                        padding: 10
+                    }
+                },
+
+                scales: {
+                    x: {
+                        grid: {
+                            display: false
+                        },
+
+                        ticks: {
+                            color: "#94a3b8",
+
+                            font: {
+                                size: 10
+                            }
+                        }
+                    },
+
+                    y: {
+                        beginAtZero: true,
+
+                        grid: {
+                            color: "#eef2f7"
+                        },
+
+                        ticks: {
+                            precision: 0,
+                            color: "#94a3b8",
+
+                            font: {
+                                size: 10
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+    }
+</script>
+
+{% endif %}
+
+</body>
+</html>
