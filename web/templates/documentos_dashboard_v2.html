@@ -54,7 +54,34 @@
 .documents-header-meta {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
+}
+
+.metrics-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    height: 40px;
+    padding: 0 16px;
+
+    background: #fff;
+    color: #334155;
+
+    border: 1px solid #d7e0ec;
+    border-radius: 10px;
+
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+
+    transition: all .15s ease;
+}
+
+.metrics-btn:hover {
+    background: #f8fafc;
+    border-color: #bfdbfe;
+    color: #2563eb;
 }
 
 .refresh-btn {
@@ -1057,6 +1084,10 @@
         </div>
 
         <div class="documents-header-meta">
+            <a class="metrics-btn" href="/documentos/metricas">
+                ▥ Métricas
+            </a>
+
             <a class="refresh-btn" href="/documentos">
                 ↻ Recarregar painel
             </a>
