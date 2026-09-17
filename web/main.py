@@ -44,6 +44,12 @@ app.add_middleware(
     minimum_size=1000,
 )
 
+app.mount(
+    "/static",
+    StaticFiles(directory=str(BASE_DIR / "web" / "static")),
+    name="static",
+)
+
 app.mount("/downloads", StaticFiles(directory=str(BASE_DIR / "downloads")), name="downloads")
 
 app.mount(
