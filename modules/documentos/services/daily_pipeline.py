@@ -196,8 +196,8 @@ class DailyDocumentsPipeline:
                     target_year=self.config.target_year,
                     database_retries=4,
                 ).import_month(
-                    portal_solucionar=portal.solucionar,
-                    portal_pendencias=portal.aguardando_solucao,
+                    portal_solucionar=portal.solucionar_files,
+                    portal_pendencias=portal.aguardando_solucao_files,
                     op455=ssw.op455,
                     op930=ssw.op930,
                     period_start=period.start,
@@ -353,10 +353,18 @@ class DailyDocumentsPipeline:
                         "end": period.end.isoformat(),
                     },
                     "files": {
-                        "portal_solucionar": str(portal.solucionar),
-                        "portal_aguardando_solucao": str(
-                            portal.aguardando_solucao
-                        ),
+                        "portal": [
+                            {
+                                "carrier_id": carrier.carrier_id,
+                                "carrier_cnpj": carrier.carrier_cnpj,
+                                "carrier_name": carrier.carrier_name,
+                                "solucionar": str(carrier.solucionar),
+                                "aguardando_solucao": str(
+                                    carrier.aguardando_solucao
+                                ),
+                            }
+                            for carrier in portal.carriers
+                        ],
                         "op455": str(ssw.op455),
                         "op930": str(ssw.op930),
                     },

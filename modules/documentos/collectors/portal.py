@@ -12,13 +12,47 @@ from modules.documentos.config import DocumentosSettings, settings
 
 
 @dataclass(frozen=True)
-class PortalDownloads:
+class CarrierDownloads:
+    carrier_id: int
+    carrier_cnpj: str
+    carrier_name: str
     solucionar: Path
     aguardando_solucao: Path
 
 
+@dataclass(frozen=True)
+class PortalDownloads:
+    carriers: tuple[CarrierDownloads, ...]
+
+    @property
+    def solucionar_files(self) -> list[Path]:
+        return [
+            carrier.solucionar
+            for carrier in self.carriers
+        ]
+
+    @property
+    def aguardando_solucao_files(self) -> list[Path]:
+        return [
+            carrier.aguardando_solucao
+            for carrier in self.carriers
+        ]
+
+
 class GCEPortalCollector:
-    def __init__(self, config: DocumentosSettings = settings) -> None:
+
+    TARGET_CNPJS = {
+        "02141029000119",
+        "02141029000461",
+        "02141029000623",
+        "02141029000895",
+        "02141029001000",
+    }
+
+    def __init__(
+        self,
+        config: DocumentosSettings = settings,
+    ) -> None:
         self.config = config
         if self.config.gce_use_system_ca:
             try:
@@ -138,12 +172,13 @@ class GCEPortalCollector:
         self._http_error(response, action)
         return self._json_result(response, action)
 
-    def select_carrier(self) -> None:
-        """Replica a seleção de transportadora feita pela tela após o login."""
+    def list_carriers(self) -> list[dict]:
         if not self._carrier_group_id:
-            raise RuntimeError("Seleção da transportadora chamada antes do login.")
+            raise RuntimeError(
+                "Consulta das transportadoras chamada antes do login."
+            )
 
-        self._search_carrier(
+        payload = self._search_carrier(
             {
                 "condition": "AND",
                 "rules": [
@@ -154,38 +189,84 @@ class GCEPortalCollector:
                         "value": int(self._carrier_group_id),
                     }
                 ],
-                "order": [{"field": "transportador.cnpj", "dir": "asc"}],
+                "order": [
+                    {
+                        "field": "transportador.cnpj",
+                        "dir": "asc",
+                    }
+                ],
             },
             "consulta das transportadoras do grupo",
         )
 
+        carriers = []
+
+        for item in payload.get("data") or []:
+            carrier = item.get("transportador") or item
+
+            carrier_id = carrier.get("id")
+            cnpj = self._normalize_cnpj(
+                carrier.get("cnpj")
+            )
+
+            if carrier_id is None or not cnpj:
+                continue
+
+            if cnpj not in self.TARGET_CNPJS:
+                continue
+
+            carriers.append(
+                {
+                    "id": int(carrier_id),
+                    "cnpj": cnpj,
+                    "name": str(
+                        carrier.get("razaosocial")
+                        or carrier.get("nome")
+                        or cnpj
+                    ).strip(),
+                }
+            )
+
+        found = {
+            carrier["cnpj"]
+            for carrier in carriers
+        }
+
+        missing = self.TARGET_CNPJS - found
+
+        if missing:
+            raise PermissionError(
+                "Portal GCE: transportadoras não encontradas: "
+                + ", ".join(sorted(missing))
+            )
+
+        return carriers
+
+
+    def select_carrier(
+        self,
+        carrier_id: int,
+    ) -> None:
         response = self.session.post(
             f"{self.config.gce_base_url}/documento/_notifytransp",
-            json={"idtransportador": self.config.gce_carrier_id},
-            headers={"X-Requested-With": "XMLHttpRequest"},
+            json={
+                "idtransportador": carrier_id,
+            },
+            headers={
+                "X-Requested-With": "XMLHttpRequest",
+            },
             timeout=self.config.gce_timeout,
         )
-        self._http_error(response, "seleção da transportadora")
-        self._json_result(response, "seleção da transportadora")
 
-        carrier = self._search_carrier(
-            {
-                "rules": [
-                    {
-                        "field": "transportador.id",
-                        "type": "integer",
-                        "operator": "equal",
-                        "value": self.config.gce_carrier_id,
-                    }
-                ],
-                "order": [{"field": "transportador.razaosocial", "dir": "asc"}],
-            },
-            "confirmação da transportadora",
+        self._http_error(
+            response,
+            "seleção da transportadora",
         )
-        if not carrier.get("data"):
-            raise PermissionError(
-                "Portal GCE: a transportadora configurada não está disponível para o usuário."
-            )
+
+        self._json_result(
+            response,
+            "seleção da transportadora",
+        )
 
     @staticmethod
     def _filename(response: requests.Response, fallback: str) -> str:
@@ -207,10 +288,10 @@ class GCEPortalCollector:
             if "<html" in preview or "<!doctype" in preview:
                 raise ValueError(f"Portal retornou HTML em vez do relatório {report_name}.")
 
-    def _download(self, endpoint: str, output_dir: Path, fallback: str) -> Path:
+    def _download(self, endpoint: str, output_dir: Path, fallback: str, carrier_id: int) -> Path:
         response = self.session.post(
             f"{self.config.gce_base_url}/documento/{endpoint}",
-            json={"idtransportador": self.config.gce_carrier_id},
+            json={"idtransportador": carrier_id},
             headers={"Accept": "*/*"},
             timeout=self.config.gce_timeout,
         )
@@ -221,17 +302,76 @@ class GCEPortalCollector:
         path.write_bytes(response.content)
         return path
 
-    def download_daily(self, output_root: Path, reference_date: date | None = None) -> PortalDownloads:
+    def download_daily(
+        self,
+        output_root: Path,
+        reference_date: date | None = None,
+    ) -> PortalDownloads:
+
         reference_date = reference_date or date.today()
-        output_dir = output_root / reference_date.strftime("%Y/%m/%d")
+
+        base_dir = (
+            output_root
+            / reference_date.strftime("%Y/%m/%d")
+            / "portal"
+        )
+
         self.login()
-        self.select_carrier()
-        solucionar = self._download(
-            "_printsolucionar", output_dir, "portal_solucionar.xlsx"
+
+        carriers = self.list_carriers()
+
+        downloads: list[CarrierDownloads] = []
+
+        for carrier in carriers:
+            carrier_id = carrier["id"]
+            carrier_cnpj = carrier["cnpj"]
+            carrier_name = carrier["name"]
+
+            print(
+                "[GCE] Coletando "
+                f"{carrier_cnpj} - {carrier_name}..."
+            )
+
+            self.select_carrier(carrier_id)
+
+            output_dir = (
+                base_dir
+                / carrier_cnpj
+            )
+
+            solucionar = self._download(
+                "_printsolucionar",
+                output_dir,
+                "portal_solucionar.xlsx",
+                carrier_id,
+            )
+
+            aguardando = self._download(
+                "_printaguardandosolucao",
+                output_dir,
+                "portal_aguarda_solucao.xlsx",
+                carrier_id,
+            )
+
+            downloads.append(
+                CarrierDownloads(
+                    carrier_id=carrier_id,
+                    carrier_cnpj=carrier_cnpj,
+                    carrier_name=carrier_name,
+                    solucionar=solucionar,
+                    aguardando_solucao=aguardando,
+                )
+            )
+
+            print(
+                "[GCE] "
+                f"{carrier_cnpj}: coleta concluída."
+            )
+
+        return PortalDownloads(
+            carriers=tuple(downloads),
         )
-        aguardando = self._download(
-            "_printaguardandosolucao",
-            output_dir,
-            "portal_aguarda_solucao.xlsx",
-        )
-        return PortalDownloads(solucionar, aguardando)
+
+    @staticmethod
+    def _normalize_cnpj(value: object) -> str:
+        return re.sub(r"\D", "", str(value or ""))

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from typing import Any
 
 from modules.documentos.database import transaction
@@ -181,6 +182,7 @@ def dashboard_snapshot(
     per_page: int = 25,
     search: str = "",
     alert_type: str = "",
+    carrier_cnpj: str = "",
 ) -> dict[str, Any]:
 
     page = max(1, page)
@@ -191,6 +193,12 @@ def dashboard_snapshot(
     search = (search or "").strip()
     alert_type = (alert_type or "").strip().upper()
 
+    carrier_cnpj = re.sub(
+        r"\D",
+        "",
+        carrier_cnpj or "",
+    )
+
     if alert_type not in ALLOWED_STATUS:
         alert_type = ""
 
@@ -200,6 +208,32 @@ def dashboard_snapshot(
 
     with transaction() as connection:
         with connection.cursor() as cursor:
+
+            # =====================================================
+            # TRANSPORTADORAS / CNPJs DISPONÍVEIS
+            # =====================================================
+
+            cursor.execute(
+                """
+                SELECT
+                    carrier_cnpj,
+                    COUNT(*) AS total
+                FROM portal_documents
+                WHERE active = 1
+                  AND carrier_cnpj IS NOT NULL
+                  AND carrier_cnpj <> ''
+                GROUP BY carrier_cnpj
+                ORDER BY carrier_cnpj
+                """
+            )
+
+            carriers = [
+                {
+                    "cnpj": str(row["carrier_cnpj"]),
+                    "total": int(row["total"] or 0),
+                }
+                for row in cursor.fetchall()
+            ]
 
             # =====================================================
             # CARDS — somente situação ATUAL dos documentos
@@ -248,6 +282,10 @@ def dashboard_snapshot(
 
             where = ["a.status = 'OPEN'"]
             params: list[Any] = []
+
+            if carrier_cnpj:
+                where.append("p.carrier_cnpj = %s")
+                params.append(carrier_cnpj)
 
             if alert_type:
                 where.append("a.alert_type = %s")
@@ -326,7 +364,14 @@ def dashboard_snapshot(
                     p.invoice_number,
                     p.invoice_series,
                     p.recipient_name,
+                    p.recipient_cnpj,
                     p.warehouse_ctrc,
+                    p.carrier_cnpj,
+                    p.transport_number,
+                    p.pending_at,
+                    p.pending_user,
+                    p.pending_reason,
+                    p.report_type,
 
                     s.ctrc_raw AS ssw_ctrc_raw
 
@@ -390,6 +435,45 @@ def dashboard_snapshot(
                     or row.get("warehouse_ctrc")
                 )
 
+                details["recipient_cnpj"] = (
+                    row.get("recipient_cnpj")
+                    or details.get("recipient_cnpj")
+                )
+
+                details["carrier_cnpj"] = (
+                    row.get("carrier_cnpj")
+                    or details.get("carrier_cnpj")
+                )
+
+                details["transport_number"] = (
+                    row.get("transport_number")
+                    or details.get("transport_number")
+                )
+
+                details["pending_at"] = (
+                    row.get("pending_at")
+                    or details.get("pending_at")
+                )
+
+                details["pending_user"] = (
+                    row.get("pending_user")
+                    or details.get("pending_user")
+                )
+
+                details["pending_reason"] = (
+                    row.get("pending_reason")
+                    or details.get("pending_reason")
+                )
+
+                details["report_type"] = (
+                    row.get("report_type")
+                    or details.get("report_type")
+                )
+
+                details["has_pending"] = bool(
+                    details.get("pending_reason")
+                )
+
                 rows.append(row)
 
             # =====================================================
@@ -428,7 +512,10 @@ def dashboard_snapshot(
                 "filters": {
                     "search": search,
                     "alert_type": alert_type,
+                    "carrier_cnpj": carrier_cnpj,
                 },
+
+                "carriers": carriers,
 
                 "pagination": {
                     "page": page,

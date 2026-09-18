@@ -18,6 +18,7 @@ def documentos_dashboard(
     per_page: int = 25,
     q: str = "",
     status: str = "",
+    carrier_cnpj: str = "",
 ):
     if not request.session.get("ssw_session_id"):
         return RedirectResponse("/login", status_code=303)
@@ -27,6 +28,7 @@ def documentos_dashboard(
         per_page=per_page,
         search=q,
         alert_type=status,
+        carrier_cnpj=carrier_cnpj,
     )
 
     return templates.TemplateResponse(

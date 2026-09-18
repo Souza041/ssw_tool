@@ -810,8 +810,9 @@
 
 .documents-filters {
     grid-template-columns:
-        minmax(280px, 1fr)
+        minmax(260px, 1fr)
         210px
+        245px
         150px
         auto;
 }
@@ -986,10 +987,6 @@
         grid-template-columns: repeat(2, 1fr);
     }
 
-    .documents-filters {
-        grid-template-columns: 1fr;
-    }
-
     .detail-grid {
         grid-template-columns: repeat(2, 1fr);
     }
@@ -1064,6 +1061,25 @@
     .automation-stat {
         border-right: 0;
     }
+}
+
+.pending-badge {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 6px;
+    padding: 4px 7px;
+    border-radius: 999px;
+    background: #fff7ed;
+    color: #c2410c;
+    font-size: 9.5px;
+    font-weight: 750;
+    white-space: nowrap;
+}
+
+.pending-badge::before {
+    content: "!";
+    margin-right: 4px;
+    font-weight: 900;
 }
 </style>
 
@@ -1351,7 +1367,11 @@
                     </div>
                 </div>
 
-                {% if dashboard["filters"]["search"] or dashboard["filters"]["alert_type"] %}
+                {% if
+                    dashboard["filters"]["search"]
+                    or dashboard["filters"]["alert_type"]
+                    or dashboard["filters"]["carrier_cnpj"]
+                %}
                     <a href="/documentos" class="clear-filters">
                         × Limpar filtros
                     </a>
@@ -1425,6 +1445,24 @@
                     >
                         Sem data de entrega
                     </option>
+                </select>
+
+                <select id="doc-carrier" name="carrier_cnpj">
+                    <option value="">
+                        Todos os CNPJs
+                    </option>
+
+                    {% for carrier in dashboard["carriers"] %}
+                        <option
+                            value="{{ carrier['cnpj'] }}"
+                            {% if dashboard["filters"]["carrier_cnpj"] == carrier["cnpj"] %}
+                                selected
+                            {% endif %}
+                        >
+                            {% set cnpj = carrier["cnpj"] %}
+                            {{ cnpj[0:2] }}.{{ cnpj[2:5] }}.{{ cnpj[5:8] }}/{{ cnpj[8:12] }}-{{ cnpj[12:14] }}
+                        </option>
+                    {% endfor %}
                 </select>
 
                 <select id="doc-per-page" name="per_page">
@@ -1512,6 +1550,15 @@
                             {% else %}
                                 <span class="status-badge status-regular">
                                     Regular
+                                </span>
+                            {% endif %}
+
+                            {% if item["details"]["has_pending"] %}
+                                <span
+                                    class="pending-badge"
+                                    title="{{ item['details']['pending_reason'] }}"
+                                >
+                                    Recusa
                                 </span>
                             {% endif %}
                         </td>
@@ -1681,6 +1728,38 @@
                                         </strong>
                                     </div>
 
+                                    <div class="detail-item">
+                                        <small>CNPJ transportadora</small>
+                                        <strong>
+                                            {{ item["details"]["carrier_cnpj"] or "-" }}
+                                        </strong>
+                                    </div>
+
+                                    {% if item["details"]["has_pending"] %}
+
+                                        <div class="detail-item">
+                                            <small>Status documental</small>
+                                            <strong>
+                                                Recusado / com pendência
+                                            </strong>
+                                        </div>
+
+                                        <div class="detail-item">
+                                            <small>Usuário da pendência</small>
+                                            <strong>
+                                                {{ item["details"]["pending_user"] or "-" }}
+                                            </strong>
+                                        </div>
+
+                                        <div class="detail-item">
+                                            <small>Data da pendência</small>
+                                            <strong>
+                                                {{ item["details"]["pending_at"] or "-" }}
+                                            </strong>
+                                        </div>
+
+                                    {% endif %}
+
                                     <div class="detail-item full">
                                         <small>Motivo da pendência</small>
                                         <strong>
@@ -1717,7 +1796,7 @@
         {% if pagination["has_previous"] %}
             <a
                 class="page-button page-nav"
-                href="/documentos?page={{ pagination['previous_page'] }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}"
+                href="/documentos?page={{ pagination['previous_page'] }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}"
             >
                 ‹ Anterior
             </a>
@@ -1735,7 +1814,7 @@
         {# Primeira página #}
         <a
             class="page-button {% if current == 1 %}active{% endif %}"
-            href="/documentos?page=1&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}"
+            href="/documentos?page=1&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}"
         >
             1
         </a>
@@ -1752,7 +1831,7 @@
             {% if number >= current - 2 and number <= current + 2 %}
                 <a
                     class="page-button {% if number == current %}active{% endif %}"
-                    href="/documentos?page={{ number }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}"
+                    href="/documentos?page={{ number }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}"
                 >
                     {{ number }}
                 </a>
@@ -1770,7 +1849,7 @@
             {% if total > 1 %}
                 <a
                     class="page-button {% if current == total %}active{% endif %}"
-                    href="/documentos?page={{ total }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}"
+                    href="/documentos?page={{ total }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}"
                 >
                     {{ total }}
                 </a>
@@ -1780,7 +1859,7 @@
             {% if pagination["has_next"] %}
                 <a
                     class="page-button page-nav"
-                    href="/documentos?page={{ pagination['next_page'] }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}"
+                    href="/documentos?page={{ pagination['next_page'] }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}"
                 >
                     Próxima ›
                 </a>
@@ -1826,6 +1905,10 @@
 
     const statusSelect = document.querySelector(
         "#doc-status"
+    );
+
+    const carrierSelect = document.querySelector(
+        "#doc-carrier"
     );
 
     const perPageSelect = document.querySelector(
@@ -1919,6 +2002,10 @@
        ===================================================== */
 
     statusSelect?.addEventListener("change", () => {
+        filterForm?.requestSubmit();
+    });
+
+    carrierSelect?.addEventListener("change", () => {
         filterForm?.requestSubmit();
     });
 
