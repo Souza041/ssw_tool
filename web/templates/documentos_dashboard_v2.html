@@ -1081,6 +1081,34 @@
     margin-right: 4px;
     font-weight: 900;
 }
+
+.panel-heading-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.export-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid #bbf7d0;
+    border-radius: 8px;
+    background: #f0fdf4;
+    color: #15803d;
+    text-decoration: none;
+    font-size: 11px;
+    font-weight: 750;
+    white-space: nowrap;
+}
+
+.export-button:hover {
+    background: #dcfce7;
+    border-color: #86efac;
+    color: #166534;
+}
 </style>
 
 <div class="documents-page">
@@ -1367,15 +1395,27 @@
                     </div>
                 </div>
 
-                {% if
-                    dashboard["filters"]["search"]
-                    or dashboard["filters"]["alert_type"]
-                    or dashboard["filters"]["carrier_cnpj"]
-                %}
-                    <a href="/documentos" class="clear-filters">
-                        × Limpar filtros
+                <div class="panel-heading-actions">
+
+                    <a
+                        class="export-button"
+                        href="/documentos/export?q={{ dashboard['filters']['search']|urlencode }}&status={{ dashboard['filters']['alert_type'] }}&carrier_cnpj={{ dashboard['filters']['carrier_cnpj'] }}"
+                        title="Exportar os documentos encontrados pelos filtros atuais"
+                    >
+                        ⇩ Exportar Excel
                     </a>
-                {% endif %}
+
+                    {% if
+                        dashboard["filters"]["search"]
+                        or dashboard["filters"]["alert_type"]
+                        or dashboard["filters"]["carrier_cnpj"]
+                    %}
+                        <a href="/documentos" class="clear-filters">
+                            × Limpar filtros
+                        </a>
+                    {% endif %}
+
+                </div>
             </div>
 
             <form

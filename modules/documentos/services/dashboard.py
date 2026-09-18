@@ -18,6 +18,64 @@ ALLOWED_STATUS = {
     "NORMAL",
 }
 
+def _normalize_document_filters(
+    *,
+    search: str = "",
+    alert_type: str = "",
+    carrier_cnpj: str = "",
+) -> tuple[str, str, str]:
+
+    search = (search or "").strip()
+    alert_type = (alert_type or "").strip().upper()
+
+    carrier_cnpj = re.sub(
+        r"\D",
+        "",
+        carrier_cnpj or "",
+    )
+
+    if alert_type not in ALLOWED_STATUS:
+        alert_type = ""
+
+    return search, alert_type, carrier_cnpj
+
+
+def _build_document_where(
+    *,
+    search: str = "",
+    alert_type: str = "",
+    carrier_cnpj: str = "",
+) -> tuple[str, list[Any]]:
+
+    where = ["a.status = 'OPEN'"]
+    params: list[Any] = []
+
+    if carrier_cnpj:
+        where.append("p.carrier_cnpj = %s")
+        params.append(carrier_cnpj)
+
+    if alert_type:
+        where.append("a.alert_type = %s")
+        params.append(alert_type)
+
+    if search:
+        like = f"%{search}%"
+
+        where.append(
+            """
+            (
+                p.invoice_number LIKE %s
+                OR p.recipient_name LIKE %s
+                OR p.warehouse_ctrc LIKE %s
+                OR s.ctrc_raw LIKE %s
+            )
+            """
+        )
+
+        params.extend([like, like, like, like])
+
+    return " AND ".join(where), params
+
 
 def _decode_details(row: dict[str, Any]) -> dict[str, Any]:
     details = row.get("details")
@@ -190,17 +248,11 @@ def dashboard_snapshot(
     if per_page not in {25, 50, 100}:
         per_page = 25
 
-    search = (search or "").strip()
-    alert_type = (alert_type or "").strip().upper()
-
-    carrier_cnpj = re.sub(
-        r"\D",
-        "",
-        carrier_cnpj or "",
+    search, alert_type, carrier_cnpj = _normalize_document_filters(
+        search=search,
+        alert_type=alert_type,
+        carrier_cnpj=carrier_cnpj,
     )
-
-    if alert_type not in ALLOWED_STATUS:
-        alert_type = ""
 
     automation = _automation_snapshot()
 
@@ -280,34 +332,11 @@ def dashboard_snapshot(
             # FILTROS
             # =====================================================
 
-            where = ["a.status = 'OPEN'"]
-            params: list[Any] = []
-
-            if carrier_cnpj:
-                where.append("p.carrier_cnpj = %s")
-                params.append(carrier_cnpj)
-
-            if alert_type:
-                where.append("a.alert_type = %s")
-                params.append(alert_type)
-
-            if search:
-                like = f"%{search}%"
-
-                where.append(
-                    """
-                    (
-                        p.invoice_number LIKE %s
-                        OR p.recipient_name LIKE %s
-                        OR p.warehouse_ctrc LIKE %s
-                        OR s.ctrc_raw LIKE %s
-                    )
-                    """
-                )
-
-                params.extend([like, like, like, like])
-
-            where_sql = " AND ".join(where)
+            where_sql, params = _build_document_where(
+                search=search,
+                alert_type=alert_type,
+                carrier_cnpj=carrier_cnpj,
+            )
 
             # =====================================================
             # TOTAL DE RESULTADOS FILTRADOS
@@ -530,3 +559,144 @@ def dashboard_snapshot(
                     "next_page": page + 1 if page < total_pages else None,
                 },
             }
+
+def export_documents(
+    *,
+    search: str = "",
+    alert_type: str = "",
+    carrier_cnpj: str = "",
+) -> list[dict[str, Any]]:
+
+    search, alert_type, carrier_cnpj = _normalize_document_filters(
+        search=search,
+        alert_type=alert_type,
+        carrier_cnpj=carrier_cnpj,
+    )
+
+    where_sql, params = _build_document_where(
+        search=search,
+        alert_type=alert_type,
+        carrier_cnpj=carrier_cnpj,
+    )
+
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                f"""
+                SELECT
+                    a.id,
+                    a.alert_type,
+                    a.delivery_date,
+                    a.deadline_date,
+                    a.days_remaining,
+                    a.details,
+
+                    p.carrier_cnpj,
+                    p.invoice_number,
+                    p.invoice_series,
+                    p.recipient_name,
+                    p.recipient_cnpj,
+                    p.warehouse_ctrc,
+                    p.transport_number,
+                    p.pending_at,
+                    p.pending_user,
+                    p.pending_reason,
+                    p.report_type,
+
+                    s.ctrc_raw AS ssw_ctrc_raw
+
+                FROM document_alerts a
+
+                INNER JOIN portal_documents p
+                    ON p.id = a.portal_document_id
+
+                LEFT JOIN ssw_documents s
+                    ON s.id = a.ssw_document_id
+
+                WHERE {where_sql}
+
+                ORDER BY
+                    CASE a.alert_type
+                        WHEN 'VENCIDO' THEN 1
+                        WHEN 'ALERTA_5' THEN 2
+                        WHEN 'ALERTA_10' THEN 3
+                        WHEN 'ALERTA_20' THEN 4
+                        WHEN 'SEM_OC_01' THEN 5
+                        ELSE 6
+                    END,
+                    a.days_remaining ASC,
+                    a.id ASC
+                """,
+                tuple(params),
+            )
+
+            rows = []
+
+            for row in cursor.fetchall():
+                row = _decode_details(row)
+                details = row["details"]
+
+                details["invoice_number"] = (
+                    row.get("invoice_number")
+                    or details.get("invoice_number")
+                )
+
+                details["invoice_series"] = (
+                    row.get("invoice_series")
+                    or details.get("invoice_series")
+                )
+
+                details["recipient_name"] = (
+                    row.get("recipient_name")
+                    or details.get("recipient_name")
+                )
+
+                details["recipient_cnpj"] = (
+                    row.get("recipient_cnpj")
+                    or details.get("recipient_cnpj")
+                )
+
+                details["carrier_cnpj"] = (
+                    row.get("carrier_cnpj")
+                    or details.get("carrier_cnpj")
+                )
+
+                details["ctrc"] = (
+                    row.get("ssw_ctrc_raw")
+                    or details.get("ctrc")
+                    or row.get("warehouse_ctrc")
+                )
+
+                details["transport_number"] = (
+                    row.get("transport_number")
+                    or details.get("transport_number")
+                )
+
+                details["pending_at"] = (
+                    row.get("pending_at")
+                    or details.get("pending_at")
+                )
+
+                details["pending_user"] = (
+                    row.get("pending_user")
+                    or details.get("pending_user")
+                )
+
+                details["pending_reason"] = (
+                    row.get("pending_reason")
+                    or details.get("pending_reason")
+                )
+
+                details["report_type"] = (
+                    row.get("report_type")
+                    or details.get("report_type")
+                )
+
+                details["has_pending"] = bool(
+                    details.get("pending_reason")
+                )
+
+                rows.append(row)
+
+            return rows
