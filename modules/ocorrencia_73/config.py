@@ -12,11 +12,22 @@ CLIENTES_PERMITIDOS = {
 ROTAS_PERMITIDAS = {
     "JOI": {
         "FLORIANOPOLIS",
+        "BIGUACU",
+        "PALHOCA",
+        "SAO JOSE",
     },
     "CWB": {
         "CURITIBA",
     },
 }
+
+# Para as rotas de SC emitidas por JOI,
+# somente entram CTRCs cuja última ocorrência seja 64.
+UNIDADES_QUE_EXIGEM_OC64 = {
+    "JOI",
+}
+
+CODIGO_OCORRENCIA_FILTRO_JOI = "64"
 
 CODIGO_OCORRENCIA = "73"
 

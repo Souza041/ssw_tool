@@ -376,7 +376,7 @@ class OP455Report:
             "f29": "A",
             "f30": "A",
             "f35": "E",
-            "f37": "N",
+            "f37": "B",
             "basico": "N",
             "dummy": dummy(),
         }

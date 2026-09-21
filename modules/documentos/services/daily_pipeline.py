@@ -214,7 +214,7 @@ class DailyDocumentsPipeline:
                 update_step(run_id, "matching", "RUNNING")
 
                 self._log(
-                    "[4/6] Consolidando vínculos NOT_FOUND/AMBIGUOUS "
+                    "[4/6] Consolidando vínculos pendentes "
                     "com o histórico completo..."
                 )
 

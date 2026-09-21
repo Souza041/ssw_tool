@@ -335,6 +335,7 @@ class Ocorrencia73Service:
             "cliente_pagador",
             "cidade_destinatario",
             "unidade_emissora",
+            "ultima_ocorrencia",
         ]
 
         with csv_saida.open(

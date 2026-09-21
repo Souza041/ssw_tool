@@ -5,7 +5,7 @@ from datetime import date
 from modules.documentos.database import get_connection
 from modules.documentos.repository import DocumentRepository
 
-def carregar_not_found(
+def carregar_pendentes(
     connection,
     inicio: date,
     fim: date,
@@ -20,14 +20,23 @@ def carregar_not_found(
                 p.issue_date,
                 p.recipient_name,
                 p.warehouse_ctrc,
+                p.carrier_cnpj,
                 m.status AS match_status
             FROM portal_documents p
-            INNER JOIN document_matches m
+
+            LEFT JOIN document_matches m
                 ON m.portal_document_id = p.id
+
             WHERE p.issue_date BETWEEN %s AND %s
               AND p.active = 1
-              AND m.status IN ('NOT_FOUND', 'AMBIGUOUS')
-            ORDER BY p.id
+              AND (
+                    m.id IS NULL
+                    OR m.status IN ('NOT_FOUND', 'AMBIGUOUS')
+                  )
+
+            ORDER BY
+                p.carrier_cnpj,
+                p.id
             """,
             (inicio, fim),
         )
@@ -56,7 +65,7 @@ def reprocessar(
     detalhes = []
 
     try:
-        registros = carregar_not_found(
+        registros = carregar_pendentes(
             connection,
             inicio,
             fim,
@@ -66,7 +75,7 @@ def reprocessar(
 
         progress(
             f"Reprocessando {len(registros)} documentos "
-            f"NOT_FOUND ou AMBIGUOUS entre {inicio} e {fim}..."
+            f"pendentes de matching entre {inicio} e {fim}..."
         )
 
         for index, registro in enumerate(registros, start=1):

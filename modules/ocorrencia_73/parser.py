@@ -10,7 +10,7 @@ CLIENTE_COLUNA = "Cliente Pagador"
 CIDADE_COLUNA = "Cidade do Destinatario"
 UNIDADE_COLUNA = "Unidade Emissora"
 CTRC_COLUNA = "Serie/Numero CTRC"
-
+OCORRENCIA_COLUNA = "Codigo Ultima Ocorrencia"
 
 ALIASES_COLUNAS = {
     CLIENTE_COLUNA: {
@@ -36,6 +36,12 @@ ALIASES_COLUNAS = {
         "SERIE NUMERO CTRC",
         "SERIE/NRO CTRC",
         "SERIE/NÚMERO CTRC",
+    },
+    OCORRENCIA_COLUNA: {
+        "CODIGO ULTIMA OCORRENCIA",
+        "CODIGO DA ULTIMA OCORRENCIA",
+        "ULTIMA OCORRENCIA",
+        "OCORRENCIA",
     },
 }
 
@@ -305,6 +311,26 @@ def encontrar_coluna(
         f"Colunas disponíveis: {disponiveis}"
     )
 
+def normalizar_codigo_ocorrencia(
+    valor: object,
+) -> str:
+    texto = normalizar_texto(valor)
+
+    if not texto:
+        return ""
+
+    match = re.match(
+        r"^0*(\d+)",
+        texto,
+    )
+
+    if not match:
+        return texto
+
+    return str(
+        int(match.group(1))
+    )
+
 def filtrar_registros(
     registros: list[dict],
     clientes_permitidos: set[str],
@@ -330,6 +356,10 @@ def filtrar_registros(
     coluna_ctrc = encontrar_coluna(
         exemplo,
         CTRC_COLUNA,
+    )
+    coluna_ocorrencia = encontrar_coluna(
+        exemplo,
+        OCORRENCIA_COLUNA,
     )
 
     clientes_normalizados = {
@@ -360,6 +390,9 @@ def filtrar_registros(
         ctrc = normalizar_texto(
             registro.get(coluna_ctrc)
         )
+        ocorrencia = normalizar_codigo_ocorrencia(
+            registro.get(coluna_ocorrencia)
+        )
 
         if cliente not in clientes_normalizados:
             continue
@@ -371,6 +404,45 @@ def filtrar_registros(
 
         if cidade not in cidades_validas:
             continue
+
+        if (
+            cliente in clientes_normalizados
+            and cidade in cidades_validas
+        ):
+            print(
+                "[DEBUG FILTRO] "
+                f"CTRC={ctrc} | "
+                f"UNIDADE={unidade} | "
+                f"CIDADE={cidade} | "
+                f"CLIENTE={cliente} | "
+                f"OC_RAW={registro.get(coluna_ocorrencia)!r} | "
+                f"OC_NORMALIZADA={ocorrencia!r}"
+            )
+
+
+        # ==================================================
+        # REGRA ESPECIAL JOI / SANTA CATARINA
+        # ==================================================
+        #
+        # Para registros emitidos por JOI:
+        #
+        #   JOI -> FLORIANOPOLIS
+        #   JOI -> BIGUACU
+        #   JOI -> PALHOCA
+        #   JOI -> SAO JOSE
+        #
+        # somente consideramos o CTRC candidato à OC 73
+        # quando a última ocorrência da OP455 for 64.
+        #
+        # CWB -> CURITIBA continua funcionando exatamente
+        # como antes.
+        #
+        if (
+            unidade == "JOI"
+            and ocorrencia != "64"
+        ):
+            continue
+
 
         if not ctrc:
             continue
@@ -391,6 +463,7 @@ def filtrar_registros(
             "unidade_emissora": normalizar_texto(
                 registro.get(coluna_unidade)
             ),
+            "ultima_ocorrencia": ocorrencia,
             "registro_original": registro,
         })
 
