@@ -535,6 +535,7 @@ class Ocorrencia73Service:
 
         total_lancado = 0
         total_erro_lancamento = 0
+        total_tentativas_lancamento = 0
 
         for indice, item in enumerate(
             filtrados,
@@ -560,22 +561,21 @@ class Ocorrencia73Service:
                 )
 
                 if not consulta.encontrado:
+                    status = "nao_encontrado"
+
+                    print(
+                        "[OP101] "
+                        f"{item['serie']}{item['numero']} "
+                        f"-> {status}"
+                    )
+
                     item_processado = {
                         **item,
                         "op101": consulta.to_dict(),
-                        "historico_ocorrencias": [
-                            ocorrencia.to_dict()
-                            for ocorrencia in historico
-                        ],
-                        "total_historico_ocorrencias": len(
-                            historico
-                        ),
-                        "ocorrencia_73": (
-                            ocorrencia_73.to_dict()
-                            if ocorrencia_73
-                            else None
-                        ),
-                        "lancamento": lancamento,
+                        "historico_ocorrencias": [],
+                        "total_historico_ocorrencias": 0,
+                        "ocorrencia_73": None,
+                        "lancamento": None,
                         "status": status,
                     }
 
@@ -629,11 +629,16 @@ class Ocorrencia73Service:
                             status = "ignorado_fora_teste"
                             lancamento = None
 
-                        elif total_lancado >= MAX_LANCAMENTOS:
+                        elif (
+                            total_tentativas_lancamento
+                            >= MAX_LANCAMENTOS
+                        ):
                             status = "ignorado_limite"
                             lancamento = None
 
                         else:
+                            total_tentativas_lancamento += 1
+
                             resultado_lancamento = (
                                 op101.lancar_ocorrencia_73(
                                     seq_ctrc=consulta.seq_ctrc,
@@ -697,6 +702,7 @@ class Ocorrencia73Service:
                             if ocorrencia_73
                             else None
                         ),
+                        "lancamento": lancamento,
                         "status": status,
                     }
 
@@ -1007,6 +1013,26 @@ class Ocorrencia73Service:
         print(
             f"Registros dos clientes monitorados.: "
             f"{diagnostico.get('cliente', 0)}"
+        )
+
+        print(
+            f"Cliente + rota monitorada...........: "
+            f"{diagnostico.get('cliente_e_rota', 0)}"
+        )
+
+        print(
+            f"CWB elegíveis.......................: "
+            f"{diagnostico.get('cwb_elegiveis', 0)}"
+        )
+
+        print(
+            f"JOI cliente + rota..................: "
+            f"{diagnostico.get('joi_cliente_rota', 0)}"
+        )
+
+        print(
+            f"JOI com última ocorrência 64........: "
+            f"{diagnostico.get('joi_oc64', 0)}"
         )
 
         print(

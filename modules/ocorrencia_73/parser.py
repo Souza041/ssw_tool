@@ -117,6 +117,7 @@ def localizar_cabecalho(
         CIDADE_COLUNA,
         UNIDADE_COLUNA,
         CTRC_COLUNA,
+        OCORRENCIA_COLUNA,
     )
 
     for indice, linha in enumerate(
@@ -334,7 +335,7 @@ def normalizar_codigo_ocorrencia(
 def filtrar_registros(
     registros: list[dict],
     clientes_permitidos: set[str],
-    rotas_permitidas: set[str],
+    rotas_permitidas: dict[str, set[str]],
 ) -> list[dict]:
     if not registros:
         return []
@@ -504,6 +505,10 @@ def diagnosticar_filtros(
             "total": 0,
             "rota": 0,
             "cliente": 0,
+            "cliente_e_rota": 0,
+            "cwb_elegiveis": 0,
+            "joi_cliente_rota": 0,
+            "joi_oc64": 0,
             "todos_filtros": 0,
             "rotas_encontradas": {},
             "clientes_encontrados": [],
@@ -525,6 +530,10 @@ def diagnosticar_filtros(
         exemplo,
         UNIDADE_COLUNA,
     )
+    coluna_ocorrencia = encontrar_coluna(
+        exemplo,
+        OCORRENCIA_COLUNA,
+    )
 
     clientes_normalizados = {
         normalizar_sem_acento(cliente)
@@ -543,6 +552,24 @@ def diagnosticar_filtros(
 
     total_rota = 0
     total_cliente = 0
+
+    # Cliente permitido + rota permitida,
+    # ainda sem aplicar a regra especial da OC64.
+    total_cliente_e_rota = 0
+
+    # CWB -> CURITIBA + cliente permitido.
+    # CWB não depende da ocorrência 64.
+    total_cwb_elegiveis = 0
+
+    # JOI + cidade permitida + cliente permitido,
+    # independentemente da última ocorrência.
+    total_joi_cliente_rota = 0
+
+    # JOI + cidade permitida + cliente permitido
+    # + última ocorrência 64.
+    total_joi_oc64 = 0
+
+    # Resultado final equivalente ao filtro real.
     total_completo = 0
 
     clientes_encontrados = set()
@@ -560,6 +587,10 @@ def diagnosticar_filtros(
         )
         unidade_original = normalizar_texto(
             registro.get(coluna_unidade)
+        )
+
+        ocorrencia = normalizar_codigo_ocorrencia(
+            registro.get(coluna_ocorrencia)
         )
 
         cliente = normalizar_sem_acento(
@@ -622,16 +653,36 @@ def diagnosticar_filtros(
         if atende_cliente:
             total_cliente += 1
 
-        if (
+        if not (
             atende_rota
             and atende_cliente
         ):
+            continue
+
+        total_cliente_e_rota += 1
+
+        # CWB não depende da ocorrência 64.
+        if unidade == "CWB":
+            total_cwb_elegiveis += 1
             total_completo += 1
+            continue
+
+        # JOI precisa estar com última ocorrência 64.
+        if unidade == "JOI":
+            total_joi_cliente_rota += 1
+
+            if ocorrencia == "64":
+                total_joi_oc64 += 1
+                total_completo += 1
 
     return {
         "total": len(registros),
         "rota": total_rota,
         "cliente": total_cliente,
+        "cliente_e_rota": total_cliente_e_rota,
+        "cwb_elegiveis": total_cwb_elegiveis,
+        "joi_cliente_rota": total_joi_cliente_rota,
+        "joi_oc64": total_joi_oc64,
         "todos_filtros": total_completo,
         "rotas_encontradas": dict(
             sorted(
