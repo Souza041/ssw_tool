@@ -12,9 +12,6 @@ CLIENTES_PERMITIDOS = {
 ROTAS_PERMITIDAS = {
     "JOI": {
         "FLORIANOPOLIS",
-        "BIGUACU",
-        "PALHOCA",
-        "SAO JOSE",
     },
     "CWB": {
         "CURITIBA",

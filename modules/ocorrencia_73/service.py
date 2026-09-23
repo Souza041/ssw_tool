@@ -173,6 +173,7 @@ class Ocorrencia73Service:
 
         coluna_unidade = None
         coluna_cidade = None
+        coluna_receptora = None
 
         for coluna in registros[0]:
             coluna_normalizada = normalizar_sem_acento(
@@ -195,6 +196,14 @@ class Ocorrencia73Service:
             ):
                 coluna_cidade = coluna
 
+            if (
+                coluna_normalizada
+                == normalizar_sem_acento(
+                    "Unidade Receptora"
+                )
+            ):
+                coluna_receptora = coluna
+
         if not coluna_unidade:
             raise KeyError(
                 "Coluna 'Unidade Emissora' "
@@ -204,6 +213,12 @@ class Ocorrencia73Service:
         if not coluna_cidade:
             raise KeyError(
                 "Coluna 'Cidade do Destinatario' "
+                "não encontrada para auditoria."
+            )
+
+        if not coluna_receptora:
+            raise KeyError(
+                "Coluna 'Unidade Receptora' "
                 "não encontrada para auditoria."
             )
 
@@ -219,7 +234,10 @@ class Ocorrencia73Service:
 
         registros_rotas = []
 
-        totais_por_rota = {}
+        total_cwb_curitiba = 0
+        total_joi_florianopolis = 0
+        total_joi_big = 0
+        total_sobreposicao = 0
 
         for registro in registros:
             unidade_original = normalizar_texto(
@@ -230,12 +248,20 @@ class Ocorrencia73Service:
                 registro.get(coluna_cidade)
             )
 
+            receptora_original = normalizar_texto(
+                registro.get(coluna_receptora)
+            )
+
             unidade = normalizar_sem_acento(
                 unidade_original
             )
 
             cidade = normalizar_sem_acento(
                 cidade_original
+            )
+
+            receptora = normalizar_sem_acento(
+                receptora_original
             )
 
             cidades_validas = (
@@ -245,25 +271,66 @@ class Ocorrencia73Service:
                 )
             )
 
-            if cidade not in cidades_validas:
+            atende_rota_antiga = (
+                cidade in cidades_validas
+            )
+
+            atende_joi_big = (
+                unidade == "JOI"
+                and receptora == "BIG"
+            )
+
+            if not (
+                atende_rota_antiga
+                or atende_joi_big
+            ):
                 continue
 
-            registros_rotas.append(
-                registro
-            )
+            regras_auditoria = []
 
-            chave_rota = (
-                f"{unidade_original}"
-                f" -> "
-                f"{cidade_original}"
-            )
+            if atende_rota_antiga:
+                if (
+                    unidade == "CWB"
+                    and cidade == "CURITIBA"
+                ):
+                    total_cwb_curitiba += 1
+                    regras_auditoria.append(
+                        "CWB -> CURITIBA"
+                    )
 
-            totais_por_rota[chave_rota] = (
-                totais_por_rota.get(
-                    chave_rota,
-                    0,
+                elif (
+                    unidade == "JOI"
+                    and cidade == "FLORIANOPOLIS"
+                ):
+                    total_joi_florianopolis += 1
+                    regras_auditoria.append(
+                        "JOI -> FLORIANOPOLIS"
+                    )
+
+            if atende_joi_big:
+                total_joi_big += 1
+                regras_auditoria.append(
+                    "JOI -> RECEPTORA BIG"
                 )
-                + 1
+
+            if (
+                atende_rota_antiga
+                and atende_joi_big
+            ):
+                total_sobreposicao += 1
+
+            # Fazemos uma cópia para não alterar o
+            # registro original carregado da OP455.
+            registro_auditoria = dict(registro)
+
+            registro_auditoria[
+                "AUDITORIA_REGRAS"
+            ] = " | ".join(
+                regras_auditoria
+            )
+
+            registros_rotas.append(
+                registro_auditoria
             )
 
         if not registros_rotas:
@@ -296,17 +363,29 @@ class Ocorrencia73Service:
             )
 
         print(
-            "[AUDITORIA] Rotas monitoradas: "
-            f"{len(registros_rotas)} registros"
+            "[AUDITORIA] Registros únicos monitorados: "
+            f"{len(registros_rotas)}"
         )
 
-        for rota, total in sorted(
-            totais_por_rota.items()
-        ):
-            print(
-                "[AUDITORIA] "
-                f"{rota}: {total}"
-            )
+        print(
+            "[AUDITORIA] CWB -> CURITIBA: "
+            f"{total_cwb_curitiba}"
+        )
+
+        print(
+            "[AUDITORIA] JOI -> FLORIANOPOLIS: "
+            f"{total_joi_florianopolis}"
+        )
+
+        print(
+            "[AUDITORIA] JOI -> RECEPTORA BIG: "
+            f"{total_joi_big}"
+        )
+
+        print(
+            "[AUDITORIA] Sobreposição entre regras: "
+            f"{total_sobreposicao}"
+        )
 
         return csv_saida
 
@@ -335,7 +414,9 @@ class Ocorrencia73Service:
             "cliente_pagador",
             "cidade_destinatario",
             "unidade_emissora",
+            "unidade_receptora",
             "ultima_ocorrencia",
+            "regra_filtro",
         ]
 
         with csv_saida.open(
@@ -481,23 +562,62 @@ class Ocorrencia73Service:
 
                 "resumo_auditoria": {
                     "total_op455": len(registros),
-                    "total_rotas_monitoradas": (
-                        diagnostico.get("rota", 0)
-                    ),
-                    "rotas": (
-                        diagnostico.get(
+
+                    "rotas_antigas": {
+                        "total": diagnostico.get(
+                            "rota",
+                            0,
+                        ),
+                        "detalhes": diagnostico.get(
                             "rotas_encontradas",
                             {},
-                        )
-                    ),
+                        ),
+                    },
+
+                    "regra_antiga_cliente": {
+                        "cwb_curitiba": diagnostico.get(
+                            "cwb_curitiba",
+                            0,
+                        ),
+                        "joi_florianopolis": diagnostico.get(
+                            "joi_florianopolis",
+                            0,
+                        ),
+                        "total": diagnostico.get(
+                            "rota_antiga_cliente",
+                            0,
+                        ),
+                    },
+
+                    "regra_joi_big": {
+                        "total": diagnostico.get(
+                            "joi_big",
+                            0,
+                        ),
+                        "com_oc64": diagnostico.get(
+                            "joi_big_oc64",
+                            0,
+                        ),
+                        "com_oc64_e_cliente": diagnostico.get(
+                            "joi_big_oc64_cliente",
+                            0,
+                        ),
+                    },
+
                     "total_clientes_monitorados": (
                         diagnostico.get("cliente", 0)
                     ),
+
                     "total_apos_filtros": 0,
                     "total_consultado_op101": 0,
                     "total_encontrado_op101": 0,
+                    "total_ja_existia": 0,
+                    "total_pendente_lancamento": 0,
+                    "total_lancado": 0,
+                    "total_erro_lancamento": 0,
                     "total_nao_encontrado_op101": 0,
                     "total_erro_op101": 0,
+
                     "modo": (
                         "dry_run"
                         if DRY_RUN
@@ -875,39 +995,88 @@ class Ocorrencia73Service:
 
             "resumo_auditoria": {
                 "total_op455": len(registros),
-                "total_rotas_monitoradas": (
-                    diagnostico.get("rota", 0)
-                ),
-                "rotas": (
-                    diagnostico.get(
+
+                "rotas_antigas": {
+                    "total": diagnostico.get(
+                        "rota",
+                        0,
+                    ),
+                    "detalhes": diagnostico.get(
                         "rotas_encontradas",
                         {},
-                    )
-                ),
+                    ),
+                },
+
+                "regra_antiga_cliente": {
+                    "cwb_curitiba": diagnostico.get(
+                        "cwb_curitiba",
+                        0,
+                    ),
+                    "joi_florianopolis": diagnostico.get(
+                        "joi_florianopolis",
+                        0,
+                    ),
+                    "total": diagnostico.get(
+                        "rota_antiga_cliente",
+                        0,
+                    ),
+                },
+
+                "regra_joi_big": {
+                    "total": diagnostico.get(
+                        "joi_big",
+                        0,
+                    ),
+                    "com_oc64": diagnostico.get(
+                        "joi_big_oc64",
+                        0,
+                    ),
+                    "com_oc64_e_cliente": diagnostico.get(
+                        "joi_big_oc64_cliente",
+                        0,
+                    ),
+                },
+
                 "total_clientes_monitorados": (
                     diagnostico.get("cliente", 0)
                 ),
+
                 "total_apos_filtros": len(
                     filtrados
                 ),
+
                 "total_consultado_op101": len(
                     itens_consultados
                 ),
+
                 "total_encontrado_op101": (
                     total_encontrado
                 ),
-                "total_ja_existia": total_ja_existia,
+
+                "total_ja_existia": (
+                    total_ja_existia
+                ),
+
                 "total_pendente_lancamento": (
                     total_pendente_lancamento
                 ),
-                "total_lancado": total_lancado,
+
+                "total_lancado": (
+                    total_lancado
+                ),
+
                 "total_erro_lancamento": (
                     total_erro_lancamento
                 ),
+
                 "total_nao_encontrado_op101": (
                     total_nao_encontrado
                 ),
-                "total_erro_op101": total_erro,
+
+                "total_erro_op101": (
+                    total_erro
+                ),
+
                 "modo": (
                     "dry_run"
                     if DRY_RUN
@@ -1015,28 +1184,50 @@ class Ocorrencia73Service:
             f"{diagnostico.get('cliente', 0)}"
         )
 
+        print()
+        print("REGRA ANTIGA")
+
         print(
-            f"Cliente + rota monitorada...........: "
-            f"{diagnostico.get('cliente_e_rota', 0)}"
+            f"CWB -> CURITIBA + cliente...........: "
+            f"{diagnostico.get('cwb_curitiba', 0)}"
         )
 
         print(
-            f"CWB elegíveis.......................: "
-            f"{diagnostico.get('cwb_elegiveis', 0)}"
+            f"JOI -> FLORIANOPOLIS + cliente......: "
+            f"{diagnostico.get('joi_florianopolis', 0)}"
         )
 
         print(
-            f"JOI cliente + rota..................: "
-            f"{diagnostico.get('joi_cliente_rota', 0)}"
+            f"Total regra antiga + cliente.........: "
+            f"{diagnostico.get('rota_antiga_cliente', 0)}"
+        )
+
+        print()
+        print("REGRA NOVA - JOI -> BIG -> OC64")
+
+        print(
+            f"JOI -> BIG...........................: "
+            f"{diagnostico.get('joi_big', 0)}"
         )
 
         print(
-            f"JOI com última ocorrência 64........: "
-            f"{diagnostico.get('joi_oc64', 0)}"
+            f"JOI -> BIG + OC64....................: "
+            f"{diagnostico.get('joi_big_oc64', 0)}"
         )
 
         print(
-            f"Registros após todos os filtros.....: "
+            f"JOI -> BIG + OC64 + cliente..........: "
+            f"{diagnostico.get('joi_big_oc64_cliente', 0)}"
+        )
+
+        print()
+        print(
+            f"Registros finais únicos..............: "
+            f"{diagnostico.get('todos_filtros', 0)}"
+        )
+
+        print(
+            f"Registros enviados pelo filtro.......: "
             f"{total_filtrado}"
         )
 

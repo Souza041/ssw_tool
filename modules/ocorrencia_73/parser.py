@@ -11,6 +11,7 @@ CIDADE_COLUNA = "Cidade do Destinatario"
 UNIDADE_COLUNA = "Unidade Emissora"
 CTRC_COLUNA = "Serie/Numero CTRC"
 OCORRENCIA_COLUNA = "Codigo Ultima Ocorrencia"
+UNIDADE_RECEPTORA_COLUNA = "Unidade Receptora"
 
 ALIASES_COLUNAS = {
     CLIENTE_COLUNA: {
@@ -42,6 +43,12 @@ ALIASES_COLUNAS = {
         "CODIGO DA ULTIMA OCORRENCIA",
         "ULTIMA OCORRENCIA",
         "OCORRENCIA",
+    },
+    UNIDADE_RECEPTORA_COLUNA: {
+        "UNIDADE RECEPTORA",
+        "UNIDADE DE RECEPCAO",
+        "UNID RECEPTORA",
+        "FILIAL RECEPTORA",
     },
 }
 
@@ -116,6 +123,7 @@ def localizar_cabecalho(
         CLIENTE_COLUNA,
         CIDADE_COLUNA,
         UNIDADE_COLUNA,
+        UNIDADE_RECEPTORA_COLUNA,
         CTRC_COLUNA,
         OCORRENCIA_COLUNA,
     )
@@ -354,6 +362,10 @@ def filtrar_registros(
         exemplo,
         UNIDADE_COLUNA,
     )
+    coluna_unidade_receptora = encontrar_coluna(
+        exemplo,
+        UNIDADE_RECEPTORA_COLUNA,
+    )
     coluna_ctrc = encontrar_coluna(
         exemplo,
         CTRC_COLUNA,
@@ -388,6 +400,9 @@ def filtrar_registros(
         unidade = normalizar_sem_acento(
             registro.get(coluna_unidade)
         )
+        unidade_receptora = normalizar_sem_acento(
+            registro.get(coluna_unidade_receptora)
+        )
         ctrc = normalizar_texto(
             registro.get(coluna_ctrc)
         )
@@ -403,50 +418,55 @@ def filtrar_registros(
             set(),
         )
 
-        if cidade not in cidades_validas:
-            continue
-
-        if (
-            cliente in clientes_normalizados
-            and cidade in cidades_validas
-        ):
-            print(
-                "[DEBUG FILTRO] "
-                f"CTRC={ctrc} | "
-                f"UNIDADE={unidade} | "
-                f"CIDADE={cidade} | "
-                f"CLIENTE={cliente} | "
-                f"OC_RAW={registro.get(coluna_ocorrencia)!r} | "
-                f"OC_NORMALIZADA={ocorrencia!r}"
-            )
-
-
         # ==================================================
-        # REGRA ESPECIAL JOI / SANTA CATARINA
+        # REGRA ANTIGA
         # ==================================================
         #
-        # Para registros emitidos por JOI:
+        # CWB -> CURITIBA
+        # JOI -> FLORIANOPOLIS
         #
-        #   JOI -> FLORIANOPOLIS
-        #   JOI -> BIGUACU
-        #   JOI -> PALHOCA
-        #   JOI -> SAO JOSE
+        # Essas rotas NÃO dependem da ocorrência 64.
         #
-        # somente consideramos o CTRC candidato à OC 73
-        # quando a última ocorrência da OP455 for 64.
+        atende_rota_antiga = (
+            cidade in cidades_validas
+        )
+
+        # ==================================================
+        # NOVA REGRA JOI -> BIG
+        # ==================================================
         #
-        # CWB -> CURITIBA continua funcionando exatamente
-        # como antes.
+        # Unidade Emissora = JOI
+        # Unidade Receptora = BIG
+        # Última Ocorrência = 64
         #
-        if (
+        # A cidade do destinatário NÃO participa
+        # desta nova regra.
+        #
+        atende_nova_regra_big = (
             unidade == "JOI"
-            and ocorrencia != "64"
+            and unidade_receptora == "BIG"
+            and ocorrencia == "64"
+        )
+
+        # O registro entra se atender:
+        #
+        # 1. uma das rotas antigas
+        # OU
+        # 2. a nova regra JOI -> BIG -> OC64
+        #
+        if not (
+            atende_rota_antiga
+            or atende_nova_regra_big
         ):
             continue
-
 
         if not ctrc:
             continue
+
+        if atende_rota_antiga:
+            regra_filtro = "rota_antiga"
+        else:
+            regra_filtro = "joi_big_oc64"
 
         dados_ctrc = decompor_ctrc(ctrc)
 
@@ -464,7 +484,13 @@ def filtrar_registros(
             "unidade_emissora": normalizar_texto(
                 registro.get(coluna_unidade)
             ),
+            "unidade_receptora": normalizar_texto(
+                registro.get(
+                    coluna_unidade_receptora
+                )
+            ),
             "ultima_ocorrencia": ocorrencia,
+            "regra_filtro": regra_filtro,
             "registro_original": registro,
         })
 
@@ -505,10 +531,12 @@ def diagnosticar_filtros(
             "total": 0,
             "rota": 0,
             "cliente": 0,
-            "cliente_e_rota": 0,
-            "cwb_elegiveis": 0,
-            "joi_cliente_rota": 0,
-            "joi_oc64": 0,
+            "rota_antiga_cliente": 0,
+            "cwb_curitiba": 0,
+            "joi_florianopolis": 0,
+            "joi_big": 0,
+            "joi_big_oc64": 0,
+            "joi_big_oc64_cliente": 0,
             "todos_filtros": 0,
             "rotas_encontradas": {},
             "clientes_encontrados": [],
@@ -530,6 +558,10 @@ def diagnosticar_filtros(
         exemplo,
         UNIDADE_COLUNA,
     )
+    coluna_receptora = encontrar_coluna(
+        exemplo,
+        UNIDADE_RECEPTORA_COLUNA,
+    )
     coluna_ocorrencia = encontrar_coluna(
         exemplo,
         OCORRENCIA_COLUNA,
@@ -545,32 +577,23 @@ def diagnosticar_filtros(
             normalizar_sem_acento(cidade)
             for cidade in cidades
         }
-        for unidade, cidades in (
-            rotas_permitidas.items()
-        )
+        for unidade, cidades
+        in rotas_permitidas.items()
     }
 
     total_rota = 0
     total_cliente = 0
 
-    # Cliente permitido + rota permitida,
-    # ainda sem aplicar a regra especial da OC64.
-    total_cliente_e_rota = 0
+    total_rota_antiga_cliente = 0
 
-    # CWB -> CURITIBA + cliente permitido.
-    # CWB não depende da ocorrência 64.
-    total_cwb_elegiveis = 0
+    total_cwb_curitiba = 0
+    total_joi_florianopolis = 0
 
-    # JOI + cidade permitida + cliente permitido,
-    # independentemente da última ocorrência.
-    total_joi_cliente_rota = 0
+    total_joi_big = 0
+    total_joi_big_oc64 = 0
+    total_joi_big_oc64_cliente = 0
 
-    # JOI + cidade permitida + cliente permitido
-    # + última ocorrência 64.
-    total_joi_oc64 = 0
-
-    # Resultado final equivalente ao filtro real.
-    total_completo = 0
+    total_final = 0
 
     clientes_encontrados = set()
     cidades_encontradas = set()
@@ -582,25 +605,37 @@ def diagnosticar_filtros(
         cliente_original = normalizar_texto(
             registro.get(coluna_cliente)
         )
+
         cidade_original = normalizar_texto(
             registro.get(coluna_cidade)
         )
+
         unidade_original = normalizar_texto(
             registro.get(coluna_unidade)
         )
 
-        ocorrencia = normalizar_codigo_ocorrencia(
-            registro.get(coluna_ocorrencia)
+        receptora_original = normalizar_texto(
+            registro.get(coluna_receptora)
         )
 
         cliente = normalizar_sem_acento(
             cliente_original
         )
+
         cidade = normalizar_sem_acento(
             cidade_original
         )
+
         unidade = normalizar_sem_acento(
             unidade_original
+        )
+
+        receptora = normalizar_sem_acento(
+            receptora_original
+        )
+
+        ocorrencia = normalizar_codigo_ocorrencia(
+            registro.get(coluna_ocorrencia)
         )
 
         if cliente_original:
@@ -625,7 +660,7 @@ def diagnosticar_filtros(
             )
         )
 
-        atende_rota = (
+        atende_rota_antiga = (
             cidade in cidades_validas
         )
 
@@ -633,7 +668,7 @@ def diagnosticar_filtros(
             cliente in clientes_normalizados
         )
 
-        if atende_rota:
+        if atende_rota_antiga:
             total_rota += 1
 
             chave_rota = (
@@ -653,37 +688,83 @@ def diagnosticar_filtros(
         if atende_cliente:
             total_cliente += 1
 
-        if not (
-            atende_rota
+        # ==========================================
+        # ROTAS ANTIGAS
+        # ==========================================
+
+        if (
+            atende_rota_antiga
             and atende_cliente
         ):
-            continue
+            total_rota_antiga_cliente += 1
 
-        total_cliente_e_rota += 1
+            if (
+                unidade == "CWB"
+                and cidade == "CURITIBA"
+            ):
+                total_cwb_curitiba += 1
 
-        # CWB não depende da ocorrência 64.
-        if unidade == "CWB":
-            total_cwb_elegiveis += 1
-            total_completo += 1
-            continue
+            if (
+                unidade == "JOI"
+                and cidade == "FLORIANOPOLIS"
+            ):
+                total_joi_florianopolis += 1
 
-        # JOI precisa estar com última ocorrência 64.
-        if unidade == "JOI":
-            total_joi_cliente_rota += 1
+        # ==========================================
+        # NOVA REGRA JOI / BIG / 64
+        # ==========================================
+
+        if (
+            unidade == "JOI"
+            and receptora == "BIG"
+        ):
+            total_joi_big += 1
 
             if ocorrencia == "64":
-                total_joi_oc64 += 1
-                total_completo += 1
+                total_joi_big_oc64 += 1
+
+                if atende_cliente:
+                    total_joi_big_oc64_cliente += 1
+
+        # ==========================================
+        # RESULTADO FINAL
+        # ==========================================
+
+        atende_nova_regra = (
+            unidade == "JOI"
+            and receptora == "BIG"
+            and ocorrencia == "64"
+            and atende_cliente
+        )
+
+        atende_regra_antiga = (
+            atende_rota_antiga
+            and atende_cliente
+        )
+
+        if (
+            atende_regra_antiga
+            or atende_nova_regra
+        ):
+            total_final += 1
 
     return {
         "total": len(registros),
         "rota": total_rota,
         "cliente": total_cliente,
-        "cliente_e_rota": total_cliente_e_rota,
-        "cwb_elegiveis": total_cwb_elegiveis,
-        "joi_cliente_rota": total_joi_cliente_rota,
-        "joi_oc64": total_joi_oc64,
-        "todos_filtros": total_completo,
+        "rota_antiga_cliente": (
+            total_rota_antiga_cliente
+        ),
+        "cwb_curitiba": total_cwb_curitiba,
+        "joi_florianopolis": (
+            total_joi_florianopolis
+        ),
+        "joi_big": total_joi_big,
+        "joi_big_oc64": total_joi_big_oc64,
+        "joi_big_oc64_cliente": (
+            total_joi_big_oc64_cliente
+        ),
+        "todos_filtros": total_final,
         "rotas_encontradas": dict(
             sorted(
                 rotas_encontradas.items()
