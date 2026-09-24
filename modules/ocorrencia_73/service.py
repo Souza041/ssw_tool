@@ -28,10 +28,8 @@ from ssw.client import SSWClient
 TIMEZONE = ZoneInfo("America/Sao_Paulo")
 
 MAX_LANCAMENTOS = int(
-    os.getenv(
-        "OCORRENCIA_73_MAX_LANCAMENTOS",
-        "1",
-    )
+    os.getenv("OCORRENCIA_73_MAX_LANCAMENTOS", "").strip()
+    or "1"
 )
 
 CTRC_TESTE = (
