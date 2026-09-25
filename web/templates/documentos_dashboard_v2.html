@@ -810,10 +810,11 @@
 
 .documents-filters {
     grid-template-columns:
-        minmax(260px, 1fr)
-        210px
-        245px
-        150px
+        minmax(240px, 1fr)
+        190px
+        225px
+        180px
+        145px
         auto;
 }
 
@@ -1399,7 +1400,7 @@
 
                     <a
                         class="export-button"
-                        href="/documentos/export?q={{ dashboard['filters']['search']|urlencode }}&status={{ dashboard['filters']['alert_type'] }}&carrier_cnpj={{ dashboard['filters']['carrier_cnpj'] }}"
+                        href="/documentos/export?q={{ dashboard['filters']['search']|urlencode }}&status={{ dashboard['filters']['alert_type'] }}&carrier_cnpj={{ dashboard['filters']['carrier_cnpj'] }}&pending_status={{ dashboard['filters']['pending_status'] }}"
                         title="Exportar os documentos encontrados pelos filtros atuais"
                     >
                         ⇩ Exportar Excel
@@ -1409,6 +1410,7 @@
                         dashboard["filters"]["search"]
                         or dashboard["filters"]["alert_type"]
                         or dashboard["filters"]["carrier_cnpj"]
+                        or dashboard["filters"]["pending_status"]
                     %}
                         <a href="/documentos" class="clear-filters">
                             × Limpar filtros
@@ -1503,6 +1505,26 @@
                             {{ cnpj[0:2] }}.{{ cnpj[2:5] }}.{{ cnpj[5:8] }}/{{ cnpj[8:12] }}-{{ cnpj[12:14] }}
                         </option>
                     {% endfor %}
+                </select>
+
+                <select id="doc-pending" name="pending_status">
+                    <option value="">
+                        Todas as recusas
+                    </option>
+
+                    <option
+                        value="PENDING"
+                        {% if dashboard["filters"]["pending_status"] == "PENDING" %}selected{% endif %}
+                    >
+                        Somente recusados
+                    </option>
+
+                    <option
+                        value="CLEAR"
+                        {% if dashboard["filters"]["pending_status"] == "CLEAR" %}selected{% endif %}
+                    >
+                        Sem recusa
+                    </option>
                 </select>
 
                 <select id="doc-per-page" name="per_page">
@@ -1836,7 +1858,7 @@
         {% if pagination["has_previous"] %}
             <a
                 class="page-button page-nav"
-                href="/documentos?page={{ pagination['previous_page'] }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}"
+                href="/documentos?page={{ pagination['previous_page'] }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}&pending_status={{ filters['pending_status'] }}"
             >
                 ‹ Anterior
             </a>
@@ -1854,7 +1876,7 @@
         {# Primeira página #}
         <a
             class="page-button {% if current == 1 %}active{% endif %}"
-            href="/documentos?page=1&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}"
+            href="/documentos?page=1&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}&pending_status={{ filters['pending_status'] }}"
         >
             1
         </a>
@@ -1871,7 +1893,7 @@
             {% if number >= current - 2 and number <= current + 2 %}
                 <a
                     class="page-button {% if number == current %}active{% endif %}"
-                    href="/documentos?page={{ number }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}"
+                    href="/documentos?page={{ number }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}&pending_status={{ filters['pending_status'] }}"
                 >
                     {{ number }}
                 </a>
@@ -1889,7 +1911,7 @@
             {% if total > 1 %}
                 <a
                     class="page-button {% if current == total %}active{% endif %}"
-                    href="/documentos?page={{ total }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}"
+                    href="/documentos?page={{ total }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}&pending_status={{ filters['pending_status'] }}"
                 >
                     {{ total }}
                 </a>
@@ -1899,7 +1921,7 @@
             {% if pagination["has_next"] %}
                 <a
                     class="page-button page-nav"
-                    href="/documentos?page={{ pagination['next_page'] }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}"
+                    href="/documentos?page={{ pagination['next_page'] }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}&pending_status={{ filters['pending_status'] }}"
                 >
                     Próxima ›
                 </a>
@@ -1949,6 +1971,10 @@
 
     const carrierSelect = document.querySelector(
         "#doc-carrier"
+    );
+
+    const pendingSelect = document.querySelector(
+        "#doc-pending"
     );
 
     const perPageSelect = document.querySelector(
@@ -2050,6 +2076,10 @@
     });
 
     perPageSelect?.addEventListener("change", () => {
+        filterForm?.requestSubmit();
+    });
+
+    pendingSelect?.addEventListener("change", () => {
         filterForm?.requestSubmit();
     });
 

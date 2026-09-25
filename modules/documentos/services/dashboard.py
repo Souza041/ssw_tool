@@ -23,10 +23,12 @@ def _normalize_document_filters(
     search: str = "",
     alert_type: str = "",
     carrier_cnpj: str = "",
-) -> tuple[str, str, str]:
+    pending_status: str = "",
+) -> tuple[str, str, str, str]:
 
     search = (search or "").strip()
     alert_type = (alert_type or "").strip().upper()
+    pending_status = (pending_status or "").strip().upper()
 
     carrier_cnpj = re.sub(
         r"\D",
@@ -37,14 +39,17 @@ def _normalize_document_filters(
     if alert_type not in ALLOWED_STATUS:
         alert_type = ""
 
-    return search, alert_type, carrier_cnpj
+    if pending_status not in {"PENDING", "CLEAR"}:
+        pending_status = ""
 
+    return search, alert_type, carrier_cnpj, pending_status
 
 def _build_document_where(
     *,
     search: str = "",
     alert_type: str = "",
     carrier_cnpj: str = "",
+    pending_status: str = "",
 ) -> tuple[str, list[Any]]:
 
     where = ["a.status = 'OPEN'"]
@@ -57,6 +62,26 @@ def _build_document_where(
     if alert_type:
         where.append("a.alert_type = %s")
         params.append(alert_type)
+
+    if pending_status == "PENDING":
+        where.append(
+            """
+            (
+                p.pending_reason IS NOT NULL
+                AND TRIM(p.pending_reason) <> ''
+            )
+            """
+        )
+
+    elif pending_status == "CLEAR":
+        where.append(
+            """
+            (
+                p.pending_reason IS NULL
+                OR TRIM(p.pending_reason) = ''
+            )
+            """
+        )
 
     if search:
         like = f"%{search}%"
@@ -75,7 +100,6 @@ def _build_document_where(
         params.extend([like, like, like, like])
 
     return " AND ".join(where), params
-
 
 def _decode_details(row: dict[str, Any]) -> dict[str, Any]:
     details = row.get("details")
@@ -241,6 +265,7 @@ def dashboard_snapshot(
     search: str = "",
     alert_type: str = "",
     carrier_cnpj: str = "",
+    pending_status: str = "",
 ) -> dict[str, Any]:
 
     page = max(1, page)
@@ -248,10 +273,13 @@ def dashboard_snapshot(
     if per_page not in {25, 50, 100}:
         per_page = 25
 
-    search, alert_type, carrier_cnpj = _normalize_document_filters(
-        search=search,
-        alert_type=alert_type,
-        carrier_cnpj=carrier_cnpj,
+    search, alert_type, carrier_cnpj, pending_status = (
+        _normalize_document_filters(
+            search=search,
+            alert_type=alert_type,
+            carrier_cnpj=carrier_cnpj,
+            pending_status=pending_status,
+        )
     )
 
     automation = _automation_snapshot()
@@ -336,6 +364,7 @@ def dashboard_snapshot(
                 search=search,
                 alert_type=alert_type,
                 carrier_cnpj=carrier_cnpj,
+                pending_status=pending_status,
             )
 
             # =====================================================
@@ -542,6 +571,7 @@ def dashboard_snapshot(
                     "search": search,
                     "alert_type": alert_type,
                     "carrier_cnpj": carrier_cnpj,
+                    "pending_status": pending_status,
                 },
 
                 "carriers": carriers,
@@ -565,18 +595,23 @@ def export_documents(
     search: str = "",
     alert_type: str = "",
     carrier_cnpj: str = "",
+    pending_status: str = "",
 ) -> list[dict[str, Any]]:
 
-    search, alert_type, carrier_cnpj = _normalize_document_filters(
-        search=search,
-        alert_type=alert_type,
-        carrier_cnpj=carrier_cnpj,
+    search, alert_type, carrier_cnpj, pending_status = (
+        _normalize_document_filters(
+            search=search,
+            alert_type=alert_type,
+            carrier_cnpj=carrier_cnpj,
+            pending_status=pending_status,
+        )
     )
 
     where_sql, params = _build_document_where(
         search=search,
         alert_type=alert_type,
         carrier_cnpj=carrier_cnpj,
+        pending_status=pending_status,
     )
 
     with transaction() as connection:

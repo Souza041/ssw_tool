@@ -28,6 +28,7 @@ def documentos_dashboard(
     q: str = "",
     status: str = "",
     carrier_cnpj: str = "",
+    pending_status: str = "",
 ):
     if not request.session.get("ssw_session_id"):
         return RedirectResponse("/login", status_code=303)
@@ -38,6 +39,7 @@ def documentos_dashboard(
         search=q,
         alert_type=status,
         carrier_cnpj=carrier_cnpj,
+        pending_status=pending_status,
     )
 
     return templates.TemplateResponse(
@@ -54,6 +56,7 @@ def documentos_export(
     q: str = "",
     status: str = "",
     carrier_cnpj: str = "",
+    pending_status: str = "",
 ):
     if not request.session.get("ssw_session_id"):
         return RedirectResponse("/login", status_code=303)
@@ -62,6 +65,7 @@ def documentos_export(
         search=q,
         alert_type=status,
         carrier_cnpj=carrier_cnpj,
+        pending_status=pending_status,
     )
 
     workbook = Workbook()
