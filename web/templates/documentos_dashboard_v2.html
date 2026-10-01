@@ -1681,7 +1681,10 @@
                         </td>
 
                         <td>
-                            {% if item["days_remaining"] is none %}
+                            {% if item["details"]["is_finalized"] %}
+                                <span class="days-value">—</span>
+
+                            {% elif item["days_remaining"] is none %}
                                 <span class="days-value">-</span>
 
                             {% elif item["days_remaining"] < 0 %}

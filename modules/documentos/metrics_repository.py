@@ -25,9 +25,14 @@ def save_daily_snapshot(
 
             cursor.execute(
                 """
-                SELECT COUNT(*) AS total
-                FROM portal_documents
-                WHERE active = 1
+                SELECT
+                    COUNT(DISTINCT a.portal_document_id) AS total
+                FROM document_alerts a
+                INNER JOIN portal_documents p
+                    ON p.id = a.portal_document_id
+                WHERE a.status = 'OPEN'
+                AND p.active = 1
+                AND p.finalized_at IS NULL
                 """
             )
 
@@ -44,41 +49,47 @@ def save_daily_snapshot(
                 SELECT
                     COUNT(
                         DISTINCT CASE
-                            WHEN alert_type = 'VENCIDO'
-                            THEN portal_document_id
+                            WHEN a.alert_type = 'VENCIDO'
+                            THEN a.portal_document_id
                         END
                     ) AS overdue_count,
 
                     COUNT(
                         DISTINCT CASE
-                            WHEN alert_type = 'ALERTA_5'
-                            THEN portal_document_id
+                            WHEN a.alert_type = 'ALERTA_5'
+                            THEN a.portal_document_id
                         END
                     ) AS alert_5_count,
 
                     COUNT(
                         DISTINCT CASE
-                            WHEN alert_type = 'ALERTA_10'
-                            THEN portal_document_id
+                            WHEN a.alert_type = 'ALERTA_10'
+                            THEN a.portal_document_id
                         END
                     ) AS alert_10_count,
 
                     COUNT(
                         DISTINCT CASE
-                            WHEN alert_type = 'ALERTA_20'
-                            THEN portal_document_id
+                            WHEN a.alert_type = 'ALERTA_20'
+                            THEN a.portal_document_id
                         END
                     ) AS alert_20_count,
 
                     COUNT(
                         DISTINCT CASE
-                            WHEN alert_type = 'SEM_OC_01'
-                            THEN portal_document_id
+                            WHEN a.alert_type = 'SEM_OC_01'
+                            THEN a.portal_document_id
                         END
                     ) AS without_delivery_count
 
-                FROM document_alerts
-                WHERE status = 'OPEN'
+                FROM document_alerts a
+
+                INNER JOIN portal_documents p
+                    ON p.id = a.portal_document_id
+
+                WHERE a.status = 'OPEN'
+                AND p.active = 1
+                AND p.finalized_at IS NULL
                 """
             )
 
@@ -111,10 +122,17 @@ def save_daily_snapshot(
             cursor.execute(
                 """
                 SELECT
-                    SUM(status = 'MATCHED') AS matched_count,
-                    SUM(status = 'AMBIGUOUS') AS ambiguous_count,
-                    SUM(status = 'NOT_FOUND') AS not_found_count
-                FROM document_matches
+                    SUM(m.status = 'MATCHED') AS matched_count,
+                    SUM(m.status = 'AMBIGUOUS') AS ambiguous_count,
+                    SUM(m.status = 'NOT_FOUND') AS not_found_count
+
+                FROM document_matches m
+
+                INNER JOIN portal_documents p
+                    ON p.id = m.portal_document_id
+
+                WHERE p.active = 1
+                AND p.finalized_at IS NULL
                 """
             )
 
