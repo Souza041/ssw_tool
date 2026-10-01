@@ -9,7 +9,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from web.routes import router
 from modules.metricas.routes import router as metricas_router
 
-from modules.metricas.scheduler import iniciar_scheduler_metricas
+#from modules.metricas.scheduler import iniciar_scheduler_metricas
 
 from starlette.middleware.gzip import GZipMiddleware
 
@@ -81,11 +81,11 @@ app.include_router(documentos_router)
 
 @app.on_event("startup")
 def startup_event():
-    print(
-        "[STARTUP] Iniciando scheduler de metricas",
-        flush=True,
-    )
-    iniciar_scheduler_metricas()
+    #print(
+    #    "[STARTUP] Iniciando scheduler de metricas",
+    #    flush=True,
+    #)
+    # iniciar_scheduler_metricas()
 
     print(
         "[STARTUP] Chamando scheduler da ocorrencia 73",
