@@ -124,6 +124,9 @@ class DailyDocumentsPipeline:
             finish_pipeline_run,
             fail_pipeline_run,
         )
+        from modules.documentos.services.finalizados import (
+            import_finalizados,
+        )
 
         reference_date = reference_date or date.today()
         period = resolve_period(
@@ -258,6 +261,54 @@ class DailyDocumentsPipeline:
                 update_step(run_id, "matching", "SUCCESS")
 
                 # ---------------------------------------------------------
+                # FINALIZADOS DO PORTAL GCE
+                # ---------------------------------------------------------
+
+                current_step = "FINALIZADOS"
+
+                self._log(
+                    "[FINALIZADOS] Importando documentos "
+                    "finalizados no Portal GCE..."
+                )
+
+                finalizados_summary = {
+                    "files": 0,
+                    "total": 0,
+                    "matched": 0,
+                    "already_finalized": 0,
+                    "not_found": 0,
+                    "ambiguous": 0,
+                }
+
+                for finalizados_file in portal.finalizados_files:
+                    stats = import_finalizados(
+                        finalizados_file
+                    )
+
+                    finalizados_summary["files"] += 1
+                    finalizados_summary["total"] += stats.total
+                    finalizados_summary["matched"] += stats.matched
+                    finalizados_summary[
+                        "already_finalized"
+                    ] += stats.already_finalized
+                    finalizados_summary[
+                        "not_found"
+                    ] += stats.not_found
+                    finalizados_summary[
+                        "ambiguous"
+                    ] += stats.ambiguous
+
+                self._log(
+                    "[FINALIZADOS] "
+                    f"{finalizados_summary['files']} arquivo(s) | "
+                    f"{finalizados_summary['total']} lidos | "
+                    f"{finalizados_summary['matched']} atualizados | "
+                    f"{finalizados_summary['already_finalized']} já finalizados | "
+                    f"{finalizados_summary['not_found']} não encontrados | "
+                    f"{finalizados_summary['ambiguous']} ambíguos"
+                )
+
+                # ---------------------------------------------------------
                 # 5. ALERTAS
                 # ---------------------------------------------------------
                 current_step = "ALERTS"
@@ -362,6 +413,10 @@ class DailyDocumentsPipeline:
                                 "aguardando_solucao": str(
                                     carrier.aguardando_solucao
                                 ),
+                                "finalizados": [
+                                    str(file_path)
+                                    for file_path in carrier.finalizados
+                                ],
                             }
                             for carrier in portal.carriers
                         ],
@@ -370,6 +425,7 @@ class DailyDocumentsPipeline:
                     },
                     "import": imported,
                     "matching": matching_summary,
+                    "finalizados": finalizados_summary,
                     "alerts": asdict(alerts),
                     "metrics": {
                         "snapshot_date": reference_date.isoformat(),

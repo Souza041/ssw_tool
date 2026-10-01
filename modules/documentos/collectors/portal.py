@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
+import calendar
 import re
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import requests
+
+from requests.exceptions import ProxyError
 
 from modules.documentos.config import DocumentosSettings, settings
 
@@ -18,6 +21,7 @@ class CarrierDownloads:
     carrier_name: str
     solucionar: Path
     aguardando_solucao: Path
+    finalizados: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -36,6 +40,14 @@ class PortalDownloads:
         return [
             carrier.aguardando_solucao
             for carrier in self.carriers
+        ]
+
+    @property
+    def finalizados_files(self) -> list[Path]:
+        return [
+            file_path
+            for carrier in self.carriers
+            for file_path in carrier.finalizados
         ]
 
 
@@ -138,7 +150,7 @@ class GCEPortalCollector:
 
     def login(self) -> None:
         self.config.validate_gce()
-        response = self.session.post(
+        response = self._post(
             f"{self.config.gce_base_url}/uccaduser/_login",
             json={"login": self.config.gce_login, "senha": self.config.gce_password},
             headers={"X-Requested-With": "XMLHttpRequest"},
@@ -163,7 +175,7 @@ class GCEPortalCollector:
         self._carrier_group_id = str(group_id)
 
     def _search_carrier(self, payload: dict, action: str) -> dict:
-        response = self.session.post(
+        response = self._post(
             f"{self.config.gce_base_url}/transportador/_search",
             json=payload,
             headers={"X-Requested-With": "XMLHttpRequest"},
@@ -247,7 +259,7 @@ class GCEPortalCollector:
         self,
         carrier_id: int,
     ) -> None:
-        response = self.session.post(
+        response = self._post(
             f"{self.config.gce_base_url}/documento/_notifytransp",
             json={
                 "idtransportador": carrier_id,
@@ -289,7 +301,7 @@ class GCEPortalCollector:
                 raise ValueError(f"Portal retornou HTML em vez do relatório {report_name}.")
 
     def _download(self, endpoint: str, output_dir: Path, fallback: str, carrier_id: int) -> Path:
-        response = self.session.post(
+        response = self._post(
             f"{self.config.gce_base_url}/documento/{endpoint}",
             json={"idtransportador": carrier_id},
             headers={"Accept": "*/*"},
@@ -301,6 +313,171 @@ class GCEPortalCollector:
         path = output_dir / self._filename(response, fallback)
         path.write_bytes(response.content)
         return path
+
+    def _download_finalizados(
+        self,
+        output_dir: Path,
+        period_start: date,
+        period_end: date,
+        carrier_id: int,
+    ) -> Path:
+        """
+        Baixa o relatório de documentos finalizados do Portal GCE.
+
+        O endpoint exige as duas datas no formato DD/MM/YYYY.
+        Importante: o frontend do próprio GCE pode enviar o ano final
+        com 2 dígitos, causando HTTP 500. Aqui sempre usamos %Y.
+        """
+        payload = {
+            "periodoi": period_start.strftime("%d/%m/%Y"),
+            "periodof": period_end.strftime("%d/%m/%Y"),
+            "idtransportador": str(carrier_id),
+        }
+
+        response = self._post(
+            (
+                f"{self.config.gce_base_url}"
+                "/documento/_printfinalizados"
+            ),
+            json=payload,
+            headers={"Accept": "*/*"},
+            timeout=self.config.gce_timeout,
+        )
+
+        self._http_error(
+            response,
+            (
+                "download de _printfinalizados "
+                f"{period_start:%d/%m/%Y} "
+                f"até {period_end:%d/%m/%Y}"
+            ),
+        )
+
+        self._validate_excel(
+            response.content,
+            "_printfinalizados",
+        )
+
+        output_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        filename = (
+            f"portal_finalizados_"
+            f"{period_start:%Y_%m}.xlsx"
+        )
+
+        path = output_dir / filename
+        path.write_bytes(response.content)
+
+        return path
+
+    def download_finalizados(
+        self,
+        output_dir: Path,
+        period_start: date,
+        period_end: date,
+        carrier_id: int,
+    ) -> list[Path]:
+        """
+        Baixa Finalizados mês a mês.
+
+        O Portal GCE não deve receber períodos atravessando meses.
+        """
+        if period_start > period_end:
+            raise ValueError(
+                "A data inicial não pode ser maior "
+                "que a data final."
+            )
+
+        arquivos: list[Path] = []
+
+        current = period_start.replace(day=1)
+
+        while current <= period_end:
+            last_day = calendar.monthrange(
+                current.year,
+                current.month,
+            )[1]
+
+            month_start = max(
+                period_start,
+                current,
+            )
+
+            month_end = min(
+                period_end,
+                date(
+                    current.year,
+                    current.month,
+                    last_day,
+                ),
+            )
+
+            path = self._download_finalizados(
+                output_dir,
+                month_start,
+                month_end,
+                carrier_id,
+            )
+
+            arquivos.append(path)
+
+            if current.month == 12:
+                current = date(
+                    current.year + 1,
+                    1,
+                    1,
+                )
+            else:
+                current = date(
+                    current.year,
+                    current.month + 1,
+                    1,
+                )
+
+        return arquivos
+
+    @staticmethod
+    def _finalizados_periods(
+        reference_date: date,
+    ) -> list[tuple[date, date]]:
+        current_month_start = reference_date.replace(
+            day=1
+        )
+
+        periods: list[tuple[date, date]] = []
+
+        # Nos primeiros 5 dias do mês, reconsulta
+        # todo o mês anterior para capturar
+        # finalizações tardias.
+        if reference_date.day <= 5:
+            previous_month_end = (
+                current_month_start
+                - timedelta(days=1)
+            )
+
+            previous_month_start = (
+                previous_month_end.replace(day=1)
+            )
+
+            periods.append(
+                (
+                    previous_month_start,
+                    previous_month_end,
+                )
+            )
+
+        # Mês atual até a data de referência.
+        periods.append(
+            (
+                current_month_start,
+                reference_date,
+            )
+        )
+
+        return periods
 
     def download_daily(
         self,
@@ -353,6 +530,38 @@ class GCEPortalCollector:
                 carrier_id,
             )
 
+            finalizados_dir = (
+                output_dir
+                / "finalizados"
+            )
+
+            finalizados: list[Path] = []
+
+            for (
+                finalizados_start,
+                finalizados_end,
+            ) in self._finalizados_periods(
+                reference_date
+            ):
+                print(
+                    "[GCE][FINALIZADOS] "
+                    f"CNPJ {carrier_cnpj} | "
+                    f"{finalizados_start:%d/%m/%Y} "
+                    "-> "
+                    f"{finalizados_end:%d/%m/%Y}"
+                )
+
+                downloaded = (
+                    self.download_finalizados(
+                        finalizados_dir,
+                        finalizados_start,
+                        finalizados_end,
+                        carrier_id,
+                    )
+                )
+
+                finalizados.extend(downloaded)
+
             downloads.append(
                 CarrierDownloads(
                     carrier_id=carrier_id,
@@ -360,6 +569,7 @@ class GCEPortalCollector:
                     carrier_name=carrier_name,
                     solucionar=solucionar,
                     aguardando_solucao=aguardando,
+                    finalizados=finalizados,
                 )
             )
 
@@ -371,6 +581,49 @@ class GCEPortalCollector:
         return PortalDownloads(
             carriers=tuple(downloads),
         )
+
+    def _post(self, url: str, **kwargs) -> requests.Response:
+        """
+        Executa POST usando o proxy configurado.
+
+        Se o proxy estiver indisponível, desativa o proxy nesta sessão
+        e repete a requisição diretamente.
+
+        O fallback ocorre somente para erro de conexão com o proxy.
+        Erros HTTP do Portal continuam sendo tratados normalmente.
+        """
+        try:
+            return self.session.post(url, **kwargs)
+
+        except ProxyError as exc:
+            if not self.session.proxies:
+                raise
+
+            print(
+                "[GCE] Proxy indisponível. "
+                "Tentando conexão direta..."
+            )
+
+            self.session.proxies.clear()
+
+            # Não herdar HTTP_PROXY/HTTPS_PROXY/PAC do ambiente.
+            self.session.trust_env = False
+
+            try:
+                response = self._post(url, **kwargs)
+
+                print(
+                    "[GCE] Conexão direta estabelecida. "
+                    "Proxy desativado para esta execução."
+                )
+
+                return response
+
+            except Exception:
+                print(
+                    "[GCE] Falha também na conexão direta."
+                )
+                raise exc
 
     @staticmethod
     def _normalize_cnpj(value: object) -> str:

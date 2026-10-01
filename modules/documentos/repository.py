@@ -463,3 +463,63 @@ class DocumentRepository:
                 int(row["document_id"])
                 for row in cursor.fetchall()
             ]
+
+    @staticmethod
+    def load_portal_finalization_candidates(
+        connection: Connection,
+        *,
+        carrier_cnpjs: set[str],
+    ) -> list[dict]:
+        if not carrier_cnpjs:
+            return []
+
+        placeholders = ", ".join(
+            ["%s"] * len(carrier_cnpjs)
+        )
+
+        sql = f"""
+            SELECT
+                id,
+                carrier_cnpj,
+                warehouse_ctrc,
+                invoice_number,
+                invoice_series,
+                transport_number,
+                issue_date,
+                recipient_name,
+                recipient_cnpj,
+                finalized_at
+            FROM portal_documents
+            WHERE carrier_cnpj IN ({placeholders})
+            AND active = 1
+            ORDER BY id
+        """
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                sql,
+                tuple(sorted(carrier_cnpjs)),
+            )
+
+            return list(cursor.fetchall())
+
+
+    @staticmethod
+    def set_portal_finalized(
+        connection: Connection,
+        *,
+        portal_document_id: int,
+        finalized_at: date,
+    ) -> None:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE portal_documents
+                SET finalized_at = %s
+                WHERE id = %s
+                """,
+                (
+                    finalized_at,
+                    portal_document_id,
+                ),
+            )

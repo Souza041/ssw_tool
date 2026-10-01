@@ -29,6 +29,7 @@ def documentos_dashboard(
     status: str = "",
     carrier_cnpj: str = "",
     pending_status: str = "",
+    lifecycle_status: str = "ACTIVE",
 ):
     if not request.session.get("ssw_session_id"):
         return RedirectResponse("/login", status_code=303)
@@ -40,6 +41,7 @@ def documentos_dashboard(
         alert_type=status,
         carrier_cnpj=carrier_cnpj,
         pending_status=pending_status,
+        lifecycle_status=lifecycle_status,
     )
 
     return templates.TemplateResponse(
@@ -57,6 +59,7 @@ def documentos_export(
     status: str = "",
     carrier_cnpj: str = "",
     pending_status: str = "",
+    lifecycle_status: str = "ACTIVE"
 ):
     if not request.session.get("ssw_session_id"):
         return RedirectResponse("/login", status_code=303)
@@ -66,6 +69,7 @@ def documentos_export(
         alert_type=status,
         carrier_cnpj=carrier_cnpj,
         pending_status=pending_status,
+        lifecycle_status=lifecycle_status,
     )
 
     workbook = Workbook()

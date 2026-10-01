@@ -18,17 +18,27 @@ ALLOWED_STATUS = {
     "NORMAL",
 }
 
+ALLOWED_LIFECYCLE_STATUS = {
+    "ACTIVE",
+    "FINALIZED",
+    "ALL",
+}
+
 def _normalize_document_filters(
     *,
     search: str = "",
     alert_type: str = "",
     carrier_cnpj: str = "",
     pending_status: str = "",
-) -> tuple[str, str, str, str]:
+    lifecycle_status: str = "ACTIVE",
+) -> tuple[str, str, str, str, str]:
 
     search = (search or "").strip()
     alert_type = (alert_type or "").strip().upper()
     pending_status = (pending_status or "").strip().upper()
+    lifecycle_status = (
+        lifecycle_status or "ACTIVE"
+    ).strip().upper()
 
     carrier_cnpj = re.sub(
         r"\D",
@@ -42,7 +52,16 @@ def _normalize_document_filters(
     if pending_status not in {"PENDING", "CLEAR"}:
         pending_status = ""
 
-    return search, alert_type, carrier_cnpj, pending_status
+    if lifecycle_status not in ALLOWED_LIFECYCLE_STATUS:
+        lifecycle_status = "ACTIVE"
+
+    return (
+        search,
+        alert_type,
+        carrier_cnpj,
+        pending_status,
+        lifecycle_status,
+    )
 
 def _build_document_where(
     *,
@@ -50,10 +69,28 @@ def _build_document_where(
     alert_type: str = "",
     carrier_cnpj: str = "",
     pending_status: str = "",
+    lifecycle_status: str = "ACTIVE",
 ) -> tuple[str, list[Any]]:
 
-    where = ["a.status = 'OPEN'"]
+    where = ["p.active = 1"]
     params: list[Any] = []
+
+    if lifecycle_status == "ACTIVE":
+        where.append("p.finalized_at IS NULL")
+        where.append("a.status = 'OPEN'")
+
+    elif lifecycle_status == "FINALIZED":
+        where.append("p.finalized_at IS NOT NULL")
+
+    elif lifecycle_status == "ALL":
+        where.append(
+            """
+            (
+                (p.finalized_at IS NULL AND a.status = 'OPEN')
+                OR p.finalized_at IS NOT NULL
+            )
+            """
+        )
 
     if carrier_cnpj:
         where.append("p.carrier_cnpj = %s")
@@ -266,6 +303,7 @@ def dashboard_snapshot(
     alert_type: str = "",
     carrier_cnpj: str = "",
     pending_status: str = "",
+    lifecycle_status: str = "ACTIVE",
 ) -> dict[str, Any]:
 
     page = max(1, page)
@@ -273,13 +311,18 @@ def dashboard_snapshot(
     if per_page not in {25, 50, 100}:
         per_page = 25
 
-    search, alert_type, carrier_cnpj, pending_status = (
-        _normalize_document_filters(
-            search=search,
-            alert_type=alert_type,
-            carrier_cnpj=carrier_cnpj,
-            pending_status=pending_status,
-        )
+    (
+        search,
+        alert_type,
+        carrier_cnpj,
+        pending_status,
+        lifecycle_status,
+    ) = _normalize_document_filters(
+        search=search,
+        alert_type=alert_type,
+        carrier_cnpj=carrier_cnpj,
+        pending_status=pending_status,
+        lifecycle_status=lifecycle_status,
     )
 
     automation = _automation_snapshot()
@@ -365,6 +408,7 @@ def dashboard_snapshot(
                 alert_type=alert_type,
                 carrier_cnpj=carrier_cnpj,
                 pending_status=pending_status,
+                lifecycle_status=lifecycle_status,
             )
 
             # =====================================================
@@ -430,6 +474,7 @@ def dashboard_snapshot(
                     p.pending_user,
                     p.pending_reason,
                     p.report_type,
+                    p.finalized_at,
 
                     s.ctrc_raw AS ssw_ctrc_raw
 
@@ -528,6 +573,9 @@ def dashboard_snapshot(
                     or details.get("report_type")
                 )
 
+                details["finalized_at"] = row.get("finalized_at")
+                details["is_finalized"] = bool(row.get("finalized_at"))
+
                 details["has_pending"] = bool(
                     details.get("pending_reason")
                 )
@@ -572,6 +620,7 @@ def dashboard_snapshot(
                     "alert_type": alert_type,
                     "carrier_cnpj": carrier_cnpj,
                     "pending_status": pending_status,
+                    "lifecycle_status": lifecycle_status,
                 },
 
                 "carriers": carriers,
@@ -596,15 +645,21 @@ def export_documents(
     alert_type: str = "",
     carrier_cnpj: str = "",
     pending_status: str = "",
+    lifecycle_status: str = "ACTIVE",
 ) -> list[dict[str, Any]]:
 
-    search, alert_type, carrier_cnpj, pending_status = (
-        _normalize_document_filters(
-            search=search,
-            alert_type=alert_type,
-            carrier_cnpj=carrier_cnpj,
-            pending_status=pending_status,
-        )
+    (
+        search,
+        alert_type,
+        carrier_cnpj,
+        pending_status,
+        lifecycle_status,
+    ) = _normalize_document_filters(
+        search=search,
+        alert_type=alert_type,
+        carrier_cnpj=carrier_cnpj,
+        pending_status=pending_status,
+        lifecycle_status=lifecycle_status,
     )
 
     where_sql, params = _build_document_where(
@@ -612,6 +667,7 @@ def export_documents(
         alert_type=alert_type,
         carrier_cnpj=carrier_cnpj,
         pending_status=pending_status,
+        lifecycle_status=lifecycle_status,
     )
 
     with transaction() as connection:
@@ -638,6 +694,7 @@ def export_documents(
                     p.pending_user,
                     p.pending_reason,
                     p.report_type,
+                    p.finalized_at,
 
                     s.ctrc_raw AS ssw_ctrc_raw
 

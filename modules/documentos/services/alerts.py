@@ -23,7 +23,7 @@ class AlertRefreshStats:
     warning_20: int = 0
     normal: int = 0
     oc10: int = 0
-
+    finalized_resolved: int = 0
 
 def _to_date(value: Any) -> date | None:
     """Normaliza DATE retornado como date, datetime ou texto pelo MySQL."""
@@ -57,6 +57,28 @@ def classify_alert(days_remaining: int | None) -> str:
         return "ALERTA_20"
     return "NORMAL"
 
+def _resolve_finalized_alerts(connection: Any) -> int:
+    """
+    Encerra alertas ainda abertos de documentos que já foram
+    finalizados no Portal GCE.
+
+    Retorna a quantidade de alertas efetivamente resolvidos.
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE document_alerts a
+            INNER JOIN portal_documents p
+                ON p.id = a.portal_document_id
+            SET
+                a.status = 'RESOLVED',
+                a.resolved_at = NOW()
+            WHERE a.status = 'OPEN'
+              AND p.finalized_at IS NOT NULL
+            """
+        )
+
+        return int(cursor.rowcount or 0)
 
 def _fetch_documents(connection: Any) -> list[dict[str, Any]]:
     """Retorna um registro por documento do portal com o histórico SSW agregado."""
@@ -98,6 +120,7 @@ def _fetch_documents(connection: Any) -> list[dict[str, Any]]:
             LEFT JOIN ssw_occurrences o ON o.document_id = s.id
             WHERE m.status = 'MATCHED'
                 AND p.active = 1
+                AND p.finalized_at IS NULL
             GROUP BY
                 p.id, m.ssw_document_id, p.invoice_number, p.invoice_series,
                 p.transport_number, p.recipient_name, p.pending_reason,
@@ -354,9 +377,17 @@ def refresh_alerts(
         "warning_20": 0,
         "normal": 0,
         "oc10": 0,
+        "finalized_resolved": 0,
     }
 
-    # Carrega o universo atual.
+    # Primeiro encerra qualquer alerta ainda aberto
+    # cujo documento já foi finalizado no Portal GCE.
+    with transaction() as connection:
+        counters["finalized_resolved"] = (
+            _resolve_finalized_alerts(connection)
+        )
+
+    # Depois carrega somente documentos ainda não finalizados.
     with transaction() as connection:
         rows = _fetch_documents(connection)
 

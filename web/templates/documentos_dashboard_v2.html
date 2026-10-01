@@ -524,8 +524,16 @@
 /* Filtros */
 .documents-filters {
     display: grid;
-    grid-template-columns: minmax(260px, 1fr) 210px;
+    grid-template-columns:
+        minmax(280px, 1fr)
+        140px
+        175px
+        190px
+        175px
+        145px
+        auto;
     gap: 10px;
+    align-items: center;
 }
 
 .search-wrap {
@@ -673,6 +681,12 @@
     color: #15803d;
 }
 
+.status-finalized {
+    background: #dcfce7;
+    color: #15803d;
+    border: 1px solid #bbf7d0;
+}
+
 .status-no-delivery {
     background: #e2e8f0;
     color: #475569;
@@ -807,16 +821,6 @@
 /* =========================================================
    FILTROS SERVER-SIDE
    ========================================================= */
-
-.documents-filters {
-    grid-template-columns:
-        minmax(240px, 1fr)
-        190px
-        225px
-        180px
-        145px
-        auto;
-}
 
 .filter-button {
     height: 42px;
@@ -1400,7 +1404,7 @@
 
                     <a
                         class="export-button"
-                        href="/documentos/export?q={{ dashboard['filters']['search']|urlencode }}&status={{ dashboard['filters']['alert_type'] }}&carrier_cnpj={{ dashboard['filters']['carrier_cnpj'] }}&pending_status={{ dashboard['filters']['pending_status'] }}"
+                        href="/documentos/export?q={{ dashboard['filters']['search']|urlencode }}&status={{ dashboard['filters']['alert_type'] }}&carrier_cnpj={{ dashboard['filters']['carrier_cnpj'] }}&pending_status={{ dashboard['filters']['pending_status'] }}&lifecycle_status={{ dashboard['filters']['lifecycle_status'] }}"
                         title="Exportar os documentos encontrados pelos filtros atuais"
                     >
                         ⇩ Exportar Excel
@@ -1440,6 +1444,29 @@
                         placeholder="Buscar por nota, CTRC ou destinatário"
                     >
                 </div>
+
+                <select id="doc-lifecycle" name="lifecycle_status">
+                    <option
+                        value="ACTIVE"
+                        {% if dashboard["filters"]["lifecycle_status"] == "ACTIVE" %}selected{% endif %}
+                    >
+                        Ativos
+                    </option>
+
+                    <option
+                        value="FINALIZED"
+                        {% if dashboard["filters"]["lifecycle_status"] == "FINALIZED" %}selected{% endif %}
+                    >
+                        Finalizados
+                    </option>
+
+                    <option
+                        value="ALL"
+                        {% if dashboard["filters"]["lifecycle_status"] == "ALL" %}selected{% endif %}
+                    >
+                        Todos
+                    </option>
+                </select>
 
                 <select id="doc-status" name="status">
                     <option value="">
@@ -1584,7 +1611,12 @@
                         data-search="{{ item["details"]["invoice_number"] }} {{ item["details"]["ctrc"] }} {{ item["details"]["recipient_name"] }}"
                     >
                         <td>
-                            {% if item["alert_type"] == "VENCIDO" %}
+                            {% if item["details"]["is_finalized"] %}
+                                <span class="status-badge status-finalized">
+                                    Finalizado
+                                </span>
+
+                            {% elif item["alert_type"] == "VENCIDO" %}
                                 <span class="status-badge status-overdue">
                                     Vencido
                                 </span>
@@ -1705,6 +1737,25 @@
                                 </div>
 
                                 <div class="detail-grid">
+                                    {% if item["details"]["is_finalized"] %}
+
+                                        <div class="detail-item">
+                                            <small>Status no Portal</small>
+                                            <strong>Finalizado</strong>
+                                        </div>
+
+                                        <div class="detail-item">
+                                            <small>Finalizado em</small>
+                                            <strong>
+                                                {% if item["details"]["finalized_at"] %}
+                                                    {{ item["details"]["finalized_at"].strftime("%d/%m/%Y") }}
+                                                {% else %}
+                                                    -
+                                                {% endif %}
+                                            </strong>
+                                        </div>
+
+                                    {% endif %}
 
                                     <div class="detail-item">
                                         <small>Número do transporte</small>
@@ -1858,7 +1909,7 @@
         {% if pagination["has_previous"] %}
             <a
                 class="page-button page-nav"
-                href="/documentos?page={{ pagination['previous_page'] }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}&pending_status={{ filters['pending_status'] }}"
+                href="/documentos?page={{ pagination['previous_page'] }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}&pending_status={{ filters['pending_status'] }}&lifecycle_status={{ dashboard['filters']['lifecycle_status'] }}"
             >
                 ‹ Anterior
             </a>
@@ -1876,7 +1927,7 @@
         {# Primeira página #}
         <a
             class="page-button {% if current == 1 %}active{% endif %}"
-            href="/documentos?page=1&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}&pending_status={{ filters['pending_status'] }}"
+            href="/documentos?page=1&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}&pending_status={{ filters['pending_status'] }}&lifecycle_status={{ dashboard['filters']['lifecycle_status'] }}"
         >
             1
         </a>
@@ -1893,7 +1944,7 @@
             {% if number >= current - 2 and number <= current + 2 %}
                 <a
                     class="page-button {% if number == current %}active{% endif %}"
-                    href="/documentos?page={{ number }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}&pending_status={{ filters['pending_status'] }}"
+                    href="/documentos?page={{ number }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}&pending_status={{ filters['pending_status'] }}&lifecycle_status={{ dashboard['filters']['lifecycle_status'] }}"
                 >
                     {{ number }}
                 </a>
@@ -1911,7 +1962,7 @@
             {% if total > 1 %}
                 <a
                     class="page-button {% if current == total %}active{% endif %}"
-                    href="/documentos?page={{ total }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}&pending_status={{ filters['pending_status'] }}"
+                    href="/documentos?page={{ total }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}&pending_status={{ filters['pending_status'] }}&lifecycle_status={{ dashboard['filters']['lifecycle_status'] }}"
                 >
                     {{ total }}
                 </a>
@@ -1921,7 +1972,7 @@
             {% if pagination["has_next"] %}
                 <a
                     class="page-button page-nav"
-                    href="/documentos?page={{ pagination['next_page'] }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}&pending_status={{ filters['pending_status'] }}"
+                    href="/documentos?page={{ pagination['next_page'] }}&per_page={{ pagination['per_page'] }}&q={{ filters['search']|urlencode }}&status={{ filters['alert_type'] }}&carrier_cnpj={{ filters['carrier_cnpj'] }}&pending_status={{ filters['pending_status'] }}&lifecycle_status={{ dashboard['filters']['lifecycle_status'] }}"
                 >
                     Próxima ›
                 </a>
@@ -1963,6 +2014,10 @@
 
     const filterForm = document.querySelector(
         "#documents-filter-form"
+    );
+
+    const lifecycleSelect = document.querySelector(
+        "#doc-lifecycle"
     );
 
     const statusSelect = document.querySelector(
@@ -2067,6 +2122,10 @@
        para não disparar consulta ao banco a cada tecla.
        ===================================================== */
 
+    lifecycleSelect?.addEventListener("change", () => {
+        filterForm?.requestSubmit();
+    });
+    
     statusSelect?.addEventListener("change", () => {
         filterForm?.requestSubmit();
     });

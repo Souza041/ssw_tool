@@ -88,6 +88,65 @@ class DocumentImportService:
         }
 
     @staticmethod
+    def _portal_file_label(
+        file_path: Path,
+    ) -> str:
+        try:
+            return file_path.parent.name
+        except Exception:
+            return "-"
+
+    @staticmethod
+    def _log_portal_file_start(
+        *,
+        progress: Callable[[str], None] | None,
+        source: str,
+        file_path: Path,
+        file_index: int,
+        file_count: int,
+    ) -> None:
+        if not progress:
+            return
+
+        progress(
+            f"[{source}] "
+            f"Arquivo {file_index}/{file_count} | "
+            f"CNPJ {DocumentImportService._portal_file_label(file_path)} | "
+            f"{file_path.name}"
+        )
+
+    @staticmethod
+    def _log_portal_file_end(
+        *,
+        progress: Callable[[str], None] | None,
+        source: str,
+        file_path: Path,
+        file_index: int,
+        file_count: int,
+        stats: ImportStats,
+        elapsed_seconds: float,
+    ) -> None:
+        if not progress:
+            return
+
+        accepted = (
+            stats.inserted
+            + stats.updated
+        )
+
+        progress(
+            f"[{source}] CONCLUÍDO | "
+            f"Arquivo {file_index}/{file_count} | "
+            f"CNPJ {DocumentImportService._portal_file_label(file_path)} | "
+            f"{stats.total:,} lidos | "
+            f"{accepted:,} elegíveis | "
+            f"{stats.inserted:,} inseridos | "
+            f"{stats.updated:,} atualizados | "
+            f"{stats.rejected:,} ignorados | "
+            f"{elapsed_seconds:.1f}s"
+        )
+
+    @staticmethod
     def _close_connection(connection) -> None:
         if connection is None:
             return
@@ -491,7 +550,24 @@ class DocumentImportService:
         # SOLUCIONAR — um arquivo por CNPJ
         # -----------------------------------------------------
 
-        for portal_file in portal_solucionar_files:
+        solucionar_file_count = len(
+            portal_solucionar_files
+        )
+
+        for file_index, portal_file in enumerate(
+            portal_solucionar_files,
+            start=1,
+        ):
+            self._log_portal_file_start(
+                progress=progress,
+                source="PORTAL_SOLUCIONAR",
+                file_path=portal_file,
+                file_index=file_index,
+                file_count=solucionar_file_count,
+            )
+
+            started_at = time.monotonic()
+
             (
                 stats,
                 records,
@@ -521,6 +597,21 @@ class DocumentImportService:
                 progress=progress,
             )
 
+            elapsed_seconds = (
+                time.monotonic()
+                - started_at
+            )
+
+            self._log_portal_file_end(
+                progress=progress,
+                source="PORTAL_SOLUCIONAR",
+                file_path=portal_file,
+                file_index=file_index,
+                file_count=solucionar_file_count,
+                stats=stats,
+                elapsed_seconds=elapsed_seconds,
+            )
+
             stats_solucionar_list.append(
                 stats
             )
@@ -534,15 +625,34 @@ class DocumentImportService:
         # AGUARDANDO SOLUÇÃO — um arquivo por CNPJ
         # -----------------------------------------------------
 
-        for portal_file in portal_pendencias_files:
+        pendencias_file_count = len(
+            portal_pendencias_files
+        )
+
+        for file_index, portal_file in enumerate(
+            portal_pendencias_files,
+            start=1,
+        ):
+            source = (
+                "PORTAL_AGUARDANDO_SOLUCAO"
+            )
+
+            self._log_portal_file_start(
+                progress=progress,
+                source=source,
+                file_path=portal_file,
+                file_index=file_index,
+                file_count=pendencias_file_count,
+            )
+
+            started_at = time.monotonic()
+
             (
                 stats,
                 records,
                 database_ids,
             ) = self._persist_stream(
-                source=(
-                    "PORTAL_AGUARDANDO_SOLUCAO"
-                ),
+                source=source,
                 file_path=portal_file,
                 records=iter_portal(
                     portal_file,
@@ -566,6 +676,21 @@ class DocumentImportService:
                 progress=progress,
             )
 
+            elapsed_seconds = (
+                time.monotonic()
+                - started_at
+            )
+
+            self._log_portal_file_end(
+                progress=progress,
+                source=source,
+                file_path=portal_file,
+                file_index=file_index,
+                file_count=pendencias_file_count,
+                stats=stats,
+                elapsed_seconds=elapsed_seconds,
+            )
+
             stats_pendencias_list.append(
                 stats
             )
@@ -573,6 +698,35 @@ class DocumentImportService:
             pendencias.extend(records)
             pendencias_ids.update(
                 database_ids
+            )
+
+        if progress:
+            solucionar_summary = self._merge_stats(
+                "PORTAL_SOLUCIONAR",
+                stats_solucionar_list,
+            )
+
+            pendencias_summary = self._merge_stats(
+                "PORTAL_AGUARDANDO_SOLUCAO",
+                stats_pendencias_list,
+            )
+
+            progress(
+                "[PORTAL_SOLUCIONAR] RESUMO | "
+                f"{solucionar_summary['files']} arquivos | "
+                f"{solucionar_summary['total']:,} lidos | "
+                f"{solucionar_summary['inserted']:,} inseridos | "
+                f"{solucionar_summary['updated']:,} atualizados | "
+                f"{solucionar_summary['rejected']:,} ignorados"
+            )
+
+            progress(
+                "[PORTAL_AGUARDANDO_SOLUCAO] RESUMO | "
+                f"{pendencias_summary['files']} arquivos | "
+                f"{pendencias_summary['total']:,} lidos | "
+                f"{pendencias_summary['inserted']:,} inseridos | "
+                f"{pendencias_summary['updated']:,} atualizados | "
+                f"{pendencias_summary['rejected']:,} ignorados"
             )
 
         # =====================================================
