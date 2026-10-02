@@ -130,6 +130,10 @@
     background: #cbd5e1;
 }
 
+.metric-card.success::before {
+    background: #16a34a;
+}
+
 .metric-card.danger::before {
     background: #dc2626;
 }
@@ -164,6 +168,10 @@
     line-height: 1;
     font-weight: 750;
     color: #0f172a;
+}
+
+.metric-card.success .metric-value {
+    color: #15803d;
 }
 
 .metric-card.danger .metric-value {
@@ -1146,53 +1154,25 @@
     <!-- Indicadores -->
     <div class="documents-cards">
 
-        <div class="metric-card info">
-            <span class="metric-label">Documentos monitorados</span>
-            <strong class="metric-value">
-                {{ dashboard["totals"]["alerts"] }}
-            </strong>
-            <span class="metric-caption">Base atual de acompanhamento</span>
-        </div>
+        {% for card in dashboard["cards"]["items"] %}
 
-        <div class="metric-card danger">
-            <span class="metric-label">Vencidos</span>
-            <strong class="metric-value">
-                {{ dashboard["totals"]["overdue"] }}
-            </strong>
-            <span class="metric-caption">Prazo documental excedido</span>
-        </div>
+            <div class="metric-card {{ card['style'] }}">
 
-        <div class="metric-card critical">
-            <span class="metric-label">Até 5 dias</span>
-            <strong class="metric-value">
-                {{ dashboard["totals"]["critical"] }}
-            </strong>
-            <span class="metric-caption">Ação imediata</span>
-        </div>
+                <span class="metric-label">
+                    {{ card["label"] }}
+                </span>
 
-        <div class="metric-card warning">
-            <span class="metric-label">Até 10 dias</span>
-            <strong class="metric-value">
-                {{ dashboard["totals"]["warning_10"] }}
-            </strong>
-            <span class="metric-caption">Atenção ao prazo</span>
-        </div>
+                <strong class="metric-value">
+                    {{ card["value"] }}
+                </strong>
 
-        <div class="metric-card warning">
-            <span class="metric-label">Até 20 dias</span>
-            <strong class="metric-value">
-                {{ dashboard["totals"]["warning_20"] }}
-            </strong>
-            <span class="metric-caption">Em monitoramento</span>
-        </div>
+                <span class="metric-caption">
+                    {{ card["caption"] }}
+                </span>
 
-        <div class="metric-card neutral">
-            <span class="metric-label">Sem data de entrega</span>
-            <strong class="metric-value">
-                {{ dashboard["totals"]["without_delivery"] }}
-            </strong>
-            <span class="metric-caption">OC 01 não localizada</span>
-        </div>
+            </div>
+
+        {% endfor %}
 
     </div>
 
