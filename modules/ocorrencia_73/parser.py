@@ -410,8 +410,9 @@ def filtrar_registros(
             registro.get(coluna_ocorrencia)
         )
 
-        if cliente not in clientes_normalizados:
-            continue
+        atende_cliente = (
+            cliente in clientes_normalizados
+        )
 
         cidades_validas = rotas_normalizadas.get(
             unidade,
@@ -446,6 +447,7 @@ def filtrar_registros(
             unidade == "JOI"
             and unidade_receptora == "BIG"
             and ocorrencia == "64"
+            and atende_cliente
         )
 
         # O registro entra se atender:
@@ -692,10 +694,7 @@ def diagnosticar_filtros(
         # ROTAS ANTIGAS
         # ==========================================
 
-        if (
-            atende_rota_antiga
-            and atende_cliente
-        ):
+        if atende_rota_antiga:
             total_rota_antiga_cliente += 1
 
             if (
@@ -739,7 +738,6 @@ def diagnosticar_filtros(
 
         atende_regra_antiga = (
             atende_rota_antiga
-            and atende_cliente
         )
 
         if (
