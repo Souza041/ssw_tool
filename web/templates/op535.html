@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div class="topbar">
+    <h1>OP535 - Regime Tributário</h1>
+
+    <p>
+        Consulta os fornecedores cadastrados no SSW,
+        remove pessoas físicas e identifica o regime
+        tributário dos CNPJs através da BrasilAPI.
+    </p>
+</div>
+
+<div class="card">
+
+    <h3>Consultar fornecedores</h3>
+
+    <p style="color: var(--muted); line-height: 1.6;">
+        O processamento pode levar alguns minutos,
+        dependendo da quantidade de CNPJs encontrados
+        e do limite de consultas da BrasilAPI.
+    </p>
+
+    <form
+        method="post"
+        action="/op535"
+    >
+
+        <input
+            type="hidden"
+            name="timeout"
+            value="300"
+        >
+
+        <button type="submit">
+            ▶ Executar consulta OP535
+        </button>
+
+    </form>
+
+</div>
+
+{% endblock %}

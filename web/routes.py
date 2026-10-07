@@ -19,6 +19,7 @@ from operations.op455.report import OP455Report
 from operations.op488.report import OP488Report
 from operations.op001.coleta import OP001Coleta
 from operations.op001.batch import processar_planilha_nfd
+from operations.op535.workflow import executar_op535
 from ssw.client import SSWClient
 
 from operations.op001.batch_transporte import processar_planilha_transporte
@@ -382,6 +383,89 @@ def op488_run(
         status_code=303,
     )
 
+@router.get("/op535", response_class=HTMLResponse)
+def op535_form(request: Request):
+    redirect = validar_login(request)
+
+    if redirect:
+        return redirect
+
+    return templates.TemplateResponse(
+        "op535.html",
+        {
+            "request": request,
+        },
+    )
+
+
+@router.post("/op535")
+def op535_run(
+    request: Request,
+    timeout: int = Form(300),
+):
+    try:
+        client = exigir_client(request)
+
+    except RuntimeError:
+        return RedirectResponse(
+            "/login",
+            status_code=303,
+        )
+
+    job = criar_job()
+
+    add_log(
+        job,
+        "Job OP535 criado.",
+    )
+
+    executar_job(
+        job,
+        executar_op535_job,
+        client,
+        timeout,
+    )
+
+    return RedirectResponse(
+        url=f"/jobs/{job.id}",
+        status_code=303,
+    )
+
+
+def executar_op535_job(
+    job,
+    client: SSWClient,
+    timeout: int,
+) -> list[dict]:
+    add_log(
+        job,
+        "Sessão SSW carregada.",
+    )
+
+    add_log(
+        job,
+        "Iniciando consulta de regimes "
+        "tributários OP535.",
+    )
+
+    arquivo_saida = executar_op535(
+        client=client,
+        output_dir=Path("downloads"),
+        timeout_seconds=timeout,
+        job=job,
+    )
+
+    arquivos = [{
+        "name": arquivo_saida.name,
+        "url": f"/downloads/{arquivo_saida.name}",
+        "periodo": (
+            "OP535 - Regime Tributário"
+        ),
+    }]
+
+    job.result_files = arquivos
+
+    return arquivos
 
 @router.get("/debitos", response_class=HTMLResponse)
 def debitos_form(request: Request):
