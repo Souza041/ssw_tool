@@ -121,6 +121,7 @@ def test_regras_ocorrencia_73():
         "CWB100001-1",
         "JOI100002-2",
         "JOI100003-3",
+        "CWB100007-7",
     }
 
     por_ctrc = {
@@ -152,3 +153,58 @@ def test_regras_ocorrencia_73():
         por_ctrc["JOI100003-3"]["ultima_ocorrencia"]
         == "64"
     )
+
+
+def test_big_oc64_qualquer_emissora():
+    registros = [
+        registro(
+            ctrc=f"{emissora}200001-1",
+            emissora=emissora,
+            receptora="BIG",
+            cidade="PALHOCA",
+            ocorrencia="64",
+        )
+        for emissora in ("BHZ", "GRU", "CWB", "JOI")
+    ]
+
+    resultado = filtrar_registros(
+        registros=registros,
+        clientes_permitidos=CLIENTES,
+        rotas_permitidas=ROTAS,
+    )
+
+    assert {
+        item["ctrc_original"]
+        for item in resultado
+    } == {
+        "BHZ200001-1",
+        "GRU200001-1",
+        "CWB200001-1",
+        "JOI200001-1",
+    }
+
+    assert all(
+        item["regra_filtro"] == "joi_big_oc64"
+        for item in resultado
+    )
+
+
+def test_big_oc64_cliente_nao_permitido():
+    registros = [
+        registro(
+            ctrc="BHZ200002-2",
+            emissora="BHZ",
+            receptora="BIG",
+            cidade="PALHOCA",
+            ocorrencia="64",
+            cliente="CLIENTE NAO PERMITIDO",
+        ),
+    ]
+
+    resultado = filtrar_registros(
+        registros=registros,
+        clientes_permitidos=CLIENTES,
+        rotas_permitidas=ROTAS,
+    )
+
+    assert resultado == []

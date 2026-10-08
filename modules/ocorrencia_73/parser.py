@@ -444,8 +444,7 @@ def filtrar_registros(
         # desta nova regra.
         #
         atende_nova_regra_big = (
-            unidade == "JOI"
-            and unidade_receptora == "BIG"
+            unidade_receptora == "BIG"
             and ocorrencia == "64"
             and atende_cliente
         )
@@ -714,8 +713,7 @@ def diagnosticar_filtros(
         # ==========================================
 
         if (
-            unidade == "JOI"
-            and receptora == "BIG"
+            receptora == "BIG"
         ):
             total_joi_big += 1
 
@@ -730,8 +728,7 @@ def diagnosticar_filtros(
         # ==========================================
 
         atende_nova_regra = (
-            unidade == "JOI"
-            and receptora == "BIG"
+            receptora == "BIG"
             and ocorrencia == "64"
             and atende_cliente
         )

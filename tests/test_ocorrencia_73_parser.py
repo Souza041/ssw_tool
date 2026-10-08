@@ -68,6 +68,8 @@ def test_filtrar_todas_nomenclaturas_clientes():
                 "FLORIANOPOLIS"
             ),
             "UNIDADE EMISSORA": "JOI",
+	    "UNIDADE RECEPTORA": "JOI",
+	    "CODIGO DA ULTIMA OCORRENCIA": "46",
         })
 
     filtrados = filtrar_registros(
@@ -99,24 +101,32 @@ def test_rotas_permitidas():
             "CLIENTE PAGADOR": "WHIRLPOOL SA",
             "CIDADE DO DESTINATARIO": "FLORIANOPOLIS",
             "UNIDADE EMISSORA": "JOI",
+	    "UNIDADE RECEPTORA": "JOI",
+	    "CODIGO DA ULTIMA OCORRENCIA": "46",
         },
         {
             "SERIE/NUMERO CTRC": "JOI111112-0",
             "CLIENTE PAGADOR": "WHIRLPOOL SA",
             "CIDADE DO DESTINATARIO": "CURITIBA",
             "UNIDADE EMISSORA": "JOI",
+	    "UNIDADE RECEPTORA": "JOI",
+	    "CODIGO DA ULTIMA OCORRENCIA": "46",
         },
         {
             "SERIE/NUMERO CTRC": "CWB111113-0",
             "CLIENTE PAGADOR": "WHIRLPOOL SA",
             "CIDADE DO DESTINATARIO": "CURITIBA",
             "UNIDADE EMISSORA": "CWB",
+	    "UNIDADE RECEPTORA": "JOI",
+	    "CODIGO DA ULTIMA OCORRENCIA": "46",
         },
         {
             "SERIE/NUMERO CTRC": "CWB111114-0",
             "CLIENTE PAGADOR": "WHIRLPOOL SA",
             "CIDADE DO DESTINATARIO": "FLORIANOPOLIS",
             "UNIDADE EMISSORA": "CWB",
+	    "UNIDADE RECEPTORA": "JOI",
+	    "CODIGO DA ULTIMA OCORRENCIA": "46",
         },
     ]
 

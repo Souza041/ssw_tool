@@ -274,8 +274,7 @@ class Ocorrencia73Service:
             )
 
             atende_joi_big = (
-                unidade == "JOI"
-                and receptora == "BIG"
+                receptora == "BIG"
             )
 
             if not (
@@ -308,7 +307,7 @@ class Ocorrencia73Service:
             if atende_joi_big:
                 total_joi_big += 1
                 regras_auditoria.append(
-                    "JOI -> RECEPTORA BIG"
+                    "RECEPTORA BIG (QUALQUER EMISSORA)"
                 )
 
             if (
@@ -376,7 +375,7 @@ class Ocorrencia73Service:
         )
 
         print(
-            "[AUDITORIA] JOI -> RECEPTORA BIG: "
+            "[AUDITORIA] RECEPTORA BIG (QUALQUER EMISSORA): "
             f"{total_joi_big}"
         )
 
