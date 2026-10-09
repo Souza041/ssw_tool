@@ -743,27 +743,58 @@ class DocumentImportService:
             "MATCHED": 0,
             "AMBIGUOUS": 0,
             "NOT_FOUND": 0,
+            "PRESERVED": 0,
         }
-
-        portal_records = [
-            record
-            for record
-            in solucionar + pendencias
-            if (
-                record.issue_date is not None
-                and period_start
-                <= record.issue_date
-                <= period_end
-            )
-        ]
 
         portal_ids = {
             **solucionar_ids,
             **pendencias_ids,
         }
 
+        # O relatório diário do Portal representa o estado atual. Portanto,
+        # toda linha importada deve ser considerada, mesmo que a emissão seja
+        # anterior à janela OP455/OP930. Quando a mesma nota aparece nos dois
+        # relatórios, AGUARDANDO_SOLUCAO (processado por último) prevalece.
+        portal_records_by_id: dict[
+            int,
+            PortalDocument,
+        ] = {}
+
+        for record in solucionar + pendencias:
+            portal_document_id = portal_ids[
+                id(record)
+            ]
+            portal_records_by_id[
+                portal_document_id
+            ] = record
+
         with transaction() as connection:
-            for portal_record in portal_records:
+            for (
+                portal_document_id,
+                portal_record,
+            ) in portal_records_by_id.items():
+
+                # Um vínculo histórico válido não deve ser perdido apenas
+                # porque o CTRC não veio na janela incremental desta execução.
+                existing_match = (
+                    self.repository
+                    .find_match_by_portal_document(
+                        connection,
+                        portal_document_id,
+                    )
+                )
+
+                if (
+                    existing_match
+                    and existing_match.get("status")
+                    == "MATCHED"
+                    and existing_match.get(
+                        "ssw_document_id"
+                    ) is not None
+                ):
+                    match_counts["PRESERVED"] += 1
+                    continue
+
                 result = matcher.match(
                     portal_record
                 )
@@ -784,11 +815,40 @@ class DocumentImportService:
                 )
 
                 # =============================================
-                # Fallback histórico:
-                # Portal NF
-                # -> OP930 histórica
-                # -> CTRC
-                # -> OP455 histórico
+                # Fallback histórico 1:
+                # Portal NF -> OP455 histórica.
+                # =============================================
+
+                historical_document_ids: list[int] = []
+
+                if status == "NOT_FOUND":
+                    historical_document_ids = (
+                        self.repository
+                        .find_document_ids_by_invoice(
+                            connection,
+                            portal_record.invoice_number,
+                            portal_record.invoice_series,
+                        )
+                    )
+
+                    historical_document_ids = list(
+                        dict.fromkeys(
+                            historical_document_ids
+                        )
+                    )
+
+                    if len(historical_document_ids) == 1:
+                        status = "MATCHED"
+                        score = 2
+                        candidate_count = 1
+                        ssw_document_id = (
+                            historical_document_ids[0]
+                        )
+
+                # =============================================
+                # Fallback histórico 2:
+                # Portal NF -> OP930 histórica -> CTRC
+                # -> OP455 histórico.
                 # =============================================
 
                 if status == "NOT_FOUND":
@@ -849,6 +909,16 @@ class DocumentImportService:
                             ctrcs
                         )
 
+                if (
+                    status == "NOT_FOUND"
+                    and len(historical_document_ids) > 1
+                ):
+                    status = "AMBIGUOUS"
+                    score = 0
+                    candidate_count = len(
+                        historical_document_ids
+                    )
+
                 match_counts[status] = (
                     match_counts.get(
                         status,
@@ -860,9 +930,7 @@ class DocumentImportService:
                 self.repository.upsert_match(
                     connection,
                     portal_document_id=(
-                        portal_ids[
-                            id(portal_record)
-                        ]
+                        portal_document_id
                     ),
                     ssw_document_id=(
                         ssw_document_id

@@ -4,9 +4,12 @@ from datetime import date
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-from pymysql.connections import Connection
+if TYPE_CHECKING:
+    from pymysql.connections import Connection
+else:
+    Connection = Any
 
 from modules.documentos.schemas import OP455Document, OP930Occurrence, PortalDocument
 
@@ -22,6 +25,16 @@ def sha256_file(file_path: Path, chunk_size: int = 1024 * 1024) -> str:
 def _sha256_values(*values: object) -> str:
     payload = "|".join("" if value is None else str(value) for value in values)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def portal_document_source_key(document: PortalDocument) -> str:
+    """Identidade estável do documento, independente da situação no Portal."""
+    return _sha256_values(
+        document.carrier_cnpj,
+        document.warehouse_ctrc,
+        document.invoice_number,
+        document.invoice_series or "",
+    )
 
 
 class DocumentRepository:
@@ -253,51 +266,169 @@ class DocumentRepository:
         document: PortalDocument,
         import_id: int,
     ) -> tuple[int, bool]:
-        source_key = _sha256_values(
-            document.carrier_cnpj,
-            document.warehouse_ctrc,
-            document.invoice_number,
-            document.invoice_series,
-            document.report_type,
-        )
+        source_key = portal_document_source_key(document)
 
         with connection.cursor() as cursor:
-            cursor.execute("SELECT id FROM portal_documents WHERE source_key = %s", (source_key,))
-            existing = cursor.fetchone()
+            # A situação (SOLUCIONAR/AGUARDANDO_SOLUCAO) é mutável e não
+            # participa mais da identidade. Durante a transição, priorizamos
+            # a linha que já possui MATCHED/alertas para preservar todas as FKs.
             cursor.execute(
                 """
-                INSERT INTO portal_documents (
-                    report_type, carrier_cnpj, warehouse_ctrc,
-                    warehouse_ctrc_raw, invoice_number, invoice_series,
-                    transport_number, issue_date, recipient_name, recipient_cnpj,
-                    recipient_state, pending_at, pending_user, pending_reason,
-                    source_import_id, source_key
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s
-                )
-                ON DUPLICATE KEY UPDATE
-                    id = LAST_INSERT_ID(id), transport_number = VALUES(transport_number),
-                    issue_date = VALUES(issue_date), recipient_name = VALUES(recipient_name),
-                    recipient_cnpj = VALUES(recipient_cnpj),
-                    recipient_state = VALUES(recipient_state),
-                    pending_at = VALUES(pending_at), pending_user = VALUES(pending_user),
-                    pending_reason = VALUES(pending_reason),
-                    source_import_id = VALUES(source_import_id), active = 1,
-                    last_seen_at = NOW()
+                SELECT p.id
+                FROM portal_documents p
+                WHERE p.source_key = %s
+                   OR (
+                        p.carrier_cnpj <=> %s
+                    AND p.warehouse_ctrc = %s
+                    AND p.invoice_number = %s
+                    AND p.invoice_series = %s
+                   )
+                ORDER BY
+                    (p.source_key = %s) DESC,
+                    EXISTS (
+                        SELECT 1
+                        FROM document_matches m
+                        WHERE m.portal_document_id = p.id
+                          AND m.status = 'MATCHED'
+                    ) DESC,
+                    EXISTS (
+                        SELECT 1
+                        FROM document_alerts a
+                        WHERE a.portal_document_id = p.id
+                    ) DESC,
+                    p.id ASC
+                LIMIT 1
                 """,
                 (
-                    document.report_type, document.carrier_cnpj,
-                    document.warehouse_ctrc, document.ctrc_raw,
-                    document.invoice_number, document.invoice_series or "",
-                    document.transport_number, document.issue_date,
-                    document.recipient_name, document.recipient_cnpj,
-                    document.recipient_state, document.pending_at,
-                    document.pending_user, document.pending_reason,
-                    import_id, source_key,
+                    source_key,
+                    document.carrier_cnpj,
+                    document.warehouse_ctrc,
+                    document.invoice_number,
+                    document.invoice_series or "",
+                    source_key,
                 ),
             )
-            return int(cursor.lastrowid), existing is None
+            existing = cursor.fetchone()
+
+            values = (
+                document.report_type,
+                document.carrier_cnpj,
+                document.warehouse_ctrc,
+                document.ctrc_raw,
+                document.invoice_number,
+                document.invoice_series or "",
+                document.transport_number,
+                document.issue_date,
+                document.recipient_name,
+                document.recipient_cnpj,
+                document.recipient_state,
+                document.pending_at,
+                document.pending_user,
+                document.pending_reason,
+                import_id,
+                source_key,
+            )
+
+            if existing is None:
+                cursor.execute(
+                    """
+                    INSERT INTO portal_documents (
+                        report_type, carrier_cnpj, warehouse_ctrc,
+                        warehouse_ctrc_raw, invoice_number, invoice_series,
+                        transport_number, issue_date, recipient_name, recipient_cnpj,
+                        recipient_state, pending_at, pending_user, pending_reason,
+                        source_import_id, source_key
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                    """,
+                    values,
+                )
+                return int(cursor.lastrowid), True
+
+            document_id = int(existing["id"])
+            cursor.execute(
+                """
+                UPDATE portal_documents
+                SET report_type = %s,
+                    carrier_cnpj = %s,
+                    warehouse_ctrc = %s,
+                    warehouse_ctrc_raw = %s,
+                    invoice_number = %s,
+                    invoice_series = %s,
+                    transport_number = %s,
+                    issue_date = %s,
+                    recipient_name = %s,
+                    recipient_cnpj = %s,
+                    recipient_state = %s,
+                    pending_at = %s,
+                    pending_user = %s,
+                    pending_reason = %s,
+                    source_import_id = %s,
+                    source_key = %s,
+                    active = 1,
+                    finalized_at = NULL,
+                    last_seen_at = NOW()
+                WHERE id = %s
+                """,
+                (*values, document_id),
+            )
+
+            # Irmãos legados permanecem como histórico, porém deixam de
+            # participar do painel e não podem manter alertas abertos.
+            sibling_params = (
+                document_id,
+                document.carrier_cnpj,
+                document.warehouse_ctrc,
+                document.invoice_number,
+                document.invoice_series or "",
+            )
+            cursor.execute(
+                """
+                UPDATE document_alerts a
+                INNER JOIN portal_documents p ON p.id = a.portal_document_id
+                SET a.status = 'RESOLVED',
+                    a.resolved_at = COALESCE(a.resolved_at, NOW())
+                WHERE p.id <> %s
+                  AND p.carrier_cnpj <=> %s
+                  AND p.warehouse_ctrc = %s
+                  AND p.invoice_number = %s
+                  AND p.invoice_series = %s
+                  AND a.status = 'OPEN'
+                """,
+                sibling_params,
+            )
+            cursor.execute(
+                """
+                UPDATE portal_documents
+                SET active = 0
+                WHERE id <> %s
+                  AND carrier_cnpj <=> %s
+                  AND warehouse_ctrc = %s
+                  AND invoice_number = %s
+                  AND invoice_series = %s
+                """,
+                sibling_params,
+            )
+            return document_id, False
+
+    @staticmethod
+    def find_match_by_portal_document(
+        connection: Connection,
+        portal_document_id: int,
+    ) -> dict | None:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT status, ssw_document_id, score, candidate_count
+                FROM document_matches
+                WHERE portal_document_id = %s
+                LIMIT 1
+                """,
+                (portal_document_id,),
+            )
+            return cursor.fetchone()
 
     @staticmethod
     def upsert_match(
