@@ -341,18 +341,19 @@ class OP455Report:
         data_final: str,
     ) -> str:
         """
-        Gera a OP455 exatamente na configuração usada pelo BOT
-        de lançamento da ocorrência 73.
+        Gera o relatório OP455 para os fluxos CWB e BIG.
 
-        As datas devem estar no formato DDMMAA.
+        Os filtros de UF do remetente e última ocorrência
+        serão aplicados posteriormente no parser.
         """
 
         payload = {
             "act": "E1",
             "cod_emp_ctb": "00",
 
-            # E = unidade expedidora
-            "f3": "E",
+            # Unidade recebedora
+            "f3": "R",
+            "reg_tipo": "R",
 
             # Todos os documentos
             "f8": "T",
@@ -361,7 +362,7 @@ class OP455Report:
             "f9": data_inicial,
             "f10": data_final,
 
-            # Configuração confirmada pelo HAR
+            # Demais configurações do OP455
             "f18": "T",
             "f19": "T",
             "f20": "S",
@@ -375,8 +376,11 @@ class OP455Report:
             "ibscbs": "A",
             "f29": "A",
             "f30": "A",
+
+            # Excel e dados complementares
             "f35": "E",
             "f37": "B",
+
             "basico": "N",
             "dummy": dummy(),
         }
@@ -391,31 +395,42 @@ class OP455Report:
     def gerar_e_baixar_ocorrencia_73(
         self,
         output_dir: Path,
-        data_referencia: str,
+        data_inicial: str,
+        data_final: str,
+        unidade: str = "CWB",
         timeout_seconds: int = 300,
     ) -> Path:
         """
-        Abre a OP455 em MTZ, captura os relatórios já existentes
-        na OP156, gera uma nova solicitação e baixa somente um
-        novo ID.
+        Gera e baixa um relatório OP455 específico
+        para a automação OC73.
 
-        O arquivo também é validado antes de ser devolvido.
+        Unidades permitidas: CWB e BIG.
         """
 
-        opcao = (
-            "455 - Fretes Expedidos/Recebidos - CTRCs"
-        )
+        unidade = unidade.strip().upper()
 
-        unidade = "MTZ"
+        if unidade not in {"CWB", "BIG"}:
+            raise ValueError(
+                f"Unidade não permitida para OC73: {unidade}"
+            )
+
+        inicio = datetime.strptime(data_inicial, "%d%m%y").date()
+        fim = datetime.strptime(data_final, "%d%m%y").date()
+
+        if inicio > fim:
+            raise ValueError(
+                "A data inicial não pode ser posterior à data final."
+            )
+
+        opcao = "455 - Fretes Expedidos/Recebidos - CTRCs"
 
         fila = OP156Queue(self.client)
 
-        # Abre obrigatoriamente em MTZ.
-        self.open(
-            unidade=unidade
-        )
+        # Abre o OP455 na unidade solicitada.
+        self.open(unidade=unidade)
 
-        # Captura todos os IDs antigos antes de gerar.
+        # Captura IDs anteriores para não baixar
+        # um relatório antigo por engano.
         ids_existentes = self.capturar_ids_fila(
             fila=fila,
             opcao=opcao,
@@ -423,44 +438,33 @@ class OP455Report:
         )
 
         html = self.gerar_relatorio_ocorrencia_73(
-            data_inicial=data_referencia,
-            data_final=data_referencia,
+            data_inicial=data_inicial,
+            data_final=data_final,
         )
 
         if "Informe a unidade" in html:
             raise ValueError(
-                "SSW retornou 'Informe a unidade' ao gerar "
-                "a OP455 em MTZ."
+                f"SSW solicitou informar a unidade {unidade}."
             )
 
-        info_direto = self.extrair_arquivo_direto(
-            html
-        )
+        info_direto = self.extrair_arquivo_direto(html)
 
         if info_direto:
             arquivo = self.baixar_arquivo_direto(
                 info=info_direto,
                 output_dir=output_dir,
             )
-
-            self.validar_layout_ocorrencia_73(
-                arquivo
+        else:
+            arquivo = fila.baixar_por_opcao(
+                output_dir=output_dir,
+                opcao=opcao,
+                unidade=unidade,
+                timeout_seconds=timeout_seconds,
+                intervalo=5,
+                ignorar_ids=ids_existentes,
             )
 
-            return arquivo
-
-        arquivo = fila.baixar_por_opcao(
-            output_dir=output_dir,
-            opcao=opcao,
-            unidade=unidade,
-            timeout_seconds=timeout_seconds,
-            intervalo=5,
-            ignorar_ids=ids_existentes,
-        )
-
-        self.validar_layout_ocorrencia_73(
-            arquivo
-        )
+        self.validar_layout_ocorrencia_73(arquivo)
 
         return arquivo
 

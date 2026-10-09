@@ -12,6 +12,7 @@ UNIDADE_COLUNA = "Unidade Emissora"
 CTRC_COLUNA = "Serie/Numero CTRC"
 OCORRENCIA_COLUNA = "Codigo Ultima Ocorrencia"
 UNIDADE_RECEPTORA_COLUNA = "Unidade Receptora"
+UF_REMETENTE_COLUNA = "UF do Remetente"
 
 ALIASES_COLUNAS = {
     CLIENTE_COLUNA: {
@@ -49,6 +50,10 @@ ALIASES_COLUNAS = {
         "UNIDADE DE RECEPCAO",
         "UNID RECEPTORA",
         "FILIAL RECEPTORA",
+    },
+    UF_REMETENTE_COLUNA: {
+        "UF DO REMETENTE",
+        "UF REMETENTE",
     },
 }
 
@@ -342,156 +347,143 @@ def normalizar_codigo_ocorrencia(
 
 def filtrar_registros(
     registros: list[dict],
-    clientes_permitidos: set[str],
-    rotas_permitidas: dict[str, set[str]],
+    clientes_permitidos: set[str] | None = None,
+    rotas_permitidas: dict[str, set[str]] | None = None,
+    *,
+    fluxo: str,
 ) -> list[dict]:
+
+    fluxo = normalizar_texto(fluxo)
+
+    if fluxo not in {"CWB", "BIG"}:
+        raise ValueError(
+            f"Fluxo inválido para OC73: {fluxo}"
+        )
+
     if not registros:
         return []
 
     exemplo = registros[0]
 
-    coluna_cliente = encontrar_coluna(
-        exemplo,
-        CLIENTE_COLUNA,
-    )
-    coluna_cidade = encontrar_coluna(
-        exemplo,
-        CIDADE_COLUNA,
-    )
-    coluna_unidade = encontrar_coluna(
-        exemplo,
-        UNIDADE_COLUNA,
-    )
-    coluna_unidade_receptora = encontrar_coluna(
-        exemplo,
-        UNIDADE_RECEPTORA_COLUNA,
-    )
     coluna_ctrc = encontrar_coluna(
-        exemplo,
-        CTRC_COLUNA,
+        exemplo, CTRC_COLUNA
     )
     coluna_ocorrencia = encontrar_coluna(
-        exemplo,
-        OCORRENCIA_COLUNA,
+        exemplo, OCORRENCIA_COLUNA
     )
 
-    clientes_normalizados = {
-        normalizar_sem_acento(cliente)
-        for cliente in clientes_permitidos
+    # As colunas são exigidas somente quando
+    # fazem parte das regras do respectivo fluxo.
+    if fluxo == "CWB":
+        coluna_unidade = encontrar_coluna(
+            exemplo, UNIDADE_COLUNA
+        )
+        coluna_cidade = encontrar_coluna(
+            exemplo, CIDADE_COLUNA
+        )
+    else:
+        coluna_uf = encontrar_coluna(
+            exemplo, UF_REMETENTE_COLUNA
+        )
+
+    emissoras_permitidas = {
+        "BHZ", "CWB", "GRU", "JOI"
     }
 
-    rotas_normalizadas = {
-        normalizar_sem_acento(unidade): {
-            normalizar_sem_acento(cidade)
-            for cidade in cidades
-        }
-        for unidade, cidades in rotas_permitidas.items()
+    cidades_permitidas = {
+        "CURITIBA",
+        "ARAUCARIA",
+        "CAMPO LARGO",
+        "FAZENDA RIO GRANDE",
+        "PINHAIS",
+        "SAO JOSE DOS PINHAIS",
+        "COLOMBO",
     }
 
     filtrados = []
 
     for registro in registros:
-        cliente = normalizar_sem_acento(
-            registro.get(coluna_cliente)
-        )
-        cidade = normalizar_sem_acento(
-            registro.get(coluna_cidade)
-        )
-        unidade = normalizar_sem_acento(
-            registro.get(coluna_unidade)
-        )
-        unidade_receptora = normalizar_sem_acento(
-            registro.get(coluna_unidade_receptora)
-        )
-        ctrc = normalizar_texto(
-            registro.get(coluna_ctrc)
-        )
+
         ocorrencia = normalizar_codigo_ocorrencia(
             registro.get(coluna_ocorrencia)
         )
 
-        atende_cliente = (
-            cliente in clientes_normalizados
-        )
+        if fluxo == "CWB":
+            emissora = normalizar_sem_acento(
+                registro.get(coluna_unidade)
+            )
+            cidade = normalizar_sem_acento(
+                registro.get(coluna_cidade)
+            )
 
-        cidades_validas = rotas_normalizadas.get(
-            unidade,
-            set(),
-        )
+            elegivel = (
+                emissora in emissoras_permitidas
+                and cidade in cidades_permitidas
+                and ocorrencia == "63"
+            )
 
-        # ==================================================
-        # REGRA ANTIGA
-        # ==================================================
-        #
-        # CWB -> CURITIBA
-        # JOI -> FLORIANOPOLIS
-        #
-        # Essas rotas NÃO dependem da ocorrência 64.
-        #
-        atende_rota_antiga = (
-            cidade in cidades_validas
-        )
+        else:
+            uf_remetente = normalizar_sem_acento(
+                registro.get(coluna_uf)
+            )
 
-        # ==================================================
-        # NOVA REGRA JOI -> BIG
-        # ==================================================
-        #
-        # Unidade Emissora = JOI
-        # Unidade Receptora = BIG
-        # Última Ocorrência = 64
-        #
-        # A cidade do destinatário NÃO participa
-        # desta nova regra.
-        #
-        atende_nova_regra_big = (
-            unidade_receptora == "BIG"
-            and ocorrencia == "64"
-            and atende_cliente
-        )
+            elegivel = (
+                uf_remetente == "SC"
+                and ocorrencia == "64"
+            )
 
-        # O registro entra se atender:
-        #
-        # 1. uma das rotas antigas
-        # OU
-        # 2. a nova regra JOI -> BIG -> OC64
-        #
-        if not (
-            atende_rota_antiga
-            or atende_nova_regra_big
-        ):
+        if not elegivel:
             continue
+
+        ctrc = normalizar_texto(
+            registro.get(coluna_ctrc)
+        )
 
         if not ctrc:
             continue
 
-        if atende_rota_antiga:
-            regra_filtro = "rota_antiga"
-        else:
-            regra_filtro = "joi_big_oc64"
-
         dados_ctrc = decompor_ctrc(ctrc)
+
+        # Recupera os campos informativos que
+        # também são utilizados pelo service.
+        def obter_opcional(nome):
+            try:
+                coluna = encontrar_coluna(
+                    exemplo, nome
+                )
+                return normalizar_texto(
+                    registro.get(coluna)
+                )
+            except KeyError:
+                return ""
 
         filtrados.append({
             "ctrc_original": ctrc,
             "serie": dados_ctrc["serie"],
             "numero": dados_ctrc["numero"],
             "digito": dados_ctrc["digito"],
-            "cliente_pagador": normalizar_texto(
-                registro.get(coluna_cliente)
+            "cliente_pagador": obter_opcional(
+                CLIENTE_COLUNA
             ),
-            "cidade_destinatario": normalizar_texto(
-                registro.get(coluna_cidade)
+            "cidade_destinatario": obter_opcional(
+                CIDADE_COLUNA
             ),
-            "unidade_emissora": normalizar_texto(
-                registro.get(coluna_unidade)
+            "unidade_emissora": obter_opcional(
+                UNIDADE_COLUNA
             ),
-            "unidade_receptora": normalizar_texto(
-                registro.get(
-                    coluna_unidade_receptora
-                )
+            "unidade_receptora": obter_opcional(
+                UNIDADE_RECEPTORA_COLUNA
+            ),
+            "uf_remetente": obter_opcional(
+                UF_REMETENTE_COLUNA
             ),
             "ultima_ocorrencia": ocorrencia,
-            "regra_filtro": regra_filtro,
+            "regra_filtro": (
+                "cwb_oc63"
+                if fluxo == "CWB"
+                else "big_sc_oc64"
+            ),
+            "fluxo": fluxo,
             "registro_original": registro,
         })
 

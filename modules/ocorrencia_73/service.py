@@ -24,6 +24,9 @@ from operations.op101.ocorrencias import (
 from operations.op455.report import OP455Report
 from ssw.client import SSWClient
 
+from modules.ocorrencia_73.calendario import (
+    calcular_janelas_oc73,
+)
 
 TIMEZONE = ZoneInfo("America/Sao_Paulo")
 
@@ -414,6 +417,8 @@ class Ocorrencia73Service:
             "unidade_receptora",
             "ultima_ocorrencia",
             "regra_filtro",
+            "fluxo",
+            "uf_remetente",
         ]
 
         with csv_saida.open(
@@ -437,6 +442,108 @@ class Ocorrencia73Service:
 
         return csv_saida
 
+    def preparar_lotes_oc73(
+        self,
+        op455: OP455Report,
+        data_referencia: date,
+        diretorio_original: Path,
+    ) -> dict:
+        """
+        Gera e filtra os relatórios CWB e BIG.
+
+        Não consulta a OP101 e não lança ocorrências.
+        """
+
+        janelas = calcular_janelas_oc73(
+            data_referencia
+        )
+
+        lotes = []
+        ctrcs_unicos = {}
+        total_registros = 0
+
+        for janela in janelas:
+            fluxo = janela.fluxo
+
+            print(
+                f"[OC73] Preparando {fluxo}: "
+                f"{janela.data_inicial_ssw} até "
+                f"{janela.data_final_ssw}"
+            )
+
+            # Cada fluxo recebe seu próprio diretório.
+            # Isso evita colisão entre arquivos baixados.
+            diretorio_fluxo = (
+                diretorio_original / fluxo.lower()
+            )
+
+            diretorio_fluxo.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+            arquivo = (
+                op455.gerar_e_baixar_ocorrencia_73(
+                    output_dir=diretorio_fluxo,
+                    data_inicial=janela.data_inicial_ssw,
+                    data_final=janela.data_final_ssw,
+                    unidade=fluxo,
+                    timeout_seconds=300,
+                )
+            )
+
+            registros = carregar_relatorio(arquivo)
+
+            filtrados = filtrar_registros(
+                registros=registros,
+                fluxo=fluxo,
+            )
+
+            total_registros += len(registros)
+
+            for item in filtrados:
+                chave = (
+                    str(item["serie"]).upper(),
+                    str(item["numero"]).strip(),
+                )
+
+                if chave not in ctrcs_unicos:
+                    ctrcs_unicos[chave] = {
+                        **item,
+                        "data_inicial_pesquisa": (
+                            janela.data_inicial.isoformat()
+                        ),
+                        "data_final_pesquisa": (
+                            janela.data_final.isoformat()
+                        ),
+                    }
+
+            lotes.append({
+                "fluxo": fluxo,
+                "data_inicial": (
+                    janela.data_inicial.isoformat()
+                ),
+                "data_final": (
+                    janela.data_final.isoformat()
+                ),
+                "arquivo": str(arquivo),
+                "total_relatorio": len(registros),
+                "total_filtrado": len(filtrados),
+            })
+
+            print(
+                f"[OC73] {fluxo}: "
+                f"{len(registros)} registros, "
+                f"{len(filtrados)} elegíveis."
+            )
+
+        return {
+            "lotes": lotes,
+            "total_relatorio": total_registros,
+            "filtrados": list(ctrcs_unicos.values()),
+            "total_filtrado": len(ctrcs_unicos),
+        }
+
     def executar(
         self,
         data_referencia: date | None = None,
@@ -457,190 +564,108 @@ class Ocorrencia73Service:
         diretorio_original = diretorios["original"]
         diretorio_auditoria = diretorios["auditoria"]
 
-        data_ssw = data_referencia.strftime(
-            "%d%m%y"
-        )
+        janelas = calcular_janelas_oc73(data_referencia)
+
+        if not janelas:
+            return {
+                "success": True,
+                "triggered_by": triggered_by,
+                "data_referencia": data_referencia.isoformat(),
+                "status": "sem_execucao_programada",
+                "message": "Nenhum fluxo programado para esta data.",
+                "total_relatorio": 0,
+                "total_filtrado": 0,
+                "itens": [],
+            }
 
         client = self.criar_client_logado()
-
         op455 = OP455Report(client)
 
-        arquivo = (
-            op455.gerar_e_baixar_ocorrencia_73(
-                output_dir=diretorio_original,
-                data_referencia=data_ssw,
-                timeout_seconds=300,
-            )
+        preparacao = self.preparar_lotes_oc73(
+            op455=op455,
+            data_referencia=data_referencia,
+            diretorio_original=diretorio_original,
         )
 
-        registros = carregar_relatorio(
-            arquivo
-        )
+        filtrados = preparacao["filtrados"]
+        lotes = preparacao["lotes"]
+        total_relatorio = preparacao["total_relatorio"]
 
-        # O diagnóstico precisa ser criado antes
-        # de qualquer retorno antecipado.
-        diagnostico = diagnosticar_filtros(
-            registros=registros,
-            clientes_permitidos=(CLIENTES_PERMITIDOS),
-            rotas_permitidas=ROTAS_PERMITIDAS,
-        )
+        diagnostico = {
+            "total_op455": total_relatorio,
+            "total_filtrado": len(filtrados),
+            "total_lotes": len(lotes),
+            "fluxos": {
+                lote["fluxo"]: {
+                    "data_inicial": lote["data_inicial"],
+                    "data_final": lote["data_final"],
+                    "total_relatorio": lote["total_relatorio"],
+                    "total_filtrado": lote["total_filtrado"],
+                }
+                for lote in lotes
+            },
+        }
 
-        filtrados = filtrar_registros(
-            registros=registros,
-            clientes_permitidos=CLIENTES_PERMITIDOS,
-            rotas_permitidas=ROTAS_PERMITIDAS,
-        )
-
-        auditoria_rotas = (
-            self.gerar_auditoria_rotas(
-                registros=registros,
-                diretorio_auditoria=(
-                    diretorio_auditoria
-                ),
-            )
-        )
+        auditoria_rotas = None
 
         auditoria_filtrados = (
             self.gerar_auditoria_filtrados(
                 registros=filtrados,
-                diretorio_auditoria=(
-                    diretorio_auditoria
-                ),
+                diretorio_auditoria=diretorio_auditoria,
             )
         )
 
-        if not filtrados:
+        resumo_auditoria = {
+            "total_op455": total_relatorio,
+            "total_apos_filtros": len(filtrados),
+            "fluxos": diagnostico["fluxos"],
+            "modo": "dry_run" if DRY_RUN else "producao",
+        }
 
-            self.imprimir_resumo_auditoria(
-                total_relatorio=len(registros),
-                diagnostico=diagnostico,
-                total_filtrado=0,
-                total_consultado=0,
-                total_encontrado=0,
-                total_nao_encontrado=0,
-                total_erro=0,
-                total_ja_existia=0,
-                total_pendente_lancamento=0,
-                total_lancado=0,
-                total_erro_lancamento=0,
-                dry_run=DRY_RUN,
+        if not filtrados:
+            print(
+                "[OC73] Nenhum CTRC elegível. "
+                "Execução concluída sem consultar OP101."
             )
 
             resultado = {
                 "success": True,
+                "status": "sem_elegiveis",
                 "triggered_by": triggered_by,
                 "dry_run": DRY_RUN,
-                "data_referencia": (
-                    data_referencia.isoformat()
-                ),
-                "arquivo_original": arquivo.name,
-                "diretorio_execucao": str(
-                    diretorio_base
-                ),
-                "auditoria_rotas": (
-                    str(auditoria_rotas)
-                    if auditoria_rotas
-                    else None
-                ),
+                "data_referencia": data_referencia.isoformat(),
+                "lotes": lotes,
+                "arquivos_originais": [
+                    lote["arquivo"] for lote in lotes
+                ],
+                "diretorio_execucao": str(diretorio_base),
+                "auditoria_rotas": None,
                 "auditoria_filtrados": (
                     str(auditoria_filtrados)
-                    if auditoria_filtrados
-                    else None
+                    if auditoria_filtrados else None
                 ),
-                "total_relatorio": len(
-                    registros
-                ),
+                "total_relatorio": total_relatorio,
                 "total_filtrado": 0,
                 "diagnostico": diagnostico,
+                "resumo_auditoria": resumo_auditoria,
                 "total_consultado": 0,
                 "total_encontrado_op101": 0,
                 "total_nao_encontrado_op101": 0,
                 "total_erro_op101": 0,
-
-                "resumo_auditoria": {
-                    "total_op455": len(registros),
-
-                    "rotas_antigas": {
-                        "total": diagnostico.get(
-                            "rota",
-                            0,
-                        ),
-                        "detalhes": diagnostico.get(
-                            "rotas_encontradas",
-                            {},
-                        ),
-                    },
-
-                    "regra_antiga_cliente": {
-                        "cwb_curitiba": diagnostico.get(
-                            "cwb_curitiba",
-                            0,
-                        ),
-                        "joi_florianopolis": diagnostico.get(
-                            "joi_florianopolis",
-                            0,
-                        ),
-                        "total": diagnostico.get(
-                            "rota_antiga_cliente",
-                            0,
-                        ),
-                    },
-
-                    "regra_joi_big": {
-                        "total": diagnostico.get(
-                            "joi_big",
-                            0,
-                        ),
-                        "com_oc64": diagnostico.get(
-                            "joi_big_oc64",
-                            0,
-                        ),
-                        "com_oc64_e_cliente": diagnostico.get(
-                            "joi_big_oc64_cliente",
-                            0,
-                        ),
-                    },
-
-                    "total_clientes_monitorados": (
-                        diagnostico.get("cliente", 0)
-                    ),
-
-                    "total_apos_filtros": 0,
-                    "total_consultado_op101": 0,
-                    "total_encontrado_op101": 0,
-                    "total_ja_existia": 0,
-                    "total_pendente_lancamento": 0,
-                    "total_lancado": 0,
-                    "total_erro_lancamento": 0,
-                    "total_nao_encontrado_op101": 0,
-                    "total_erro_op101": 0,
-
-                    "modo": (
-                        "dry_run"
-                        if DRY_RUN
-                        else "producao"
-                    ),
-                },
-
+                "total_ja_existia": 0,
+                "total_pendente_lancamento": 0,
+                "total_lancado": 0,
+                "total_erro_lancamento": 0,
                 "itens": [],
-                "message": (
-                    "Nenhum CTRC atendeu "
-                    "aos filtros."
-                ),
+                "message": "Nenhum CTRC atendeu aos filtros.",
             }
 
-            arquivo_resultado = (
-                self.salvar_resultado_json(
-                    resultado=resultado,
-                    diretorio_auditoria=(
-                        diretorio_auditoria
-                    ),
-                )
+            arquivo_resultado = self.salvar_resultado_json(
+                resultado=resultado,
+                diretorio_auditoria=diretorio_auditoria,
             )
 
-            resultado["resultado_json"] = str(
-                arquivo_resultado
-            )
+            resultado["resultado_json"] = str(arquivo_resultado)
 
             return resultado
 
@@ -667,14 +692,24 @@ class Ocorrencia73Service:
             )
 
             try:
-                consulta = (
-                    op101.consultar_ctrc(
-                        serie=item["serie"],
-                        numero=item["numero"],
-                        data_referencia=(
-                            data_referencia
-                        ),
-                    )
+                consulta = op101.consultar_ctrc(
+                    serie=item["serie"],
+                    numero=item["numero"],
+                    data_referencia=data_referencia,
+                    data_inicial=(
+                        date.fromisoformat(
+                            item["data_inicial_pesquisa"]
+                        )
+                        if item.get("data_inicial_pesquisa")
+                        else data_referencia
+                    ),
+                    data_final=(
+                        date.fromisoformat(
+                            item["data_final_pesquisa"]
+                        )
+                        if item.get("data_final_pesquisa")
+                        else data_referencia
+                    ),
                 )
 
                 if not consulta.encontrado:
@@ -768,8 +803,10 @@ class Ocorrencia73Service:
                                 )
                             )
 
-                            confirmada = (
-                                op101.confirmar_ocorrencia_73(
+                            confirmada = None
+
+                            if resultado_lancamento.success:
+                                confirmada = op101.confirmar_ocorrencia_73(
                                     serie=item["serie"],
                                     numero=item["numero"],
                                     seq_ctrc=consulta.seq_ctrc,
@@ -777,12 +814,8 @@ class Ocorrencia73Service:
                                     familia=consulta.familia,
                                     data_referencia=data_referencia,
                                 )
-                            )
 
-                            if (
-                                resultado_lancamento.success
-                                and confirmada
-                            ):
+                            if resultado_lancamento.success and confirmada is not None:
                                 status = "lancada"
                                 total_lancado += 1
                             else:
@@ -912,28 +945,36 @@ class Ocorrencia73Service:
             )
         )
 
-        self.imprimir_resumo_auditoria(
-            total_relatorio=len(registros),
-            diagnostico=diagnostico,
-            total_filtrado=len(filtrados),
-            total_consultado=len(
-                itens_consultados
-            ),
-            total_encontrado=total_encontrado,
-            total_nao_encontrado=(
-                total_nao_encontrado
-            ),
-            total_erro=total_erro,
-            total_ja_existia=total_ja_existia,
-            total_pendente_lancamento=(
-                total_pendente_lancamento
-            ),
-            total_lancado=total_lancado,
-            total_erro_lancamento=(
-                total_erro_lancamento
-            ),
-            dry_run=DRY_RUN,
-        )
+        resumo_auditoria.update({
+            "total_consultado_op101": len(itens_consultados),
+            "total_encontrado_op101": total_encontrado,
+            "total_nao_encontrado_op101": total_nao_encontrado,
+            "total_erro_op101": total_erro,
+            "total_ja_existia": total_ja_existia,
+            "total_pendente_lancamento": total_pendente_lancamento,
+            "total_lancado": total_lancado,
+            "total_erro_lancamento": total_erro_lancamento,
+        })
+
+        print()
+        print("=" * 62)
+        print("AUDITORIA - BOT OCORRENCIA 73")
+        print("=" * 62)
+
+        for lote in lotes:
+            print(
+                f"{lote['fluxo']}: "
+                f"{lote['total_relatorio']} registros, "
+                f"{lote['total_filtrado']} elegíveis"
+            )
+
+        print(f"Total OP455...........: {total_relatorio}")
+        print(f"CTRCs únicos elegíveis: {len(filtrados)}")
+        print(f"Consultados na OP101..: {len(itens_consultados)}")
+        print(f"OC73 já existente.....: {total_ja_existia}")
+        print(f"OC73 lançadas.........: {total_lancado}")
+        print(f"Erros de lançamento...: {total_erro_lancamento}")
+        print("=" * 62)
 
         resultado = {
             "success": True,
@@ -942,7 +983,10 @@ class Ocorrencia73Service:
             "data_referencia": (
                 data_referencia.isoformat()
             ),
-            "arquivo_original": arquivo.name,
+            "lotes": lotes,
+            "arquivos_originais": [
+                lote["arquivo"] for lote in lotes
+            ],
             "diretorio_execucao": str(
                 diretorio_base
             ),
@@ -956,9 +1000,7 @@ class Ocorrencia73Service:
                 if auditoria_filtrados
                 else None
             ),
-            "total_relatorio": len(
-                registros
-            ),
+            "total_relatorio": total_relatorio,
             "total_filtrado": len(
                 filtrados
             ),
@@ -990,96 +1032,7 @@ class Ocorrencia73Service:
                 total_erro
             ),
 
-            "resumo_auditoria": {
-                "total_op455": len(registros),
-
-                "rotas_antigas": {
-                    "total": diagnostico.get(
-                        "rota",
-                        0,
-                    ),
-                    "detalhes": diagnostico.get(
-                        "rotas_encontradas",
-                        {},
-                    ),
-                },
-
-                "regra_antiga_cliente": {
-                    "cwb_curitiba": diagnostico.get(
-                        "cwb_curitiba",
-                        0,
-                    ),
-                    "joi_florianopolis": diagnostico.get(
-                        "joi_florianopolis",
-                        0,
-                    ),
-                    "total": diagnostico.get(
-                        "rota_antiga_cliente",
-                        0,
-                    ),
-                },
-
-                "regra_joi_big": {
-                    "total": diagnostico.get(
-                        "joi_big",
-                        0,
-                    ),
-                    "com_oc64": diagnostico.get(
-                        "joi_big_oc64",
-                        0,
-                    ),
-                    "com_oc64_e_cliente": diagnostico.get(
-                        "joi_big_oc64_cliente",
-                        0,
-                    ),
-                },
-
-                "total_clientes_monitorados": (
-                    diagnostico.get("cliente", 0)
-                ),
-
-                "total_apos_filtros": len(
-                    filtrados
-                ),
-
-                "total_consultado_op101": len(
-                    itens_consultados
-                ),
-
-                "total_encontrado_op101": (
-                    total_encontrado
-                ),
-
-                "total_ja_existia": (
-                    total_ja_existia
-                ),
-
-                "total_pendente_lancamento": (
-                    total_pendente_lancamento
-                ),
-
-                "total_lancado": (
-                    total_lancado
-                ),
-
-                "total_erro_lancamento": (
-                    total_erro_lancamento
-                ),
-
-                "total_nao_encontrado_op101": (
-                    total_nao_encontrado
-                ),
-
-                "total_erro_op101": (
-                    total_erro
-                ),
-
-                "modo": (
-                    "dry_run"
-                    if DRY_RUN
-                    else "producao"
-                ),
-            },
+            "resumo_auditoria": resumo_auditoria,
 
             "itens": itens_consultados,
         }

@@ -424,6 +424,9 @@ class OP101Ocorrencias:
         serie: str,
         numero: str,
         data_referencia: date | str,
+        *,
+        data_inicial: date | str | None = None,
+        data_final: date | str | None = None,
     ) -> CTRCConsultado:
         """
         Consulta completa e segura da OP101.
@@ -434,7 +437,15 @@ class OP101Ocorrencias:
 
         serie = self._normalizar_serie(serie)
         numero = self._normalizar_numero(numero)
-        data_ssw = self._data_ssw(data_referencia)
+        data_ini_ssw = self._data_ssw(
+            data_inicial if data_inicial is not None
+            else data_referencia
+        )
+
+        data_fim_ssw = self._data_ssw(
+            data_final if data_final is not None
+            else data_referencia
+        )
 
         if not serie:
             raise ValueError(
@@ -451,15 +462,15 @@ class OP101Ocorrencias:
         self.pesquisar_chave(
             serie=serie,
             numero=numero,
-            data_inicial=data_ssw,
-            data_final=data_ssw,
+            data_inicial=data_ini_ssw,
+            data_final=data_fim_ssw,
         )
 
         html = self.abrir_ctrc(
             serie=serie,
             numero=numero,
-            data_inicial=data_ssw,
-            data_final=data_ssw,
+            data_inicial=data_ini_ssw,
+            data_final=data_fim_ssw,
         )
 
         if self._pagina_indica_nao_encontrado(html):
