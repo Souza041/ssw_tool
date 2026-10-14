@@ -880,18 +880,25 @@ class Ocorrencia73Service:
                                 serie=item["serie"], numero=item["numero"],
                                 fluxo=item["fluxo"],
                                 data_inicial=data_ini, data_final=data_fim,
-                                enviar=lambda: op101.lancar_ocorrencia_73(
+                                enviar=lambda referencia: op101.lancar_ocorrencia_73(
                                     seq_ctrc=consulta.seq_ctrc,
                                     familia=consulta.familia,
                                     data_ocorrencia=data_referencia,
-                                    observacao=OBSERVACAO_LANCAMENTO,
+                                    observacao=(
+                                        f"{OBSERVACAO_LANCAMENTO} | REF:{referencia}"
+                                    ),
                                     local=consulta.local,
                                 ),
-                                confirmar=lambda: op101.confirmar_ocorrencia_73(
-                                    serie=item["serie"], numero=item["numero"],
-                                    seq_ctrc=consulta.seq_ctrc,
-                                    local=consulta.local, familia=consulta.familia,
-                                    data_referencia=data_referencia,
+                                confirmar=lambda referencia: (
+                                    op101.confirmar_ocorrencia_73(
+                                        serie=item["serie"],
+                                        numero=item["numero"],
+                                        seq_ctrc=consulta.seq_ctrc,
+                                        local=consulta.local,
+                                        familia=consulta.familia,
+                                        data_referencia=data_referencia,
+                                        referencia=referencia,
+                                    )
                                 ),
                             )
                             status = (

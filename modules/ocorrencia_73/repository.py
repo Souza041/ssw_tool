@@ -1,5 +1,6 @@
 
 import os
+import secrets
 from contextlib import contextmanager
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
@@ -178,6 +179,8 @@ class Ocorrencia73Repository:
         if data_inicial > data_final:
             raise ValueError("Janela de pesquisa inválida.")
 
+        referencia_nova = "OC73-" + secrets.token_hex(10).upper()
+
         with self.transacao() as conexao:
             with conexao.cursor() as cursor:
                 # A chave UNIQUE (serie, numero, 73)
@@ -198,11 +201,12 @@ class Ocorrencia73Repository:
                             data_inicial_pesquisa,
                             data_final_pesquisa,
                             status,
-                            reservado_em
+                            reservado_em,
+                            referencia
                         )
                         VALUES (
                             %s, %s, %s, 73, %s,
-                            %s, %s, 'reservado', %s
+                            %s, %s, 'reservado', %s, %s
                         )
                         """,
                         (
@@ -213,6 +217,7 @@ class Ocorrencia73Repository:
                             data_inicial,
                             data_final,
                             self.agora(),
+                            referencia_nova,
                         ),
                     )
                     reserva_criada = True
@@ -220,6 +225,9 @@ class Ocorrencia73Repository:
                 except IntegrityError as exc:
                     if exc.args[0] != 1062:
                         raise
+                    # Uma colisão de referência NÃO equivale a CTRC duplicado.
+                    if "uq_oc73_referencia" in str(exc):
+                        raise RuntimeError("Colisão de referência OC73; reserva abortada") from exc
 
                     # A duplicidade é esperada quando o CTRC
                     # já possui uma reserva persistente.
@@ -246,6 +254,7 @@ class Ocorrencia73Repository:
 
                 return {
                     "id": tentativa["id"],
+                    "referencia": tentativa["referencia"],
                     "status": tentativa["status"],
                     "execucao_id": tentativa["execucao_id"],
                     "reserva_criada": reserva_criada,
@@ -269,6 +278,7 @@ class Ocorrencia73Repository:
                     WHERE id = %s
                       AND execucao_id = %s
                       AND status = 'reservado'
+                      AND referencia IS NOT NULL
                       AND envio_iniciado_em IS NULL
                     """,
                     (
