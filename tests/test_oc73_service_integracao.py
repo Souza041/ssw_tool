@@ -40,7 +40,20 @@ def preparacao(itens):
 
 @pytest.fixture
 def ambiente(tmp_path, monkeypatch):
-    service = Ocorrencia73Service()
+    repo = MagicMock()
+
+    repo.iniciar_execucao.return_value = 101
+    repo.reservar_ctrc.return_value = {
+        "id": 501,
+        "status": "reservado",
+        "execucao_id": 101,
+        "reserva_criada": True,
+        "reserva_existente": False,
+        "autorizada_para_envio": False,
+    }
+    repo.iniciar_envio.return_value = True
+
+    service = Ocorrencia73Service(repository=repo)
     service.base_output_dir = tmp_path
 
     client = MagicMock()
@@ -58,8 +71,9 @@ def ambiente(tmp_path, monkeypatch):
             "modules.ocorrencia_73.service.OP101Ocorrencias",
             return_value=op101,
         ),
+        patch("modules.ocorrencia_73.service.DRY_RUN", True),
         patch(
-            "modules.ocorrencia_73.service.DRY_RUN",
+            "modules.ocorrencia_73.service.OC73_ENVIO_HABILITADO",
             True,
         ),
     ):
@@ -212,8 +226,8 @@ def test_limite_global_entre_cwb_e_big(
 
     op101.confirmar_ocorrencia_73.return_value = (
         SimpleNamespace(
-            success=True,
-            to_dict=lambda: {"success": True},
+            codigo="73",
+            to_dict=lambda: {"codigo": "73"},
         )
     )
 
@@ -303,8 +317,11 @@ def test_lancamento_sem_confirmacao(ambiente, monkeypatch):
     resultado = service.executar(DATA)
 
     assert resultado["total_lancado"] == 0
-    assert resultado["total_erro_lancamento"] == 1
-    assert resultado["itens"][0]["status"] == "erro_lancamento"
+    assert resultado["total_erro_lancamento"] == 0
+    assert resultado["itens"][0]["status"] == "incerto"
+
+    service.repository.marcar_incerto.assert_called_once()
+    service.repository.confirmar_lancamento.assert_not_called()
 
 
 def test_ssw_rejeitou_lancamento(ambiente, monkeypatch):
@@ -341,5 +358,11 @@ def test_ssw_rejeitou_lancamento(ambiente, monkeypatch):
     resultado = service.executar(DATA)
 
     assert resultado["total_lancado"] == 0
-    assert resultado["total_erro_lancamento"] == 1
-    op101.confirmar_ocorrencia_73.assert_not_called()
+    assert resultado["total_erro_lancamento"] == 0
+    assert resultado["itens"][0]["status"] == "incerto"
+
+    op101.confirmar_ocorrencia_73.assert_called_once()
+    service.repository.marcar_incerto.assert_called_once()
+    service.repository.confirmar_lancamento.assert_not_called()
+
+    op101.confirmar_ocorrencia_73.return_value = None

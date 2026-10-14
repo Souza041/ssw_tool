@@ -24,6 +24,9 @@ from operations.op101.ocorrencias import (
 from operations.op455.report import OP455Report
 from ssw.client import SSWClient
 
+from modules.ocorrencia_73.gate import PortaoOC73
+from modules.ocorrencia_73.repository import Ocorrencia73Repository
+
 from modules.ocorrencia_73.calendario import (
     calcular_janelas_oc73,
 )
@@ -52,9 +55,18 @@ OBSERVACAO_LANCAMENTO = (
     .strip()
 )
 
+# Trava adicional de producao.
+# Por padrao, nenhum lancamento real e autorizado.
+OC73_ENVIO_HABILITADO = (
+    os.getenv("OC73_ENVIO_HABILITADO", "")
+    .strip()
+    .upper() == "SIM"
+)
+
 
 class Ocorrencia73Service:
-    def __init__(self) -> None:
+    def __init__(self, repository=None) -> None:
+        self.repository = repository
         self.base_output_dir = Path(
             "downloads/ocorrencia_73"
         )
@@ -549,6 +561,49 @@ class Ocorrencia73Service:
         data_referencia: date | None = None,
         triggered_by: str = "manual",
     ) -> dict:
+        """Registra a execução e impede envio sem persistência válida."""
+        data_referencia = data_referencia or datetime.now(TIMEZONE).date()
+        # Simulações não precisam de acesso ao banco e nunca fazem POST.
+        if DRY_RUN:
+            return self._executar_interno(data_referencia, triggered_by, None)
+
+        # Em modo de produção, falha de conexão com banco interrompe tudo.
+        repo = self.repository if self.repository is not None else Ocorrencia73Repository()
+        self.repository = repo
+        execucao_id = repo.iniciar_execucao(
+            data_referencia=data_referencia,
+            triggered_by=triggered_by,
+            dry_run=False,
+        )
+        try:
+            resultado = self._executar_interno(data_referencia, triggered_by, execucao_id)
+        except BaseException as exc:
+            repo.finalizar_execucao(
+                execucao_id=execucao_id, status="erro",
+                mensagem_erro=f"{type(exc).__name__}: {exc}"[:2000],
+            )
+            raise
+        erros = sum(
+            1 for item in resultado.get("itens", [])
+            if item.get("status") in {"erro_consulta", "erro_persistencia", "incerto"}
+        )
+        repo.finalizar_execucao(
+            execucao_id=execucao_id,
+            status="concluido_com_pendencias" if erros else "concluido",
+            total_relatorio=resultado.get("total_relatorio", 0),
+            total_filtrado=resultado.get("total_filtrado", 0),
+            total_lancado=resultado.get("total_lancado", 0),
+            total_erros=erros,
+        )
+        resultado["execucao_id"] = execucao_id
+        return resultado
+
+    def _executar_interno(
+        self,
+        data_referencia: date,
+        triggered_by: str,
+        execucao_id: int | None,
+    ) -> dict:
         data_referencia = (
             data_referencia
             or datetime.now(TIMEZONE).date()
@@ -774,61 +829,53 @@ class Ocorrencia73Service:
                             f"{item['numero']}"
                         )
 
-                        if (
-                            CTRC_TESTE
-                            and ctrc_chave != CTRC_TESTE
-                        ):
+                        if CTRC_TESTE and ctrc_chave != CTRC_TESTE:
                             status = "ignorado_fora_teste"
                             lancamento = None
-
-                        elif (
-                            total_tentativas_lancamento
-                            >= MAX_LANCAMENTOS
-                        ):
+                        elif total_tentativas_lancamento >= MAX_LANCAMENTOS:
                             status = "ignorado_limite"
                             lancamento = None
-
+                        elif not OC73_ENVIO_HABILITADO:
+                            status = "bloqueado_seguranca"
+                            lancamento = None
+                        elif execucao_id is None:
+                            raise RuntimeError("Envio sem execução MySQL persistida")
                         else:
                             total_tentativas_lancamento += 1
-
-                            resultado_lancamento = (
-                                op101.lancar_ocorrencia_73(
+                            portao = PortaoOC73(self.repository)
+                            data_ini = date.fromisoformat(
+                                item.get("data_inicial_pesquisa") or data_referencia.isoformat()
+                            )
+                            data_fim = date.fromisoformat(
+                                item.get("data_final_pesquisa") or data_referencia.isoformat()
+                            )
+                            resultado_portao = portao.processar(
+                                execucao_id=execucao_id,
+                                serie=item["serie"], numero=item["numero"],
+                                fluxo=item["fluxo"],
+                                data_inicial=data_ini, data_final=data_fim,
+                                enviar=lambda: op101.lancar_ocorrencia_73(
                                     seq_ctrc=consulta.seq_ctrc,
                                     familia=consulta.familia,
                                     data_ocorrencia=data_referencia,
-                                    observacao=(
-                                        OBSERVACAO_LANCAMENTO
-                                    ),
+                                    observacao=OBSERVACAO_LANCAMENTO,
                                     local=consulta.local,
-                                )
-                            )
-
-                            confirmada = None
-
-                            if resultado_lancamento.success:
-                                confirmada = op101.confirmar_ocorrencia_73(
-                                    serie=item["serie"],
-                                    numero=item["numero"],
-                                    seq_ctrc=consulta.seq_ctrc,
-                                    local=consulta.local,
-                                    familia=consulta.familia,
-                                    data_referencia=data_referencia,
-                                )
-
-                            if resultado_lancamento.success and confirmada is not None:
-                                status = "lancada"
-                                total_lancado += 1
-                            else:
-                                status = "erro_lancamento"
-                                total_erro_lancamento += 1
-
-                            lancamento = {
-                                **resultado_lancamento.to_dict(),
-                                "confirmada_no_historico": (
-                                    confirmada.to_dict()
-                                    if confirmada
-                                    else None
                                 ),
+                                confirmar=lambda: op101.confirmar_ocorrencia_73(
+                                    serie=item["serie"], numero=item["numero"],
+                                    seq_ctrc=consulta.seq_ctrc,
+                                    local=consulta.local, familia=consulta.familia,
+                                    data_referencia=data_referencia,
+                                ),
+                            )
+                            status = (
+                                "lancada" if resultado_portao.status == "confirmado"
+                                else resultado_portao.status
+                            )
+                            lancamento = {
+                                "tentativa_id": resultado_portao.tentativa_id,
+                                "status": resultado_portao.status,
+                                "detalhe": resultado_portao.detalhe,
                             }
 
                     print(
@@ -857,6 +904,11 @@ class Ocorrencia73Service:
                     }
 
             except Exception as erro:
+                if not DRY_RUN and OC73_ENVIO_HABILITADO:
+                    raise RuntimeError(
+                        f"OC73 interrompida; verificar estado MySQL/SSW para "
+                        f"{item['serie']}{item['numero']}: {erro}"
+                    ) from erro
                 item_processado = {
                     **item,
                     "op101": {

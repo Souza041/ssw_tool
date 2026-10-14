@@ -3,6 +3,7 @@ import time
 
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from html import unescape
 
 
@@ -44,7 +45,7 @@ class ResultadoLancamento:
 
     def to_dict(self) -> dict:
         return asdict(self)
-    
+
 class OP101Ocorrencias:
     """
     Consulta CTRCs na OP101.
@@ -697,7 +698,9 @@ class OP101Ocorrencias:
 
             return texto
 
-        return datetime.now().strftime("%H%M")
+        return datetime.now(
+            ZoneInfo("America/Sao_Paulo")
+        ).strftime("%H%M")
 
     def consultar_codigo_ocorrencia(
         self,
