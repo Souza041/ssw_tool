@@ -64,6 +64,28 @@ OC73_ENVIO_HABILITADO = (
 )
 
 
+# Classificação única para auditoria e fechamento da execução.
+# Incerto é pendência de reconciliação, não erro técnico confirmado.
+OC73_STATUS_INCERTO = frozenset({"incerto"})
+OC73_STATUS_BLOQUEADO = frozenset({
+    "bloqueado_reserva_existente", "bloqueado_transicao", "bloqueado_seguranca",
+})
+OC73_STATUS_ERRO_TECNICO = frozenset({
+    "erro_consulta", "erro_persistencia", "erro_lancamento",
+})
+
+
+def calcular_indicadores_oc73(itens: list[dict]) -> dict[str, int]:
+    """Classifica estados sem confundir tentativa incerta com lançamento."""
+    estados = [item.get("status") for item in itens]
+    return {
+        "total_incerto": sum(x in OC73_STATUS_INCERTO for x in estados),
+        "total_bloqueado": sum(x in OC73_STATUS_BLOQUEADO for x in estados),
+        "total_erro_tecnico": sum(x in OC73_STATUS_ERRO_TECNICO for x in estados),
+    }
+
+
+
 class Ocorrencia73Service:
     def __init__(self, repository=None) -> None:
         self.repository = repository
@@ -583,17 +605,19 @@ class Ocorrencia73Service:
                 mensagem_erro=f"{type(exc).__name__}: {exc}"[:2000],
             )
             raise
-        erros = sum(
-            1 for item in resultado.get("itens", [])
-            if item.get("status") in {"erro_consulta", "erro_persistencia", "incerto"}
-        )
+        indicadores = calcular_indicadores_oc73(resultado.get("itens", []))
+        resultado.update(indicadores)
+        pendencias = sum(indicadores.values())
+        # Compatibilidade: total_erros inclui falhas técnicas e estados incertos,
+        # mas não bloqueios deliberados. O estado da execução considera os três.
+        total_erros = indicadores["total_erro_tecnico"] + indicadores["total_incerto"]
         repo.finalizar_execucao(
             execucao_id=execucao_id,
-            status="concluido_com_pendencias" if erros else "concluido",
+            status="concluido_com_pendencias" if pendencias else "concluido",
             total_relatorio=resultado.get("total_relatorio", 0),
             total_filtrado=resultado.get("total_filtrado", 0),
             total_lancado=resultado.get("total_lancado", 0),
-            total_erros=erros,
+            total_erros=total_erros,
         )
         resultado["execucao_id"] = execucao_id
         return resultado
@@ -631,6 +655,7 @@ class Ocorrencia73Service:
                 "total_relatorio": 0,
                 "total_filtrado": 0,
                 "itens": [],
+                **calcular_indicadores_oc73([]),
             }
 
         client = self.criar_client_logado()
@@ -712,6 +737,7 @@ class Ocorrencia73Service:
                 "total_lancado": 0,
                 "total_erro_lancamento": 0,
                 "itens": [],
+                **calcular_indicadores_oc73([]),
                 "message": "Nenhum CTRC atendeu aos filtros.",
             }
 
@@ -997,6 +1023,8 @@ class Ocorrencia73Service:
             )
         )
 
+        indicadores = calcular_indicadores_oc73(itens_consultados)
+
         resumo_auditoria.update({
             "total_consultado_op101": len(itens_consultados),
             "total_encontrado_op101": total_encontrado,
@@ -1006,6 +1034,7 @@ class Ocorrencia73Service:
             "total_pendente_lancamento": total_pendente_lancamento,
             "total_lancado": total_lancado,
             "total_erro_lancamento": total_erro_lancamento,
+            **indicadores,
         })
 
         print()
@@ -1026,6 +1055,9 @@ class Ocorrencia73Service:
         print(f"OC73 já existente.....: {total_ja_existia}")
         print(f"OC73 lançadas.........: {total_lancado}")
         print(f"Erros de lançamento...: {total_erro_lancamento}")
+        print(f"Envios incertos........: {indicadores['total_incerto']}")
+        print(f"Bloqueios..............: {indicadores['total_bloqueado']}")
+        print(f"Erros técnicos.........: {indicadores['total_erro_tecnico']}")
         print("=" * 62)
 
         resultado = {
@@ -1087,6 +1119,7 @@ class Ocorrencia73Service:
             "resumo_auditoria": resumo_auditoria,
 
             "itens": itens_consultados,
+            **indicadores,
         }
 
         arquivo_resultado = (
