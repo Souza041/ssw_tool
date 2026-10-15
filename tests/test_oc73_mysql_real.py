@@ -13,9 +13,10 @@ Todos os CTRCs usados são fictícios.
 """
 
 import os
+import multiprocessing
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
+from datetime import date, timedelta
 from threading import Barrier
 
 import pytest
@@ -104,6 +105,168 @@ def criar_repository():
     return Ocorrencia73Repository(
         connection_factory=conectar
     )
+
+
+def _data_scheduler_unica():
+    deslocamento = int(uuid.uuid4().hex[:6], 16) % 3000
+    return date(2090, 1, 1) + timedelta(days=deslocamento)
+
+
+def _reservar_scheduler_em_processo(
+    data_iso,
+    fluxo,
+    sinal_inicio,
+    resultados,
+):
+    try:
+        if not sinal_inicio.wait(timeout=15):
+            raise TimeoutError("barreira multiprocesso não liberada")
+        resultado = criar_repository().reservar_execucao_agendada(
+            data_referencia=date.fromisoformat(data_iso),
+            fluxo=fluxo,
+            dry_run=True,
+        )
+        resultados.put(("ok", resultado))
+    except BaseException as exc:
+        resultados.put(("erro", f"{type(exc).__name__}: {exc}"))
+
+
+def _reservar_scheduler_e_aguardar_queda(
+    data_iso,
+    fluxo,
+    canal,
+):
+    try:
+        resultado = criar_repository().reservar_execucao_agendada(
+            data_referencia=date.fromisoformat(data_iso),
+            fluxo=fluxo,
+            dry_run=True,
+        )
+        canal.send(("ok", resultado))
+        canal.close()
+        multiprocessing.Event().wait(60)
+    except BaseException as exc:
+        canal.send(("erro", f"{type(exc).__name__}: {exc}"))
+        canal.close()
+
+
+def _executar_reservas_em_processos(data_referencia, fluxos):
+    contexto = multiprocessing.get_context("spawn")
+    sinal_inicio = contexto.Event()
+    resultados = contexto.Queue()
+    processos = [
+        contexto.Process(
+            target=_reservar_scheduler_em_processo,
+            args=(
+                data_referencia.isoformat(),
+                fluxo,
+                sinal_inicio,
+                resultados,
+            ),
+        )
+        for fluxo in fluxos
+    ]
+
+    try:
+        for processo in processos:
+            processo.start()
+        sinal_inicio.set()
+
+        recebidos = [resultados.get(timeout=30) for _ in processos]
+        for processo in processos:
+            processo.join(timeout=30)
+            assert processo.exitcode == 0
+    finally:
+        for processo in processos:
+            if processo.is_alive():
+                processo.terminate()
+                processo.join(timeout=15)
+
+    erros = [detalhe for estado, detalhe in recebidos if estado == "erro"]
+    assert erros == []
+    return [detalhe for _, detalhe in recebidos]
+
+
+def remover_reservas_scheduler(repo, data_referencia, execucoes):
+    ids = sorted({
+        int(execucao_id)
+        for execucao_id in execucoes
+        if execucao_id is not None
+    })
+    if not ids:
+        return
+
+    with repo.transacao() as conexao:
+        validar_destino_laboratorio(conexao)
+        with conexao.cursor() as cursor:
+            placeholders = ", ".join(["%s"] * len(ids))
+            cursor.execute(
+                f"""
+                DELETE FROM oc73_execucoes
+                WHERE id IN ({placeholders})
+                  AND data_referencia = %s
+                  AND triggered_by IN ('scheduler:CWB', 'scheduler:BIG')
+                  AND dry_run = 1
+                """,
+                tuple(ids) + (data_referencia,),
+            )
+
+
+class _CursorComFalha:
+    def __init__(self, cursor, trecho_sql):
+        self._cursor = cursor
+        self._trecho_sql = trecho_sql
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self._cursor.close()
+
+    def execute(self, sql, parametros=None):
+        if self._trecho_sql in sql:
+            raise RuntimeError(f"falha injetada em {self._trecho_sql}")
+        return self._cursor.execute(sql, parametros)
+
+    def fetchone(self):
+        return self._cursor.fetchone()
+
+    @property
+    def lastrowid(self):
+        return self._cursor.lastrowid
+
+
+class _ConexaoComFalhaSQL:
+    def __init__(self, conexao, trecho_sql):
+        self._conexao = conexao
+        self._trecho_sql = trecho_sql
+
+    def cursor(self):
+        return _CursorComFalha(
+            self._conexao.cursor(),
+            self._trecho_sql,
+        )
+
+    def commit(self):
+        return self._conexao.commit()
+
+    def rollback(self):
+        return self._conexao.rollback()
+
+    def close(self):
+        return self._conexao.close()
+
+
+class _ConexaoPerdidaNoCommit(_ConexaoComFalhaSQL):
+    def __init__(self, conexao):
+        super().__init__(conexao, trecho_sql="")
+
+    def cursor(self):
+        return self._conexao.cursor()
+
+    def commit(self):
+        self._conexao.close()
+        raise ConnectionError("conexão perdida antes do commit")
 
 
 def remover_registros_teste(
@@ -826,4 +989,222 @@ def test_reconciliacao_concorrente_mysql_real():
             execucoes,
             serie,
             numero,
+        )
+
+
+def test_scheduler_dois_processos_mesmo_fluxo_data():
+    data_referencia = _data_scheduler_unica()
+    repo = criar_repository()
+    resultados = []
+
+    try:
+        resultados = _executar_reservas_em_processos(
+            data_referencia,
+            ("CWB", "CWB"),
+        )
+
+        assert sum(item["reservada"] for item in resultados) == 1
+        assert {
+            item["motivo"] for item in resultados
+        } <= {"reservada", "trava_ocupada", "execucao_ja_registrada"}
+
+        with repo.transacao() as conexao:
+            validar_destino_laboratorio(conexao)
+            with conexao.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS total
+                    FROM oc73_execucoes
+                    WHERE data_referencia = %s
+                      AND triggered_by = 'scheduler:CWB'
+                    """,
+                    (data_referencia,),
+                )
+                assert cursor.fetchone()["total"] == 1
+    finally:
+        remover_reservas_scheduler(
+            repo,
+            data_referencia,
+            [item.get("execucao_id") for item in resultados],
+        )
+
+
+def test_scheduler_dois_processos_fluxos_independentes():
+    data_referencia = _data_scheduler_unica()
+    repo = criar_repository()
+    resultados = []
+
+    try:
+        resultados = _executar_reservas_em_processos(
+            data_referencia,
+            ("CWB", "BIG"),
+        )
+
+        assert all(item["reservada"] for item in resultados)
+        assert {
+            item["triggered_by"] for item in resultados
+        } == {"scheduler:CWB", "scheduler:BIG"}
+        assert len({item["execucao_id"] for item in resultados}) == 2
+    finally:
+        remover_reservas_scheduler(
+            repo,
+            data_referencia,
+            [item.get("execucao_id") for item in resultados],
+        )
+
+
+def test_scheduler_queda_apos_reserva_e_reinicio_nao_repetem():
+    data_referencia = _data_scheduler_unica()
+    contexto = multiprocessing.get_context("spawn")
+    receptor, emissor = contexto.Pipe(duplex=False)
+    processo = contexto.Process(
+        target=_reservar_scheduler_e_aguardar_queda,
+        args=(data_referencia.isoformat(), "CWB", emissor),
+    )
+    repo = criar_repository()
+    primeira = None
+    repetida = None
+
+    try:
+        processo.start()
+        assert receptor.poll(30), "processo não confirmou a reserva"
+        estado, primeira = receptor.recv()
+        assert estado == "ok"
+        assert primeira["reservada"] is True
+
+        processo.terminate()
+        processo.join(timeout=15)
+        assert not processo.is_alive()
+
+        repetida = criar_repository().reservar_execucao_agendada(
+            data_referencia=data_referencia,
+            fluxo="CWB",
+            dry_run=True,
+        )
+        assert repetida["reservada"] is False
+        assert repetida["motivo"] == "execucao_ja_registrada"
+        assert repetida["status"] == "executando"
+        assert repetida["execucao_id"] == primeira["execucao_id"]
+    finally:
+        if processo.is_alive():
+            processo.terminate()
+            processo.join(timeout=15)
+        remover_reservas_scheduler(
+            repo,
+            data_referencia,
+            [
+                primeira.get("execucao_id") if primeira else None,
+                repetida.get("execucao_id") if repetida else None,
+            ],
+        )
+
+
+def test_scheduler_excecao_transacional_libera_trava_real():
+    data_referencia = _data_scheduler_unica()
+    repo_base = criar_repository()
+    conexao_real = repo_base.connection_factory()
+    repo_falho = Ocorrencia73Repository(
+        connection_factory=lambda: _ConexaoComFalhaSQL(
+            conexao_real,
+            "FROM oc73_execucoes",
+        )
+    )
+    reserva_posterior = None
+
+    try:
+        with pytest.raises(RuntimeError, match="falha injetada"):
+            repo_falho.reservar_execucao_agendada(
+                data_referencia=data_referencia,
+                fluxo="CWB",
+                dry_run=True,
+            )
+
+        reserva_posterior = criar_repository().reservar_execucao_agendada(
+            data_referencia=data_referencia,
+            fluxo="CWB",
+            dry_run=True,
+        )
+        assert reserva_posterior["reservada"] is True
+    finally:
+        remover_reservas_scheduler(
+            repo_base,
+            data_referencia,
+            [
+                reserva_posterior.get("execucao_id")
+                if reserva_posterior else None
+            ],
+        )
+
+
+def test_scheduler_perda_conexao_falha_sem_reserva_fantasma():
+    data_referencia = _data_scheduler_unica()
+    repo_base = criar_repository()
+    conexao_real = repo_base.connection_factory()
+    repo_falho = Ocorrencia73Repository(
+        connection_factory=lambda: _ConexaoPerdidaNoCommit(conexao_real)
+    )
+    reserva_posterior = None
+
+    try:
+        with pytest.raises(Exception):
+            repo_falho.reservar_execucao_agendada(
+                data_referencia=data_referencia,
+                fluxo="BIG",
+                dry_run=True,
+            )
+
+        reserva_posterior = criar_repository().reservar_execucao_agendada(
+            data_referencia=data_referencia,
+            fluxo="BIG",
+            dry_run=True,
+        )
+        assert reserva_posterior["reservada"] is True
+    finally:
+        remover_reservas_scheduler(
+            repo_base,
+            data_referencia,
+            [
+                reserva_posterior.get("execucao_id")
+                if reserva_posterior else None
+            ],
+        )
+
+
+def test_scheduler_falha_release_lock_fecha_sessao_real():
+    data_referencia = _data_scheduler_unica()
+    repo_base = criar_repository()
+    conexao_real = repo_base.connection_factory()
+    repo_falho = Ocorrencia73Repository(
+        connection_factory=lambda: _ConexaoComFalhaSQL(
+            conexao_real,
+            "RELEASE_LOCK",
+        )
+    )
+    primeira = None
+    repetida = None
+
+    try:
+        primeira = repo_falho.reservar_execucao_agendada(
+            data_referencia=data_referencia,
+            fluxo="BIG",
+            dry_run=True,
+        )
+        assert primeira["reservada"] is True
+
+        repetida = criar_repository().reservar_execucao_agendada(
+            data_referencia=data_referencia,
+            fluxo="BIG",
+            dry_run=True,
+        )
+        assert repetida["reservada"] is False
+        assert repetida["motivo"] == "execucao_ja_registrada"
+        assert repetida["execucao_id"] == primeira["execucao_id"]
+    finally:
+        remover_reservas_scheduler(
+            repo_base,
+            data_referencia,
+            [
+                primeira.get("execucao_id") if primeira else None,
+                repetida.get("execucao_id") if repetida else None,
+            ],
         )

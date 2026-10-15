@@ -7,6 +7,36 @@ TIMEZONE = ZoneInfo("America/Sao_Paulo")
 
 
 @dataclass(frozen=True)
+class AgendamentoOC73:
+    fluxo: str
+    dias_semana: tuple[int, ...]
+    hora: int = 23
+    minuto: int = 30
+
+    @property
+    def dias_apscheduler(self) -> str:
+        nomes = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+        return ",".join(nomes[dia] for dia in self.dias_semana)
+
+
+AGENDAMENTOS_OC73 = (
+    AgendamentoOC73(
+        fluxo="CWB",
+        dias_semana=(0, 1, 2, 3, 4, 6),
+    ),
+    AgendamentoOC73(
+        fluxo="BIG",
+        dias_semana=(0, 1, 2, 3),
+    ),
+)
+
+AGENDAMENTO_POR_FLUXO = {
+    agendamento.fluxo: agendamento
+    for agendamento in AGENDAMENTOS_OC73
+}
+
+
+@dataclass(frozen=True)
 class JanelaOC73:
     fluxo: str
     data_inicial: date
@@ -23,10 +53,16 @@ class JanelaOC73:
 
 def calcular_janelas_oc73(
     data_referencia: date | None = None,
+    fluxo: str | None = None,
 ) -> list[JanelaOC73]:
 
     if data_referencia is None:
         data_referencia = datetime.now(TIMEZONE).date()
+
+    if fluxo is not None:
+        fluxo = str(fluxo).strip().upper()
+        if fluxo not in AGENDAMENTO_POR_FLUXO:
+            raise ValueError(f"Fluxo OC73 inválido: {fluxo!r}")
 
     dia_semana = data_referencia.weekday()
     janelas = []
@@ -42,16 +78,23 @@ def calcular_janelas_oc73(
         else data_referencia
     )
 
-    janelas.append(
-        JanelaOC73(
-            fluxo="CWB",
-            data_inicial=inicio_cwb,
-            data_final=data_referencia,
+    if (
+        fluxo in {None, "CWB"}
+        and dia_semana in AGENDAMENTO_POR_FLUXO["CWB"].dias_semana
+    ):
+        janelas.append(
+            JanelaOC73(
+                fluxo="CWB",
+                data_inicial=inicio_cwb,
+                data_final=data_referencia,
+            )
         )
-    )
 
     # BIG: segunda a quinta.
-    if dia_semana in (0, 1, 2, 3):
+    if (
+        fluxo in {None, "BIG"}
+        and dia_semana in AGENDAMENTO_POR_FLUXO["BIG"].dias_semana
+    ):
         janelas.append(
             JanelaOC73(
                 fluxo="BIG",

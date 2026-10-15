@@ -38,11 +38,3 @@ DRY_RUN = (
     .lower()
     in {"1", "true", "sim", "yes"}
 )
-
-HORA_EXECUCAO = int(
-    os.getenv("OCORRENCIA_73_HORA", "19")
-)
-
-MINUTO_EXECUCAO = int(
-    os.getenv("OCORRENCIA_73_MINUTO", "0")
-)

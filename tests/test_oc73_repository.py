@@ -79,6 +79,222 @@ def test_iniciar_execucao(ambiente):
     factory.assert_called_once()
 
 
+def test_reserva_execucao_agendada_distribuida(ambiente):
+    repo, conexao, cursor, factory = ambiente
+    cursor.fetchone.side_effect = [
+        {"adquirida": 1},
+        None,
+    ]
+    cursor.lastrowid = 77
+
+    resultado = repo.reservar_execucao_agendada(
+        data_referencia=DATA,
+        fluxo="CWB",
+        dry_run=True,
+    )
+
+    assert resultado == {
+        "reservada": True,
+        "motivo": "reservada",
+        "execucao_id": 77,
+        "triggered_by": "scheduler:CWB",
+    }
+    sqls = [chamada.args[0] for chamada in cursor.execute.call_args_list]
+    assert "GET_LOCK" in sqls[0]
+    assert "FROM oc73_execucoes" in sqls[1]
+    assert "INSERT INTO oc73_execucoes" in sqls[2]
+    assert "RELEASE_LOCK" in sqls[3]
+    conexao.commit.assert_called_once()
+    conexao.close.assert_called_once()
+    factory.assert_called_once()
+
+
+def test_reserva_agendada_existente_bloqueia_repeticao(ambiente):
+    repo, conexao, cursor, _ = ambiente
+    cursor.fetchone.side_effect = [
+        {"adquirida": 1},
+        {"id": 55, "status": "concluido"},
+    ]
+
+    resultado = repo.reservar_execucao_agendada(
+        data_referencia=DATA,
+        fluxo="BIG",
+        dry_run=False,
+    )
+
+    assert resultado["reservada"] is False
+    assert resultado["motivo"] == "execucao_ja_registrada"
+    assert resultado["execucao_id"] == 55
+    conexao.rollback.assert_called_once()
+    conexao.commit.assert_not_called()
+    conexao.close.assert_called_once()
+
+
+def test_execucao_em_andamento_bloqueia_reinicio(ambiente):
+    repo, conexao, cursor, _ = ambiente
+    cursor.fetchone.side_effect = [
+        {"adquirida": 1},
+        {"id": 56, "status": "executando"},
+    ]
+
+    resultado = repo.reservar_execucao_agendada(
+        data_referencia=DATA,
+        fluxo="CWB",
+        dry_run=True,
+    )
+
+    assert resultado["reservada"] is False
+    assert resultado["status"] == "executando"
+    assert resultado["execucao_id"] == 56
+    conexao.commit.assert_not_called()
+
+
+def test_reserva_agendada_com_trava_ocupada_falha_fechada(ambiente):
+    repo, conexao, cursor, _ = ambiente
+    cursor.fetchone.return_value = {"adquirida": 0}
+
+    resultado = repo.reservar_execucao_agendada(
+        data_referencia=DATA,
+        fluxo="CWB",
+        dry_run=False,
+    )
+
+    assert resultado["reservada"] is False
+    assert resultado["motivo"] == "trava_ocupada"
+    assert cursor.execute.call_count == 1
+    conexao.commit.assert_not_called()
+    conexao.close.assert_called_once()
+
+
+def test_excecao_durante_reserva_libera_trava_e_conexao(ambiente):
+    repo, conexao, cursor, _ = ambiente
+    cursor.fetchone.return_value = {"adquirida": 1}
+    cursor.execute.side_effect = [
+        None,
+        RuntimeError("falha durante SELECT"),
+        None,
+    ]
+
+    with pytest.raises(RuntimeError, match="falha durante SELECT"):
+        repo.reservar_execucao_agendada(
+            data_referencia=DATA,
+            fluxo="CWB",
+            dry_run=True,
+        )
+
+    sqls = [chamada.args[0] for chamada in cursor.execute.call_args_list]
+    assert "GET_LOCK" in sqls[0]
+    assert "FROM oc73_execucoes" in sqls[1]
+    assert "RELEASE_LOCK" in sqls[2]
+    conexao.rollback.assert_called_once()
+    conexao.close.assert_called_once()
+
+
+def test_perda_de_conexao_no_commit_falha_fechada(ambiente):
+    repo, conexao, cursor, _ = ambiente
+    cursor.fetchone.side_effect = [
+        {"adquirida": 1},
+        None,
+    ]
+    cursor.lastrowid = 90
+    conexao.commit.side_effect = ConnectionError("conexão perdida")
+
+    with pytest.raises(ConnectionError, match="conexão perdida"):
+        repo.reservar_execucao_agendada(
+            data_referencia=DATA,
+            fluxo="CWB",
+            dry_run=False,
+        )
+
+    conexao.rollback.assert_called_once()
+    conexao.close.assert_called_once()
+
+
+def test_falha_no_release_fecha_conexao_sem_perder_reserva(ambiente):
+    repo, conexao, cursor, _ = ambiente
+    cursor.fetchone.side_effect = [
+        {"adquirida": 1},
+        None,
+    ]
+    cursor.lastrowid = 91
+    cursor.execute.side_effect = [
+        None,
+        None,
+        None,
+        RuntimeError("RELEASE_LOCK indisponível"),
+    ]
+
+    resultado = repo.reservar_execucao_agendada(
+        data_referencia=DATA,
+        fluxo="BIG",
+        dry_run=True,
+    )
+
+    assert resultado["reservada"] is True
+    assert resultado["execucao_id"] == 91
+    conexao.commit.assert_called_once()
+    conexao.close.assert_called_once()
+
+
+def test_commit_ocorre_antes_do_release_lock(ambiente):
+    repo, conexao, cursor, _ = ambiente
+    eventos = []
+    respostas = iter([{"adquirida": 1}, None])
+
+    def executar(sql, parametros=None):
+        if "GET_LOCK" in sql:
+            eventos.append("get_lock")
+        elif "INSERT INTO oc73_execucoes" in sql:
+            eventos.append("insert")
+        elif "RELEASE_LOCK" in sql:
+            eventos.append("release_lock")
+
+    cursor.execute.side_effect = executar
+    cursor.fetchone.side_effect = lambda: next(respostas)
+    cursor.lastrowid = 92
+    conexao.commit.side_effect = lambda: eventos.append("commit")
+
+    repo.reservar_execucao_agendada(
+        data_referencia=DATA,
+        fluxo="CWB",
+        dry_run=True,
+    )
+
+    assert eventos == [
+        "get_lock",
+        "insert",
+        "commit",
+        "release_lock",
+    ]
+
+
+def test_cwb_e_big_usam_nomes_de_trava_independentes():
+    nomes = []
+
+    def executar_fluxo(fluxo):
+        conexao = MagicMock()
+        cursor = MagicMock()
+        conexao.cursor.return_value.__enter__.return_value = cursor
+        cursor.fetchone.return_value = {"adquirida": 0}
+        repo = Ocorrencia73Repository(
+            connection_factory=lambda: conexao
+        )
+        repo.reservar_execucao_agendada(
+            data_referencia=DATA,
+            fluxo=fluxo,
+            dry_run=True,
+        )
+        nomes.append(cursor.execute.call_args.args[1][0])
+
+    executar_fluxo("CWB")
+    executar_fluxo("BIG")
+
+    assert nomes == [
+        "ssw_tool:oc73:CWB:2026-10-12",
+        "ssw_tool:oc73:BIG:2026-10-12",
+    ]
+
+
 def test_finalizar_execucao(ambiente):
     repo, conexao, cursor, _ = ambiente
 

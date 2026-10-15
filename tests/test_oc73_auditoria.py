@@ -53,3 +53,37 @@ def test_fechamento_persistido(monkeypatch, tmp_path, estados, status_final, tot
     repo.finalizar_execucao.assert_called_once()
     assert repo.finalizar_execucao.call_args.kwargs["status"] == status_final
     assert repo.finalizar_execucao.call_args.kwargs["total_erros"] == total_erros
+
+
+def test_execucao_agendada_reutiliza_reserva_persistida(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr("modules.ocorrencia_73.service.DRY_RUN", True)
+    repo = MagicMock()
+    service = Ocorrencia73Service(repository=repo)
+    service.base_output_dir = tmp_path
+    interno = MagicMock(return_value={
+        "itens": [],
+        "total_relatorio": 0,
+        "total_filtrado": 0,
+        "total_lancado": 0,
+    })
+    monkeypatch.setattr(service, "_executar_interno", interno)
+
+    resultado = service.executar(
+        DATA,
+        triggered_by="scheduler:CWB",
+        fluxo="CWB",
+        execucao_id_reservada=321,
+    )
+
+    assert resultado["execucao_id"] == 321
+    repo.iniciar_execucao.assert_not_called()
+    interno.assert_called_once_with(
+        DATA,
+        "scheduler:CWB",
+        321,
+        "CWB",
+    )
+    repo.finalizar_execucao.assert_called_once()

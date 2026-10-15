@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import mimetypes
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles

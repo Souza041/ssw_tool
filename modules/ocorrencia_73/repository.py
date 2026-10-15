@@ -96,6 +96,117 @@ class Ocorrencia73Repository:
                 )
                 return cursor.lastrowid
 
+    def reservar_execucao_agendada(
+        self,
+        *,
+        data_referencia: date,
+        fluxo: str,
+        dry_run: bool,
+    ) -> dict:
+        """Reserva uma execução por fluxo/data entre processos.
+
+        GET_LOCK serializa a verificação e a inserção no servidor MySQL.
+        O registro em oc73_execucoes mantém a decisão após a liberação
+        da trava e também bloqueia uma repetição depois de reinício.
+        """
+        if not isinstance(data_referencia, date):
+            raise ValueError("Data de referência inválida.")
+
+        fluxo = str(fluxo or "").strip().upper()
+        if fluxo not in {"CWB", "BIG"}:
+            raise ValueError("Fluxo agendado inválido.")
+
+        triggered_by = f"scheduler:{fluxo}"
+        nome_trava = (
+            f"ssw_tool:oc73:{fluxo}:"
+            f"{data_referencia.isoformat()}"
+        )
+        conexao = self.connection_factory()
+        trava_adquirida = False
+
+        try:
+            with conexao.cursor() as cursor:
+                cursor.execute(
+                    "SELECT GET_LOCK(%s, 0) AS adquirida",
+                    (nome_trava,),
+                )
+                linha = cursor.fetchone() or {}
+                trava_adquirida = linha.get("adquirida") == 1
+
+                if not trava_adquirida:
+                    return {
+                        "reservada": False,
+                        "motivo": "trava_ocupada",
+                        "execucao_id": None,
+                        "triggered_by": triggered_by,
+                    }
+
+                cursor.execute(
+                    """
+                    SELECT id, status
+                    FROM oc73_execucoes
+                    WHERE data_referencia = %s
+                      AND triggered_by = %s
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (data_referencia, triggered_by),
+                )
+                existente = cursor.fetchone()
+
+                if existente is not None:
+                    conexao.rollback()
+                    return {
+                        "reservada": False,
+                        "motivo": "execucao_ja_registrada",
+                        "execucao_id": existente["id"],
+                        "status": existente["status"],
+                        "triggered_by": triggered_by,
+                    }
+
+                cursor.execute(
+                    """
+                    INSERT INTO oc73_execucoes (
+                        data_referencia,
+                        triggered_by,
+                        status,
+                        dry_run,
+                        iniciado_em
+                    )
+                    VALUES (%s, %s, 'executando', %s, %s)
+                    """,
+                    (
+                        data_referencia,
+                        triggered_by,
+                        int(dry_run),
+                        self.agora(),
+                    ),
+                )
+                execucao_id = cursor.lastrowid
+                conexao.commit()
+
+                return {
+                    "reservada": True,
+                    "motivo": "reservada",
+                    "execucao_id": execucao_id,
+                    "triggered_by": triggered_by,
+                }
+        except Exception:
+            conexao.rollback()
+            raise
+        finally:
+            if trava_adquirida:
+                try:
+                    with conexao.cursor() as cursor:
+                        cursor.execute(
+                            "SELECT RELEASE_LOCK(%s)",
+                            (nome_trava,),
+                        )
+                except Exception:
+                    # O fechamento da conexão também libera GET_LOCK.
+                    pass
+            conexao.close()
+
     def finalizar_execucao(
         self,
         execucao_id: int,

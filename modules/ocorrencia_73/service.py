@@ -473,6 +473,7 @@ class Ocorrencia73Service:
         op455: OP455Report,
         data_referencia: date,
         diretorio_original: Path,
+        fluxo: str | None = None,
     ) -> dict:
         """
         Gera e filtra os relatórios CWB e BIG.
@@ -481,7 +482,8 @@ class Ocorrencia73Service:
         """
 
         janelas = calcular_janelas_oc73(
-            data_referencia
+            data_referencia,
+            fluxo=fluxo,
         )
 
         lotes = []
@@ -574,23 +576,50 @@ class Ocorrencia73Service:
         self,
         data_referencia: date | None = None,
         triggered_by: str = "manual",
+        fluxo: str | None = None,
+        execucao_id_reservada: int | None = None,
     ) -> dict:
         """Registra a execução e impede envio sem persistência válida."""
         data_referencia = data_referencia or datetime.now(TIMEZONE).date()
-        # Simulações não precisam de acesso ao banco e nunca fazem POST.
-        if DRY_RUN:
-            return self._executar_interno(data_referencia, triggered_by, None)
 
-        # Em modo de produção, falha de conexão com banco interrompe tudo.
-        repo = self.repository if self.repository is not None else Ocorrencia73Repository()
-        self.repository = repo
-        execucao_id = repo.iniciar_execucao(
-            data_referencia=data_referencia,
-            triggered_by=triggered_by,
-            dry_run=False,
+        if execucao_id_reservada is None and DRY_RUN:
+            # Simulações manuais não precisam de banco e nunca fazem POST.
+            return self._executar_interno(
+                data_referencia,
+                triggered_by,
+                None,
+                fluxo,
+            )
+
+        repo = (
+            self.repository
+            if self.repository is not None
+            else Ocorrencia73Repository()
         )
+        self.repository = repo
+
+        if execucao_id_reservada is not None:
+            if (
+                not isinstance(execucao_id_reservada, int)
+                or execucao_id_reservada <= 0
+            ):
+                raise ValueError("Reserva de execução agendada inválida.")
+            execucao_id = execucao_id_reservada
+        else:
+            # Em modo de produção, a execução é persistida antes do fluxo.
+            execucao_id = repo.iniciar_execucao(
+                data_referencia=data_referencia,
+                triggered_by=triggered_by,
+                dry_run=False,
+            )
+
         try:
-            resultado = self._executar_interno(data_referencia, triggered_by, execucao_id)
+            resultado = self._executar_interno(
+                data_referencia,
+                triggered_by,
+                execucao_id,
+                fluxo,
+            )
         except BaseException as exc:
             repo.finalizar_execucao(
                 execucao_id=execucao_id, status="erro",
@@ -619,6 +648,7 @@ class Ocorrencia73Service:
         data_referencia: date,
         triggered_by: str,
         execucao_id: int | None,
+        fluxo: str | None = None,
     ) -> dict:
         data_referencia = (
             data_referencia
@@ -635,7 +665,10 @@ class Ocorrencia73Service:
         diretorio_original = diretorios["original"]
         diretorio_auditoria = diretorios["auditoria"]
 
-        janelas = calcular_janelas_oc73(data_referencia)
+        janelas = calcular_janelas_oc73(
+            data_referencia,
+            fluxo=fluxo,
+        )
 
         if not janelas:
             return {
@@ -657,6 +690,7 @@ class Ocorrencia73Service:
             op455=op455,
             data_referencia=data_referencia,
             diretorio_original=diretorio_original,
+            fluxo=fluxo,
         )
 
         filtrados = preparacao["filtrados"]

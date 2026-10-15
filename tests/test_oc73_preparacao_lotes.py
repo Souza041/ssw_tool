@@ -14,7 +14,7 @@ class OP455Simulada:
         return Path(f"{kwargs['unidade'].lower()}.sswweb")
 
 
-def executar_preparacao(data):
+def executar_preparacao(data, fluxo=None):
     op455 = OP455Simulada()
     service = Ocorrencia73Service()
 
@@ -26,6 +26,7 @@ def executar_preparacao(data):
             op455=op455,
             data_referencia=data,
             diretorio_original=Path("downloads/ocorrencia_73/teste"),
+            fluxo=fluxo,
         )
 
     return op455.chamadas, resultado
@@ -44,6 +45,20 @@ def test_segunda_gera_cwb_e_big():
         assert chamada["data_final"] == "121026"
 
     assert resultado["total_filtrado"] == 0
+
+
+def test_jobs_separados_processam_apenas_o_proprio_fluxo():
+    chamadas_cwb, _ = executar_preparacao(
+        date(2026, 10, 12),
+        fluxo="CWB",
+    )
+    chamadas_big, _ = executar_preparacao(
+        date(2026, 10, 12),
+        fluxo="BIG",
+    )
+
+    assert [item["unidade"] for item in chamadas_cwb] == ["CWB"]
+    assert [item["unidade"] for item in chamadas_big] == ["BIG"]
 
 
 def test_sabado_nao_gera_relatorios():
