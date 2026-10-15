@@ -278,6 +278,9 @@
             <a href="/op101-comprovantes">OP101 - Validar Comprovantes</a>
             <a href="/incidentes-op930">OP930 - Incidentes</a>
             <a href="/documentos">Documentos GCE</a>
+            {% if request.session.get("oc73_observabilidade") %}
+            <a href="/oc73/observabilidade">OC73 - Observabilidade</a>
+            {% endif %}
             <a href="/logout" class="menu-item logout">🚪 Sair</a>
         </nav>
         {% endif %}

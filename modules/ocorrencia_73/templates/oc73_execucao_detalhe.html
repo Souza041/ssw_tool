@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+    .oc73-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:20px; }
+    .oc73-box { background:#fff; border:1px solid var(--border); border-radius:12px; padding:16px; }
+    .oc73-box small { color:var(--muted); display:block; margin-bottom:5px; }
+    .oc73-table-wrap { overflow-x:auto; background:#fff; border:1px solid var(--border); border-radius:14px; }
+    .oc73-table { width:100%; border-collapse:collapse; font-size:13px; }
+    .oc73-table th,.oc73-table td { padding:11px 12px; text-align:left; border-bottom:1px solid var(--border); white-space:nowrap; }
+    .oc73-table th { background:#f8fafc; }
+    .oc73-pagination { display:flex; justify-content:space-between; margin-top:14px; }
+</style>
+<div class="topbar">
+    <h1>Execução OC73 #{{ execucao.id }}</h1>
+    <p>Auditoria somente leitura de execução e tentativas vinculadas.</p>
+</div>
+<div class="oc73-summary">
+    <div class="oc73-box"><small>Origem</small><strong>{{ execucao.triggered_by }}</strong></div>
+    <div class="oc73-box"><small>Status</small><strong>{{ execucao.status }}</strong></div>
+    <div class="oc73-box"><small>Data de referência</small><strong>{{ execucao.data_referencia }}</strong></div>
+    <div class="oc73-box"><small>DRY_RUN</small><strong>{{ 'sim' if execucao.dry_run else 'não' }}</strong></div>
+    <div class="oc73-box"><small>Processados / elegíveis</small><strong>{{ execucao.total_relatorio or 0 }} / {{ execucao.total_filtrado or 0 }}</strong></div>
+    <div class="oc73-box"><small>Lançados / erros</small><strong>{{ execucao.total_lancado or 0 }} / {{ execucao.total_erros or 0 }}</strong></div>
+</div>
+
+<h2>Tentativas vinculadas</h2>
+<div class="oc73-table-wrap">
+<table class="oc73-table">
+    <thead><tr><th>ID</th><th>CTRC</th><th>Fluxo</th><th>Status</th><th>Referência</th><th>Reservado</th><th>Envio iniciado</th><th>Confirmado</th></tr></thead>
+    <tbody>
+    {% for item in tentativas.itens %}
+    <tr><td>#{{ item.id }}</td><td>{{ item.serie }}-{{ item.numero }}</td><td>{{ item.fluxo }}</td><td>{{ item.status }}</td><td>{{ item.referencia or '—' }}</td><td>{{ item.reservado_em or '—' }}</td><td>{{ item.envio_iniciado_em or '—' }}</td><td>{{ item.confirmado_em or '—' }}</td></tr>
+    {% else %}<tr><td colspan="8">Nenhuma tentativa vinculada.</td></tr>{% endfor %}
+    </tbody>
+</table>
+</div>
+<div class="oc73-pagination">
+    <span>Página {{ tentativas.pagina }} de {{ tentativas.total_paginas }} · {{ tentativas.total }} tentativa(s)</span>
+    <span>{% if tentativas.pagina > 1 %}<a href="?pagina={{ tentativas.pagina - 1 }}&por_pagina={{ tentativas.por_pagina }}">← Anterior</a>{% endif %} {% if tentativas.pagina < tentativas.total_paginas %}<a href="?pagina={{ tentativas.pagina + 1 }}&por_pagina={{ tentativas.por_pagina }}">Próxima →</a>{% endif %}</span>
+</div>
+<a class="back" href="/oc73/observabilidade">← Voltar ao painel</a>
+{% endblock %}

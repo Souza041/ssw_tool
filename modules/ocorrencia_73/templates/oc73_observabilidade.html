@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+
+{% macro duracao(segundos) -%}
+    {% if segundos is none %}—{% else %}{{ (segundos // 60) }} min {{ (segundos % 60) }} s{% endif %}
+{%- endmacro %}
+
+{% block content %}
+<style>
+    .oc73-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:14px; margin-bottom:20px; }
+    .oc73-card { background:#fff; border:1px solid var(--border); border-radius:14px; padding:18px; box-shadow:0 6px 18px rgba(15,23,42,.04); }
+    .oc73-card h3 { margin:0 0 8px; font-size:15px; }
+    .oc73-value { font-size:21px; font-weight:700; }
+    .oc73-muted { color:var(--muted); font-size:13px; }
+    .oc73-ok { color:#166534; } .oc73-warn { color:#9a3412; } .oc73-danger { color:#991b1b; }
+    .oc73-alert { background:#fff7ed; border:1px solid #fed7aa; padding:14px; border-radius:12px; margin-bottom:18px; }
+    .oc73-error { background:#fef2f2; color:#991b1b; border:1px solid #fecaca; padding:14px; border-radius:12px; margin-bottom:18px; }
+    .oc73-filter { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; align-items:end; }
+    .oc73-filter input,.oc73-filter select { margin-bottom:0; }
+    .oc73-filter button { margin:0; }
+    .oc73-table-wrap { overflow-x:auto; background:#fff; border:1px solid var(--border); border-radius:14px; }
+    .oc73-table { width:100%; border-collapse:collapse; font-size:13px; }
+    .oc73-table th,.oc73-table td { padding:11px 12px; text-align:left; border-bottom:1px solid var(--border); white-space:nowrap; }
+    .oc73-table th { background:#f8fafc; }
+    .oc73-pagination { display:flex; justify-content:space-between; align-items:center; margin-top:14px; }
+    .oc73-pagination a { color:var(--primary); text-decoration:none; font-weight:600; }
+</style>
+
+<div class="topbar">
+    <h1>OC73 — Observabilidade</h1>
+    <p>Painel somente leitura. Não inicia jobs, não reconcilia e não altera estados.</p>
+</div>
+
+{% if erro_banco %}<div class="oc73-error">{{ erro_banco }}</div>{% endif %}
+
+<div class="oc73-grid">
+    <div class="oc73-card">
+        <h3>Scheduler (processo local)</h3>
+        <div class="oc73-value {{ 'oc73-ok' if seguranca.scheduler_habilitado else 'oc73-warn' }}">
+            {% if seguranca.scheduler_habilitado %}Ativo{% elif seguranca.scheduler_configurado %}Habilitado, não iniciado{% else %}Desabilitado{% endif %}
+        </div>
+    </div>
+    <div class="oc73-card">
+        <h3>DRY_RUN</h3>
+        <div class="oc73-value {{ 'oc73-ok' if seguranca.dry_run else 'oc73-danger' }}">
+            {{ 'Ativo' if seguranca.dry_run else 'Inativo' }}
+        </div>
+    </div>
+    <div class="oc73-card">
+        <h3>Gate de envio</h3>
+        <div class="oc73-value {{ 'oc73-danger' if seguranca.gate_envio_habilitado else 'oc73-ok' }}">
+            {{ 'Habilitado' if seguranca.gate_envio_habilitado else 'Bloqueado' }}
+        </div>
+    </div>
+</div>
+
+<div class="oc73-grid">
+{% for proxima in proximas_execucoes %}
+    <div class="oc73-card">
+        <h3>Próxima {{ proxima.fluxo }}</h3>
+        <div class="oc73-value">{{ proxima.proxima_execucao.strftime('%d/%m/%Y %H:%M') }}</div>
+        <div class="oc73-muted">America/Sao_Paulo · {{ proxima.rotulo }}</div>
+    </div>
+{% endfor %}
+</div>
+
+<h2>Últimas execuções agendadas</h2>
+<div class="oc73-grid">
+{% for fluxo in ['CWB', 'BIG'] %}
+    {% set item = ultimas_execucoes[fluxo] %}
+    <div class="oc73-card">
+        <h3>{{ fluxo }}</h3>
+        {% if item %}
+        <div><strong>{{ item.status }}</strong> · {{ item.data_referencia.strftime('%d/%m/%Y') }}</div>
+        <div class="oc73-muted">Duração: {{ duracao(item.duracao_segundos) }}</div>
+        <div class="oc73-muted">Processados {{ item.total_relatorio or 0 }} · Elegíveis {{ item.total_filtrado or 0 }}</div>
+        <div class="oc73-muted">Lançados {{ item.total_lancado or 0 }} · Erros {{ item.total_erros or 0 }}</div>
+        {% else %}<div class="oc73-muted">Nenhuma execução registrada.</div>{% endif %}
+    </div>
+{% endfor %}
+</div>
+
+{% if alertas %}
+<div class="oc73-alert">
+    <strong>Alerta:</strong> {{ alertas|length }} execução(ões) em <code>executando</code>
+    há mais de {{ limite_alerta_minutos }} minutos. O painel não realiza recuperação automática.
+    <ul>
+    {% for item in alertas %}
+        <li><a href="/oc73/observabilidade/execucoes/{{ item.id }}">#{{ item.id }}</a> — {{ item.triggered_by }} — iniciada em {{ item.iniciado_em }}</li>
+    {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+<div class="oc73-card" style="max-width:none;margin-bottom:18px">
+    <h3>Filtros do histórico</h3>
+    <form method="get" class="oc73-filter">
+        <div><label for="fluxo">Fluxo</label><select id="fluxo" name="fluxo"><option value="">Todos</option><option value="CWB" {{ 'selected' if filtros.fluxo == 'CWB' else '' }}>CWB</option><option value="BIG" {{ 'selected' if filtros.fluxo == 'BIG' else '' }}>BIG</option></select></div>
+        <div><label for="status">Status</label><select id="status" name="status"><option value="">Todos</option>{% for valor in ['executando','concluido','concluido_com_pendencias','erro'] %}<option value="{{ valor }}" {{ 'selected' if filtros.status == valor else '' }}>{{ valor }}</option>{% endfor %}</select></div>
+        <div><label for="data_inicio">De</label><input id="data_inicio" type="date" name="data_inicio" value="{{ filtros.data_inicio or '' }}"></div>
+        <div><label for="data_fim">Até</label><input id="data_fim" type="date" name="data_fim" value="{{ filtros.data_fim or '' }}"></div>
+        <div><label for="por_pagina">Por página</label><select id="por_pagina" name="por_pagina">{% for n in [10,25,50,100] %}<option value="{{ n }}" {{ 'selected' if historico.por_pagina == n else '' }}>{{ n }}</option>{% endfor %}</select></div>
+        <button type="submit">Consultar</button>
+    </form>
+</div>
+
+<div class="oc73-table-wrap">
+<table class="oc73-table">
+    <thead><tr><th>ID</th><th>Referência</th><th>Origem</th><th>Status</th><th>Duração</th><th>Processados</th><th>Elegíveis</th><th>Lançados</th><th>Erros</th><th>DRY_RUN</th></tr></thead>
+    <tbody>
+    {% for item in historico.itens %}
+    <tr>
+        <td><a href="/oc73/observabilidade/execucoes/{{ item.id }}">#{{ item.id }}</a></td>
+        <td>{{ item.data_referencia }}</td><td>{{ item.triggered_by }}</td><td>{{ item.status }}</td>
+        <td>{{ duracao(item.duracao_segundos) }}</td><td>{{ item.total_relatorio or 0 }}</td><td>{{ item.total_filtrado or 0 }}</td><td>{{ item.total_lancado or 0 }}</td><td>{{ item.total_erros or 0 }}</td><td>{{ 'sim' if item.dry_run else 'não' }}</td>
+    </tr>
+    {% else %}<tr><td colspan="10">Nenhuma execução encontrada.</td></tr>{% endfor %}
+    </tbody>
+</table>
+</div>
+
+<div class="oc73-pagination">
+    <span>Página {{ historico.pagina }} de {{ historico.total_paginas }} · {{ historico.total }} registro(s)</span>
+    <span>
+    {% if historico.pagina > 1 %}<a href="?pagina={{ historico.pagina - 1 }}&por_pagina={{ historico.por_pagina }}&fluxo={{ filtros.fluxo }}&status={{ filtros.status }}&data_inicio={{ filtros.data_inicio or '' }}&data_fim={{ filtros.data_fim or '' }}">← Anterior</a>{% endif %}
+    {% if historico.pagina < historico.total_paginas %}<a href="?pagina={{ historico.pagina + 1 }}&por_pagina={{ historico.por_pagina }}&fluxo={{ filtros.fluxo }}&status={{ filtros.status }}&data_inicio={{ filtros.data_inicio or '' }}&data_fim={{ filtros.data_fim or '' }}">Próxima →</a>{% endif %}
+    </span>
+</div>
+{% endblock %}

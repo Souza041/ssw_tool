@@ -33,6 +33,7 @@ from operations.op101.batch_comprovantes import processar_planilha_comprovantes
 
 from operations.incidentes.workflow import executar_incidentes_op930
 from operations.debitos.batch import processar_planilha_debitos
+from modules.ocorrencia_73.observabilidade import usuario_pode_observar
 
 router = APIRouter()
 templates = Jinja2Templates(directory="web/templates")
@@ -186,8 +187,12 @@ def login_run(
         client.login()
         client.open_menu()
 
+        remover_sessao(request)
         session_id = criar_sessao(client)
         request.session["ssw_session_id"] = session_id
+        request.session["oc73_observabilidade"] = usuario_pode_observar(
+            client.usuario
+        )
 
         return RedirectResponse("/", status_code=303)
 
@@ -888,15 +893,6 @@ def executar_op001_transporte_job(
 
     job.result_files = arquivos
     return arquivos
-
-@router.get("/logout")
-def logout(request: Request):
-    request.session.clear()
-
-    return RedirectResponse(
-        url="/login",
-        status_code=302,
-    )
 
 @router.get("/op101-comprovantes", response_class=HTMLResponse)
 def op101_comprovantes_form(request: Request):

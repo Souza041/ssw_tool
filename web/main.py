@@ -22,6 +22,10 @@ from modules.documentos.web import router as documentos_router
 from modules.ocorrencia_73.scheduler import (
     iniciar_scheduler_ocorrencia_73,
 )
+from modules.ocorrencia_73.routes import (
+    router as ocorrencia_73_router,
+)
+from web.session_store import SESSION_MAX_AGE_SECONDS
 
 mimetypes.add_type("text/css", ".css")
 mimetypes.add_type("application/javascript", ".js")
@@ -37,7 +41,7 @@ app = FastAPI(title="SSW Tool")
 app.add_middleware(
     SessionMiddleware,
     secret_key="troque-essa-chave-depois",
-    max_age=60 * 60 * 8,
+    max_age=SESSION_MAX_AGE_SECONDS,
 )
 
 app.add_middleware(
@@ -79,6 +83,7 @@ app.include_router(
     incidentes_router
 )
 app.include_router(documentos_router)
+app.include_router(ocorrencia_73_router)
 
 @app.on_event("startup")
 def startup_event():

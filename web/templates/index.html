@@ -58,6 +58,13 @@
         <span>Processa incidentes e gera relatório consolidado.</span>
     </a>
 
+    {% if request.session.get("oc73_observabilidade") %}
+    <a class="module-card" href="/oc73/observabilidade">
+        <strong>OC73 - Observabilidade</strong>
+        <span>Consulta somente leitura do scheduler, execuções e tentativas.</span>
+    </a>
+    {% endif %}
+
     <a class="card" href="/renomeador">
         <h3>Renomeador de Notas</h3>
         <p>Renomeia canhotos e DACTEs pelo número da NF-e.</p>
