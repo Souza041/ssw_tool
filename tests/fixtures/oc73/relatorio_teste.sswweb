@@ -1,0 +1,6 @@
+Relatorio OP455 - dados sinteticos
+Cliente Pagador;Cidade do Destinatario;Unidade Emissora;Unidade Receptora;Serie/Numero CTRC;Codigo Ultima Ocorrencia;UF do Remetente
+CLIENTE TESTE;CURITIBA;CWB;CWB;CWB300001-1;63;PR
+CLIENTE TESTE;PALHOCA;JOI;BIG;JOI300002-2;64;SC
+CLIENTE TESTE;CURITIBA;CWB;CWB;CWB300003-3;64;PR
+CLIENTE TESTE;PALHOCA;JOI;BIG;JOI300004-4;64;PR

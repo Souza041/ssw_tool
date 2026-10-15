@@ -38,6 +38,9 @@ modules/metricas/snapshots/
 *.csv
 *.sswweb
 
+# Fixture sintetica utilizada pelos testes automatizados da OC73
+!tests/fixtures/oc73/relatorio_teste.sswweb
+
 # IDEs e editores
 .vscode/
 .idea/
