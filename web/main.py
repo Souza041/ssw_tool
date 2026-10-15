@@ -1,11 +1,20 @@
-from pathlib import Path
-
+import logging
 import mimetypes
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
+from web.session_config import carregar_configuracao_sessao
+
+
+logger = logging.getLogger(__name__)
+session_security = carregar_configuracao_sessao()
+logger.info(
+    "Configuração de sessão validada; ambiente=%s; origem=%s.",
+    session_security.environment,
+    session_security.source,
+)
 
 from web.routes import router
 from modules.metricas.routes import router as metricas_router
@@ -40,7 +49,7 @@ app = FastAPI(title="SSW Tool")
 
 app.add_middleware(
     SessionMiddleware,
-    secret_key="troque-essa-chave-depois",
+    secret_key=session_security.secret_key,
     max_age=SESSION_MAX_AGE_SECONDS,
 )
 
