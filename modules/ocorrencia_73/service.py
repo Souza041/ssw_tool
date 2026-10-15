@@ -47,14 +47,6 @@ CTRC_TESTE = (
     .upper()
 )
 
-OBSERVACAO_LANCAMENTO = (
-    os.getenv(
-        "OCORRENCIA_73_OBSERVACAO",
-        "LANCAMENTO AUTOMATICO - BOT OCORRENCIA 73",
-    )
-    .strip()
-)
-
 # Trava adicional de producao.
 # Por padrao, nenhum lancamento real e autorizado.
 OC73_ENVIO_HABILITADO = (
@@ -884,9 +876,7 @@ class Ocorrencia73Service:
                                     seq_ctrc=consulta.seq_ctrc,
                                     familia=consulta.familia,
                                     data_ocorrencia=data_referencia,
-                                    observacao=(
-                                        f"{OBSERVACAO_LANCAMENTO} | REF:{referencia}"
-                                    ),
+                                    observacao=f"BOT OC73 | REF:{referencia}",
                                     local=consulta.local,
                                 ),
                                 confirmar=lambda referencia: (

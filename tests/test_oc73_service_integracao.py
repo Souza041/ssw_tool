@@ -6,9 +6,9 @@ import pytest
 
 from modules.ocorrencia_73.service import Ocorrencia73Service
 
-
 DATA = date(2026, 10, 12)
 
+REFERENCIA_TESTE = "OC73-A1B2C3D4E5F60718293A"
 
 def item(ctrc):
     return {
@@ -43,14 +43,17 @@ def ambiente(tmp_path, monkeypatch):
     repo = MagicMock()
 
     repo.iniciar_execucao.return_value = 101
+
     repo.reservar_ctrc.return_value = {
         "id": 501,
+        "referencia": REFERENCIA_TESTE,
         "status": "reservado",
         "execucao_id": 101,
         "reserva_criada": True,
         "reserva_existente": False,
         "autorizada_para_envio": False,
     }
+
     repo.iniciar_envio.return_value = True
 
     service = Ocorrencia73Service(repository=repo)
@@ -153,6 +156,34 @@ def test_dry_run_nao_lanca(ambiente, monkeypatch):
     op101.lancar_ocorrencia_73.assert_not_called()
 
 
+def test_gate_de_envio_desligado_bloqueia_post(
+    ambiente,
+    monkeypatch,
+):
+    service, op101 = ambiente
+
+    monkeypatch.setattr(
+        service,
+        "preparar_lotes_oc73",
+        lambda **kwargs: preparacao([item("100020")]),
+    )
+    configurar_op101(op101)
+    monkeypatch.setattr(
+        "modules.ocorrencia_73.service.DRY_RUN",
+        False,
+    )
+    monkeypatch.setattr(
+        "modules.ocorrencia_73.service.OC73_ENVIO_HABILITADO",
+        False,
+    )
+
+    resultado = service.executar(DATA)
+
+    assert resultado["itens"][0]["status"] == "bloqueado_seguranca"
+    op101.lancar_ocorrencia_73.assert_not_called()
+    service.repository.reservar_ctrc.assert_not_called()
+
+
 def test_sabado_nao_faz_login(ambiente):
     service, op101 = ambiente
 
@@ -227,7 +258,15 @@ def test_limite_global_entre_cwb_e_big(
     op101.confirmar_ocorrencia_73.return_value = (
         SimpleNamespace(
             codigo="73",
-            to_dict=lambda: {"codigo": "73"},
+            complemento=(
+                f"LANCAMENTO AUTOMATICO | REF:{REFERENCIA_TESTE}"
+            ),
+            to_dict=lambda: {
+                "codigo": "73",
+                "complemento": (
+                    f"LANCAMENTO AUTOMATICO | REF:{REFERENCIA_TESTE}"
+                ),
+            },
         )
     )
 
@@ -271,11 +310,36 @@ def test_lancamento_confirmado(ambiente, monkeypatch):
     op101.confirmar_ocorrencia_73.return_value = (
         SimpleNamespace(
             codigo="73",
-            to_dict=lambda: {"codigo": "73"},
+            complemento=(
+                f"LANCAMENTO AUTOMATICO | REF:{REFERENCIA_TESTE}"
+            ),
+            to_dict=lambda: {
+                "codigo": "73",
+                "complemento": (
+                    f"LANCAMENTO AUTOMATICO | REF:{REFERENCIA_TESTE}"
+                ),
+            },
         )
     )
 
     resultado = service.executar(DATA)
+
+    op101.lancar_ocorrencia_73.assert_called_once()
+
+    kwargs_envio = (
+        op101.lancar_ocorrencia_73.call_args.kwargs
+    )
+
+    assert f"REF:{REFERENCIA_TESTE}" in kwargs_envio["observacao"]
+
+    kwargs_confirmacao = (
+        op101.confirmar_ocorrencia_73.call_args.kwargs
+    )
+
+    assert kwargs_confirmacao["referencia"] == REFERENCIA_TESTE
+
+    service.repository.confirmar_lancamento.assert_called_once()
+    service.repository.marcar_incerto.assert_not_called()
 
     assert resultado["total_lancado"] == 1
     assert resultado["itens"][0]["status"] == "lancada"

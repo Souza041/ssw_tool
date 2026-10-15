@@ -6,6 +6,10 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 from html import unescape
 
+from modules.ocorrencia_73.referencia import (
+    referencia_valida,
+    ocorrencia_confirma_referencia,
+)
 
 @dataclass
 class CTRCConsultado:
@@ -725,10 +729,8 @@ class OP101Ocorrencias:
         seq_ctrc: str,
         familia: str,
         data_ocorrencia: date | str,
+        observacao: str,
         hora_ocorrencia: str | None = None,
-        observacao: str = (
-            "LANCAMENTO AUTOMATICO - BOT OCORRENCIA 73"
-        ),
         local: str = "",
     ) -> ResultadoLancamento:
         """
@@ -741,6 +743,35 @@ class OP101Ocorrencias:
         seq_ctrc = self._normalizar_numero(
             seq_ctrc
         )
+
+        observacao = str(observacao or "")
+
+        if len(observacao) > 70:
+            raise ValueError(
+                "Observação OC73 excede o limite de 70 caracteres "
+                "do campo f6 do SSW. Lançamento bloqueado."
+            )
+
+        marcadores = re.findall(
+            r"REF:",
+            observacao,
+            flags=re.IGNORECASE,
+        )
+
+        referencia_encontrada = re.search(
+            r"(?<![A-Za-z0-9-])REF:\s*(OC73-[A-Za-z0-9-]+)(?![A-Za-z0-9-])",
+            observacao,
+        )
+
+        if (
+            len(marcadores) != 1
+            or referencia_encontrada is None
+            or not referencia_valida(referencia_encontrada.group(1))
+        ):
+            raise ValueError(
+                "Observação OC73 sem referência global válida e única. "
+                "Lançamento bloqueado."
+            )
 
         familia = str(
             familia or "ROD"
@@ -854,6 +885,7 @@ class OP101Ocorrencias:
         local: str,
         familia: str,
         data_referencia: date | str,
+        referencia: str,
     ) -> OcorrenciaHistorico | None:
         html = self.abrir_ocorrencias(
             serie=serie,
@@ -868,7 +900,14 @@ class OP101Ocorrencias:
             html
         )
 
-        return self.encontrar_ocorrencia(
-            historico,
-            73,
-        )
+        if not referencia_valida(referencia):
+            return None
+
+        for ocorrencia in historico:
+            if ocorrencia_confirma_referencia(
+                ocorrencia,
+                referencia,
+            ):
+                return ocorrencia
+
+        return None

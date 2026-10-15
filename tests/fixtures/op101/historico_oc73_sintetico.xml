@@ -1,0 +1,21 @@
+<!-- FIXTURE SINTETICA: não foi capturada do SSW. -->
+<historico>
+  <r>
+    <f0>14/10/2026 10:30</f0>
+    <f1>ROD</f1>
+    <f2>CWB</f2>
+    <f5>73 - ENTREGA SERA REALIZADA AMANHA</f5>
+    <f6>BOT OC73 LEGADO SEM REFERENCIA</f6>
+    <f10>73</f10>
+    <f12>USUARIO_ANTIGO</f12>
+  </r>
+  <r>
+    <f0>15/10/2026 09:45</f0>
+    <f1>ROD</f1>
+    <f2>BIG</f2>
+    <f5>73 - ENTREGA SERA REALIZADA AMANHA</f5>
+    <f6>BOT OC73 | REF:OC73-A1B2C3D4E5F60718293A</f6>
+    <f10>73</f10>
+    <f12>USUARIO_TESTE</f12>
+  </r>
+</historico>

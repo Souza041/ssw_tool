@@ -3,6 +3,11 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Callable
 
+from modules.ocorrencia_73.referencia import (
+    referencia_valida,
+    ocorrencia_confirma_referencia,
+)
+
 
 @dataclass(frozen=True)
 class ResultadoPortao:
@@ -15,29 +20,12 @@ class PortaoOC73:
     def __init__(self, repository):
         self.repository = repository
 
-    @staticmethod
-    def _campo(objeto, nome):
-        if isinstance(objeto, dict):
-            return objeto.get(nome)
-        return getattr(objeto, nome, None)
-
     @classmethod
     def _confirmacao_valida(cls, ocorrencia, referencia):
-        if ocorrencia is None:
-            return False
-
-        codigo = str(cls._campo(ocorrencia, "codigo") or "").strip()
-        complemento = str(
-            cls._campo(ocorrencia, "complemento") or ""
-        ).upper()
-
-        if codigo != "73":
-            return False
-
-        # Evita aceitar OC73-12 como parte de OC73-123.
-        import re
-        padrao = rf"(?<![A-Z0-9-]){re.escape(referencia)}(?![A-Z0-9-])"
-        return re.search(padrao, complemento) is not None
+        return ocorrencia_confirma_referencia(
+            ocorrencia,
+            referencia,
+        )
 
     def processar(
         self, *, execucao_id: int, serie: str, numero: str,
@@ -72,8 +60,12 @@ class PortaoOC73:
             )
 
         referencia = reserva.get("referencia")
-        if not isinstance(referencia, str) or not referencia.startswith("OC73-"):
-            return ResultadoPortao("bloqueado_sem_referencia", tentativa_id)
+
+        if not referencia_valida(referencia):
+            return ResultadoPortao(
+                "bloqueado_sem_referencia",
+                tentativa_id,
+            )
 
         if not self.repository.iniciar_envio(
             tentativa_id, execucao_id

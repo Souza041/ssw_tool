@@ -46,6 +46,7 @@ def configurar_reserva(
         "id": tentativa_id,
         "execucao_id": execucao_id,
         "status": status,
+        "referencia": "REFERENCIA_TESTE",
     }
 
 
@@ -174,7 +175,10 @@ def test_reserva_existente_outra_execucao(ambiente):
     )
 
     cursor.execute.side_effect = [
-        IntegrityError(1062, "Duplicate entry"),
+        IntegrityError(
+            1062,
+            "Duplicate entry 'CWB-123456-73' for key 'uq_oc73_ctrc'"
+        ),
         None,
     ]
 
@@ -220,7 +224,10 @@ def test_reserva_mesma_execucao_nao_autoriza_envio(
     )
 
     cursor.execute.side_effect = [
-        IntegrityError(1062, "Duplicate entry"),
+        IntegrityError(
+            1062,
+            "Duplicate entry 'CWB-123456-73' for key 'uq_oc73_ctrc'"
+        ),
         None,
     ]
 
@@ -283,7 +290,10 @@ def test_reserva_duplicada_nao_altera_registro(
     )
 
     cursor.execute.side_effect = [
-        IntegrityError(1062, "Duplicate entry"),
+        IntegrityError(
+            1062,
+            "Duplicate entry 'CWB-123456-73' for key 'uq_oc73_ctrc'"
+        ),
         None,
     ]
 
@@ -337,13 +347,17 @@ def test_duas_execucoes_disputam_mesmo_ctrc():
 
         cursor.fetchone.return_value = {
             "id": 10,
+            "referencia": "OC73-A1B2C3D4E5F60718293A",
             "execucao_id": execucao_id_banco,
             "status": "reservado",
         }
 
         if duplicado:
             cursor.execute.side_effect = [
-                IntegrityError(1062, "Duplicate entry"),
+                IntegrityError(
+                    1062,
+                    "Duplicate entry 'CWB-123456-73' for key 'uq_oc73_ctrc'"
+                ),
                 None,
             ]
 
@@ -389,6 +403,22 @@ def test_erro_integridade_nao_duplicado_interrompe(
         reservar(repo)
 
     assert erro.value.args[0] == 1452
+
+    conexao.rollback.assert_called_once()
+    conexao.commit.assert_not_called()
+    conexao.close.assert_called_once()
+
+def test_colisao_referencia_global_aborta_reserva(ambiente):
+    repo, conexao, cursor, _ = ambiente
+
+    cursor.execute.side_effect = IntegrityError(
+        1062,
+        "Duplicate entry 'OC73-ABC' "
+        "for key 'uq_oc73_referencia'",
+    )
+
+    with pytest.raises(RuntimeError, match="Colisão de referência"):
+        reservar(repo)
 
     conexao.rollback.assert_called_once()
     conexao.commit.assert_not_called()

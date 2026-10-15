@@ -9,6 +9,8 @@ from modules.ocorrencia_73.service import Ocorrencia73Service
 
 DATA = date(2026, 10, 12)
 
+REFERENCIA_TESTE = "OC73-A1B2C3D4E5F60718293A"
+
 
 def processar(repo, enviar, confirmar=None):
     return PortaoOC73(repo).processar(
@@ -18,10 +20,14 @@ def processar(repo, enviar, confirmar=None):
     )
 
 
-def reserva(*, criada=True):
+def reserva(*, criada=True, referencia=REFERENCIA_TESTE):
     return {
-        "id": 501, "status": "reservado", "execucao_id": 101,
-        "reserva_criada": criada, "reserva_existente": not criada,
+        "id": 501,
+        "referencia": referencia,
+        "status": "reservado",
+        "execucao_id": 101,
+        "reserva_criada": criada,
+        "reserva_existente": not criada,
         "autorizada_para_envio": False,
     }
 

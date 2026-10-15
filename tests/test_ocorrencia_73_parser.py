@@ -1,159 +1,43 @@
 from pathlib import Path
+from modules.ocorrencia_73.parser import carregar_relatorio, filtrar_registros
 
-from modules.ocorrencia_73.config import (
-    CLIENTES_PERMITIDOS,
-    ROTAS_PERMITIDAS,
-)
-from modules.ocorrencia_73.parser import (
-    carregar_relatorio,
-    filtrar_registros,
-)
+FIXTURE = Path(__file__).resolve().parent / 'fixtures' / 'oc73' / 'relatorio_teste.sswweb'
 
 
 def test_carregar_e_filtrar_relatorio():
-    arquivo = Path(
-        "downloads/CSVROD00332012ROD[1]075307.sswweb"
-    )
-
-    registros = carregar_relatorio(arquivo)
-
-    assert isinstance(registros, list)
-    assert len(registros) > 0
-
-    filtrados = filtrar_registros(
-        registros=registros,
-        clientes_permitidos=CLIENTES_PERMITIDOS,
-        rotas_permitidas=ROTAS_PERMITIDAS,
-    )
-
-    assert isinstance(filtrados, list)
-
-    for item in filtrados:
-        rota = (
-            item["unidade_emissora"],
-            item["cidade_destinatario"],
-        )
-
-        assert rota in {
-            ("JOI", "FLORIANOPOLIS"),
-            ("CWB", "CURITIBA"),
-        }
-
-from modules.ocorrencia_73.parser import (
-    filtrar_registros,
-)
+    registros = carregar_relatorio(FIXTURE)
+    assert len(registros) == 4
+    cwb = filtrar_registros(registros, fluxo='CWB')
+    big = filtrar_registros(registros, fluxo='BIG')
+    assert {r['ctrc_original'] for r in cwb} == {'CWB300001-1'}
+    assert {r['ctrc_original'] for r in big} == {'JOI300002-2'}
 
 
 def test_filtrar_todas_nomenclaturas_clientes():
-    clientes = [
-        "WHIRLPOOL S/A",
-        "WHIRLPOOL S/A (C2)",
-        "WHIRLPOOL SA",
-        "MLOG ARMAZEM GERAL LTDA",
-        "BUD COM. DE ELETRODOM. LTDA",
-    ]
-
-    registros = []
-
-    for indice, cliente in enumerate(
-        clientes,
-        start=1,
-    ):
-        registros.append({
-            "SERIE/NUMERO CTRC": (
-                f"JOI83960{indice}-{indice}"
-            ),
-            "CLIENTE PAGADOR": cliente,
-            "CIDADE DO DESTINATARIO": (
-                "FLORIANOPOLIS"
-            ),
-            "UNIDADE EMISSORA": "JOI",
-	    "UNIDADE RECEPTORA": "JOI",
-	    "CODIGO DA ULTIMA OCORRENCIA": "46",
-        })
-
-    filtrados = filtrar_registros(
-        registros=registros,
-        clientes_permitidos=set(clientes),
-        rotas_permitidas={
-            "JOI": {
-                "FLORIANOPOLIS",
-            },
-            "CWB": {
-                "CURITIBA",
-            },
-        },
-    )
-
+    clientes = ['WHIRLPOOL S/A', 'WHIRLPOOL S/A (C2)', 'WHIRLPOOL SA', 'MLOG ARMAZEM GERAL LTDA', 'BUD COM. DE ELETRODOM. LTDA']
+    registros = [{
+        'SERIE/NUMERO CTRC': f'JOI83960{i}-{i}',
+        'CLIENTE PAGADOR': cliente,
+        'CIDADE DO DESTINATARIO': 'CURITIBA',
+        'UNIDADE EMISSORA': 'JOI',
+        'UNIDADE RECEPTORA': 'CWB',
+        'CODIGO DA ULTIMA OCORRENCIA': '63',
+    } for i, cliente in enumerate(clientes, start=1)]
+    filtrados = filtrar_registros(registros, fluxo='CWB')
     assert len(filtrados) == 5
+    assert {r['cliente_pagador'] for r in filtrados} == set(clientes)
 
-    clientes_filtrados = {
-        item["cliente_pagador"]
-        for item in filtrados
-    }
-
-    assert clientes_filtrados == set(clientes)
 
 def test_rotas_permitidas():
     registros = [
-        {
-            "SERIE/NUMERO CTRC": "JOI111111-0",
-            "CLIENTE PAGADOR": "WHIRLPOOL SA",
-            "CIDADE DO DESTINATARIO": "FLORIANOPOLIS",
-            "UNIDADE EMISSORA": "JOI",
-	    "UNIDADE RECEPTORA": "JOI",
-	    "CODIGO DA ULTIMA OCORRENCIA": "46",
-        },
-        {
-            "SERIE/NUMERO CTRC": "JOI111112-0",
-            "CLIENTE PAGADOR": "WHIRLPOOL SA",
-            "CIDADE DO DESTINATARIO": "CURITIBA",
-            "UNIDADE EMISSORA": "JOI",
-	    "UNIDADE RECEPTORA": "JOI",
-	    "CODIGO DA ULTIMA OCORRENCIA": "46",
-        },
-        {
-            "SERIE/NUMERO CTRC": "CWB111113-0",
-            "CLIENTE PAGADOR": "WHIRLPOOL SA",
-            "CIDADE DO DESTINATARIO": "CURITIBA",
-            "UNIDADE EMISSORA": "CWB",
-	    "UNIDADE RECEPTORA": "JOI",
-	    "CODIGO DA ULTIMA OCORRENCIA": "46",
-        },
-        {
-            "SERIE/NUMERO CTRC": "CWB111114-0",
-            "CLIENTE PAGADOR": "WHIRLPOOL SA",
-            "CIDADE DO DESTINATARIO": "FLORIANOPOLIS",
-            "UNIDADE EMISSORA": "CWB",
-	    "UNIDADE RECEPTORA": "JOI",
-	    "CODIGO DA ULTIMA OCORRENCIA": "46",
-        },
+        {'SERIE/NUMERO CTRC': f'CWB11111{i}-0', 'CLIENTE PAGADOR': 'TESTE',
+         'CIDADE DO DESTINATARIO': cidade, 'UNIDADE EMISSORA': emissora,
+         'UNIDADE RECEPTORA': 'CWB', 'CODIGO DA ULTIMA OCORRENCIA': '63'}
+        for i, (emissora, cidade) in enumerate([
+            ('JOI', 'FLORIANOPOLIS'), ('JOI', 'CURITIBA'),
+            ('CWB', 'CURITIBA'), ('CWB', 'FLORIANOPOLIS')], start=1)
     ]
-
-    filtrados = filtrar_registros(
-        registros=registros,
-        clientes_permitidos={
-            "WHIRLPOOL SA",
-        },
-        rotas_permitidas={
-            "JOI": {
-                "FLORIANOPOLIS",
-            },
-            "CWB": {
-                "CURITIBA",
-            },
-        },
-    )
-
-    assert len(filtrados) == 2
-
-    assert {
-        (
-            item["unidade_emissora"],
-            item["cidade_destinatario"],
-        )
-        for item in filtrados
-    } == {
-        ("JOI", "FLORIANOPOLIS"),
-        ("CWB", "CURITIBA"),
+    filtrados = filtrar_registros(registros, fluxo='CWB')
+    assert {(r['unidade_emissora'], r['cidade_destinatario']) for r in filtrados} == {
+        ('JOI', 'CURITIBA'), ('CWB', 'CURITIBA')
     }

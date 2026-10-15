@@ -1,6 +1,7 @@
 from datetime import date
 from unittest.mock import MagicMock
 from modules.ocorrencia_73.gate import PortaoOC73
+from tests.test_oc73_bloqueio_persistencia import REFERENCIA_TESTE
 
 D = date(2026, 10, 12)
 
@@ -12,8 +13,13 @@ def args():
 
 def repo(nova=True, transicao=True):
     r = MagicMock()
-    r.reservar_ctrc.return_value = dict(id=15, execucao_id=9,
-                                         status="reservado", reserva_criada=nova)
+    r.reservar_ctrc.return_value = dict(
+        id=15,
+        referencia=REFERENCIA_TESTE,
+        execucao_id=9,
+        status="reservado",
+        reserva_criada=nova,
+    )
     r.iniciar_envio.return_value = transicao
     return r
 
@@ -35,12 +41,28 @@ def test_transicao_falhou_nunca_envia():
     enviar.assert_not_called()
 
 
-def test_confirmado_so_com_codigo_73():
+def test_confirmado_so_com_codigo_73_e_referencia():
     r = repo()
     enviar = MagicMock()
-    res = PortaoOC73(r).processar(**args(), enviar=enviar,
-                                  confirmar=lambda: {"codigo": "73"})
+
+    def confirmar(referencia):
+        return {
+            "codigo": "73",
+            "complemento": (
+                f"LANCAMENTO AUTOMATICO | REF:{referencia}"
+            ),
+        }
+
+    res = PortaoOC73(r).processar(
+        **args(),
+        enviar=enviar,
+        confirmar=confirmar,
+    )
+
     assert res.status == "confirmado"
+    assert res.tentativa_id == 15
+
+    enviar.assert_called_once_with(REFERENCIA_TESTE)
     r.confirmar_lancamento.assert_called_once()
     r.marcar_incerto.assert_not_called()
 
@@ -48,7 +70,11 @@ def test_confirmado_so_com_codigo_73():
 def test_sem_confirmacao_fica_incerto_sem_retry():
     r = repo()
     enviar = MagicMock()
-    res = PortaoOC73(r).processar(**args(), enviar=enviar, confirmar=lambda: None)
+    res = PortaoOC73(r).processar(
+        **args(),
+        enviar=enviar,
+        confirmar=lambda referencia: None,
+    )
     assert res.status == "incerto"
     enviar.assert_called_once()
     r.marcar_incerto.assert_called_once()
@@ -74,3 +100,21 @@ def test_erro_reserva_nunca_envia():
     else:
         raise AssertionError("Deveria falhar fechado")
     enviar.assert_not_called()
+
+def test_sem_referencia_persistida_nunca_envia():
+    r = repo()
+    r.reservar_ctrc.return_value.pop("referencia")
+
+    enviar = MagicMock()
+    confirmar = MagicMock()
+
+    resultado = PortaoOC73(r).processar(
+        **args(),
+        enviar=enviar,
+        confirmar=confirmar,
+    )
+
+    assert resultado.status == "bloqueado_sem_referencia"
+    enviar.assert_not_called()
+    confirmar.assert_not_called()
+    r.iniciar_envio.assert_not_called()

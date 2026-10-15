@@ -223,14 +223,24 @@ class Ocorrencia73Repository:
                     reserva_criada = True
 
                 except IntegrityError as exc:
-                    if exc.args[0] != 1062:
-                        raise
-                    # Uma colisão de referência NÃO equivale a CTRC duplicado.
-                    if "uq_oc73_referencia" in str(exc):
-                        raise RuntimeError("Colisão de referência OC73; reserva abortada") from exc
+                    codigo = exc.args[0] if exc.args else None
+                    mensagem = str(exc)
 
-                    # A duplicidade é esperada quando o CTRC
-                    # já possui uma reserva persistente.
+                    if codigo != 1062:
+                        raise
+
+                    if "uq_oc73_referencia" in mensagem:
+                        raise RuntimeError(
+                            "Colisão de referência global OC73; "
+                            "reserva abortada para proteção contra duplicidade."
+                        ) from exc
+
+                    if "uq_oc73_ctrc" not in mensagem:
+                        raise RuntimeError(
+                            "Violação UNIQUE não reconhecida no OC73; "
+                            "reserva abortada."
+                        ) from exc
+
                     reserva_criada = False
 
                 cursor.execute(

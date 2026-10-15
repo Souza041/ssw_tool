@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .gate import PortaoOC73
+from .referencia import referencia_valida
 
 
 @dataclass(frozen=True)
@@ -52,7 +53,7 @@ class ReconciliadorOC73:
             raise ValueError("ID da tentativa persistida inválido")
 
         referencia = tentativa.get("referencia")
-        if not isinstance(referencia, str) or not referencia.startswith("OC73-"):
+        if not referencia_valida(referencia):
             return ResultadoReconciliacao(
                 tentativa_id,
                 status_atual,
