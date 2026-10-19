@@ -21,13 +21,22 @@ COMANDO_PROIBIDO = re.compile(
     r"GRANT|REVOKE|CALL|LOAD|INTO\s+OUTFILE|INTO\s+DUMPFILE)\b",
     re.IGNORECASE,
 )
+PRIVILEGIOS_SOMENTE_LEITURA = {"USAGE", "SELECT", "SHOW VIEW"}
 
 
 def validar_sql_somente_leitura(sql: str) -> None:
     normalizado = " ".join(str(sql).split())
     if not COMANDO_PERMITIDO.match(normalizado):
         raise ValueError("Diagnóstico aceita somente SELECT e SHOW.")
-    if ";" in normalizado or COMANDO_PROIBIDO.search(normalizado):
+    # SHOW CREATE TABLE apenas descreve o DDL. Retira essa construção da
+    # inspeção lexical sem liberar CREATE como instrução independente.
+    inspecionavel = re.sub(
+        r"^SHOW\s+CREATE\s+TABLE\b",
+        "SHOW TABLE",
+        normalizado,
+        flags=re.IGNORECASE,
+    )
+    if ";" in normalizado or COMANDO_PROIBIDO.search(inspecionavel):
         raise ValueError("Comando potencialmente mutável recusado.")
 
 
@@ -35,6 +44,43 @@ def executar(cursor, sql: str, parametros=()):
     validar_sql_somente_leitura(sql)
     cursor.execute(sql, parametros)
     return cursor.fetchall()
+
+
+def validar_privilegios_somente_leitura(grants: list[dict]) -> None:
+    """Recusa a auditoria quando a conta possui poderes além de leitura.
+
+    O conteúdo dos grants não é incluído na exceção para evitar exposição
+    acidental de nomes de contas ou escopos em logs e respostas.
+    """
+    if not grants:
+        raise RuntimeError(
+            "Não foi possível comprovar os privilégios da credencial."
+        )
+
+    for linha in grants:
+        texto = " ".join(str(valor) for valor in linha.values()).strip()
+        if re.search(r"\bWITH\s+GRANT\s+OPTION\b", texto, re.IGNORECASE):
+            raise RuntimeError(
+                "Credencial do diagnóstico possui privilégios além de leitura."
+            )
+        correspondencia = re.match(
+            r"^GRANT\s+(.+?)\s+ON\s+",
+            texto,
+            flags=re.IGNORECASE,
+        )
+        if correspondencia is None:
+            raise RuntimeError(
+                "Formato de privilégios não reconhecido; diagnóstico recusado."
+            )
+
+        privilegios = {
+            item.strip().upper()
+            for item in correspondencia.group(1).split(",")
+        }
+        if not privilegios <= PRIVILEGIOS_SOMENTE_LEITURA:
+            raise RuntimeError(
+                "Credencial do diagnóstico possui privilégios além de leitura."
+            )
 
 
 def conectar():
@@ -94,7 +140,12 @@ def validar_laboratorio_lock(identidade: dict) -> None:
 
 def diagnosticar(testar_lock: bool = False) -> dict:
     conexao = conectar()
-    resultado = {"identidade": {}, "tabelas": {}, "duplicidades": []}
+    resultado = {
+        "identidade": {},
+        "tabelas": {},
+        "duplicidades": {},
+        "referencias_orfas": [],
+    }
     try:
         with conexao.cursor() as cursor:
             identidade = executar(
@@ -105,6 +156,19 @@ def diagnosticar(testar_lock: bool = False) -> dict:
             )[0]
             resultado["identidade"] = identidade
 
+            privilegios = executar(cursor, "SHOW GRANTS FOR CURRENT_USER")
+            validar_privilegios_somente_leitura(privilegios)
+            resultado["privilegios"] = privilegios
+
+            tabelas = executar(
+                cursor,
+                "SELECT TABLE_NAME, ENGINE, TABLE_COLLATION "
+                "FROM information_schema.TABLES "
+                "WHERE TABLE_SCHEMA = DATABASE() "
+                "AND TABLE_NAME IN (%s, %s) "
+                "ORDER BY TABLE_NAME",
+                TABELAS_OC73,
+            )
             colunas = executar(
                 cursor,
                 "SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, "
@@ -123,10 +187,39 @@ def diagnosticar(testar_lock: bool = False) -> dict:
                 "ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX",
                 TABELAS_OC73,
             )
-            privilegios = executar(cursor, "SHOW GRANTS FOR CURRENT_USER")
-            resultado["privilegios"] = privilegios
+            constraints = executar(
+                cursor,
+                "SELECT tc.TABLE_NAME, tc.CONSTRAINT_NAME, "
+                "tc.CONSTRAINT_TYPE, kcu.ORDINAL_POSITION, kcu.COLUMN_NAME, "
+                "kcu.REFERENCED_TABLE_NAME, kcu.REFERENCED_COLUMN_NAME "
+                "FROM information_schema.TABLE_CONSTRAINTS AS tc "
+                "LEFT JOIN information_schema.KEY_COLUMN_USAGE AS kcu "
+                "ON kcu.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA "
+                "AND kcu.TABLE_NAME = tc.TABLE_NAME "
+                "AND kcu.CONSTRAINT_NAME = tc.CONSTRAINT_NAME "
+                "WHERE tc.CONSTRAINT_SCHEMA = DATABASE() "
+                "AND tc.TABLE_NAME IN (%s, %s) "
+                "ORDER BY tc.TABLE_NAME, tc.CONSTRAINT_NAME, "
+                "kcu.ORDINAL_POSITION",
+                TABELAS_OC73,
+            )
+            referencias = executar(
+                cursor,
+                "SELECT CONSTRAINT_NAME, TABLE_NAME, REFERENCED_TABLE_NAME, "
+                "UPDATE_RULE, DELETE_RULE "
+                "FROM information_schema.REFERENTIAL_CONSTRAINTS "
+                "WHERE CONSTRAINT_SCHEMA = DATABASE() "
+                "AND TABLE_NAME IN (%s, %s) "
+                "ORDER BY TABLE_NAME, CONSTRAINT_NAME",
+                TABELAS_OC73,
+            )
             for tabela in TABELAS_OC73:
+                ddl = executar(cursor, f"SHOW CREATE TABLE {tabela}")
                 resultado["tabelas"][tabela] = {
+                    "metadados": [
+                        item for item in tabelas
+                        if item["TABLE_NAME"] == tabela
+                    ],
                     "colunas": [
                         item for item in colunas
                         if item["TABLE_NAME"] == tabela
@@ -135,9 +228,18 @@ def diagnosticar(testar_lock: bool = False) -> dict:
                         item for item in indices
                         if item["TABLE_NAME"] == tabela
                     ],
+                    "constraints": [
+                        item for item in constraints
+                        if item["TABLE_NAME"] == tabela
+                    ],
+                    "referencias": [
+                        item for item in referencias
+                        if item["TABLE_NAME"] == tabela
+                    ],
+                    "ddl": ddl,
                 }
 
-            resultado["duplicidades"] = executar(
+            resultado["duplicidades"]["scheduler"] = executar(
                 cursor,
                 "SELECT data_referencia, triggered_by, COUNT(*) AS total "
                 "FROM oc73_execucoes "
@@ -146,6 +248,29 @@ def diagnosticar(testar_lock: bool = False) -> dict:
                 "HAVING COUNT(*) > 1 "
                 "ORDER BY data_referencia DESC LIMIT 100",
                 ("scheduler:CWB", "scheduler:BIG"),
+            )
+            resultado["duplicidades"]["ctrc"] = executar(
+                cursor,
+                "SELECT serie, numero, codigo_ocorrencia, COUNT(*) AS total "
+                "FROM oc73_tentativas "
+                "GROUP BY serie, numero, codigo_ocorrencia "
+                "HAVING COUNT(*) > 1 "
+                "ORDER BY total DESC LIMIT 100",
+            )
+            resultado["duplicidades"]["referencia"] = executar(
+                cursor,
+                "SELECT referencia, COUNT(*) AS total "
+                "FROM oc73_tentativas "
+                "WHERE referencia IS NOT NULL AND referencia <> '' "
+                "GROUP BY referencia HAVING COUNT(*) > 1 "
+                "ORDER BY total DESC LIMIT 100",
+            )
+            resultado["referencias_orfas"] = executar(
+                cursor,
+                "SELECT t.id, t.execucao_id "
+                "FROM oc73_tentativas AS t "
+                "LEFT JOIN oc73_execucoes AS e ON e.id = t.execucao_id "
+                "WHERE e.id IS NULL ORDER BY t.id DESC LIMIT 100",
             )
 
             nome_lock = f"ssw_tool:oc73:diagnostico:{uuid4().hex}"
@@ -197,6 +322,11 @@ def main(argv=None) -> int:
         action="store_true",
         help="Confirma que o teste de lock ocorrerá em ambiente controlado.",
     )
+    parser.add_argument(
+        "--detalhar-esquema",
+        action="store_true",
+        help="Exibe DDL, índices e constraints para coleta de evidência.",
+    )
     args = parser.parse_args(argv)
     if args.testar_advisory_lock and not args.confirmar_ambiente_controlado:
         parser.error(
@@ -221,10 +351,25 @@ def main(argv=None) -> int:
             f"{tabela}: {len(dados['colunas'])} coluna(s), "
             f"{len(dados['indices'])} entrada(s) de índice"
         )
+        if args.detalhar_esquema:
+            print(f"{tabela} metadados: {dados['metadados']}")
+            print(f"{tabela} índices: {dados['indices']}")
+            print(f"{tabela} constraints: {dados['constraints']}")
+            print(f"{tabela} referências: {dados['referencias']}")
+            print(f"{tabela} DDL: {dados['ddl']}")
     print(
         "Duplicidades scheduler fluxo/data: "
-        f"{len(resultado['duplicidades'])}"
+        f"{len(resultado['duplicidades']['scheduler'])}"
     )
+    print(
+        "Duplicidades CTRC/código: "
+        f"{len(resultado['duplicidades']['ctrc'])}"
+    )
+    print(
+        "Duplicidades de referência: "
+        f"{len(resultado['duplicidades']['referencia'])}"
+    )
+    print(f"Tentativas órfãs: {len(resultado['referencias_orfas'])}")
     print(f"Advisory lock: {resultado['advisory_lock']}")
     return 0
 

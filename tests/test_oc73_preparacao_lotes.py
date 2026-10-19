@@ -1,8 +1,10 @@
 from datetime import date
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from modules.ocorrencia_73.service import Ocorrencia73Service
+from operations.op455.report import OP455Report
 
 
 class OP455Simulada:
@@ -12,6 +14,66 @@ class OP455Simulada:
     def gerar_e_baixar_ocorrencia_73(self, **kwargs):
         self.chamadas.append(kwargs)
         return Path(f"{kwargs['unidade'].lower()}.sswweb")
+
+
+def test_payload_oc73_restaura_formato_confirmado_por_har():
+    class ClientCaptura:
+        def __init__(self):
+            self.chamadas = []
+
+        def post(self, path, data=None):
+            self.chamadas.append((path, data))
+            return SimpleNamespace(text="relatorio solicitado")
+
+    client = ClientCaptura()
+    op455 = OP455Report(client)
+
+    resposta = op455.gerar_relatorio_ocorrencia_73(
+        data_inicial="191026",
+        data_final="191026",
+    )
+
+    assert resposta == "relatorio solicitado"
+    assert len(client.chamadas) == 1
+    path, payload = client.chamadas[0]
+    assert path == "/bin/ssw0230"
+    assert payload["act"] == "E1"
+    assert payload["f3"] == "E"
+    assert "reg_tipo" not in payload
+
+
+def test_fluxo_operacional_estabelece_cwb_antes_de_abrir_op455():
+    client = SimpleNamespace(get=Mock(), open_option=Mock())
+    op455 = OP455Report(client)
+    fila = Mock()
+    fila.baixar_por_opcao.return_value = Path("relatorio-cwb.sswweb")
+
+    with (
+        patch("operations.op455.report.OP156Queue", return_value=fila),
+        patch.object(op455, "capturar_ids_fila", return_value={"anterior"})
+        as capturar,
+        patch.object(
+            op455,
+            "gerar_relatorio_ocorrencia_73",
+            return_value="solicitacao aceita",
+        ),
+        patch.object(op455, "validar_layout_ocorrencia_73") as validar,
+    ):
+        arquivo = op455.gerar_e_baixar_ocorrencia_73(
+            output_dir=Path("downloads/teste"),
+            data_inicial="191026",
+            data_final="191026",
+            unidade="CWB",
+        )
+
+    assert arquivo == Path("relatorio-cwb.sswweb")
+    client.get.assert_called_once()
+    assert client.get.call_args.args[0] == "/bin/ssw0082"
+    assert client.get.call_args.kwargs["params"]["quadro_menu01"] == "CWB"
+    client.open_option.assert_called_once_with("455", "CWB")
+    assert capturar.call_args.kwargs["unidade"] == "CWB"
+    assert fila.baixar_por_opcao.call_args.kwargs["unidade"] == "CWB"
+    validar.assert_called_once_with(Path("relatorio-cwb.sswweb"))
 
 
 def executar_preparacao(data, fluxo=None):

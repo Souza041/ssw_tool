@@ -72,6 +72,18 @@ def test_referencia_parcial_bloqueada():
     )
 
 
+def test_referencia_truncada_no_historico_nao_confirma():
+    referencia_truncada = REF[:-1]
+
+    assert not ocorrencia_confirma_referencia(
+        {
+            "codigo": "73",
+            "complemento": f"BOT OC73 | REF:{referencia_truncada}",
+        },
+        REF,
+    )
+
+
 def test_referencia_diferente_bloqueada():
     outra = "OC73-FFFFFFFFFFFFFFFFFFFF"
 

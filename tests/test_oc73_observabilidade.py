@@ -9,6 +9,7 @@ from modules.ocorrencia_73 import observabilidade
 from modules.ocorrencia_73 import routes as rotas_oc73
 from scripts.diagnostico_oc73_mysql import (
     validar_laboratorio_lock,
+    validar_privilegios_somente_leitura,
     validar_sql_somente_leitura,
 )
 from web.session_store import (
@@ -227,11 +228,40 @@ def test_guard_observabilidade_recusa_escrita_e_lock(sql):
 
 def test_guard_diagnostico_recusa_dml_e_multiplas_instrucoes():
     validar_sql_somente_leitura("SHOW INDEX FROM oc73_execucoes")
+    validar_sql_somente_leitura("SHOW CREATE TABLE oc73_execucoes")
     validar_sql_somente_leitura("SELECT VERSION()")
     with pytest.raises(ValueError):
         validar_sql_somente_leitura("DELETE FROM oc73_execucoes")
     with pytest.raises(ValueError):
         validar_sql_somente_leitura("SELECT 1; DROP TABLE oc73_execucoes")
+
+
+def test_diagnostico_aceita_somente_grants_de_leitura():
+    validar_privilegios_somente_leitura([
+        {"grant": "GRANT USAGE ON *.* TO 'auditor'@'127.0.0.1'"},
+        {
+            "grant": (
+                "GRANT SELECT, SHOW VIEW ON `automationx`.* "
+                "TO 'auditor'@'127.0.0.1'"
+            )
+        },
+    ])
+
+
+@pytest.mark.parametrize(
+    "grant",
+    [
+        "GRANT ALL PRIVILEGES ON *.* TO 'auditor'@'127.0.0.1'",
+        "GRANT SELECT, INSERT ON `automationx`.* TO 'auditor'@'127.0.0.1'",
+        "GRANT SELECT ON `automationx`.* TO 'auditor'@'127.0.0.1' WITH GRANT OPTION",
+    ],
+)
+def test_diagnostico_recusa_grant_mutavel_sem_expor_conteudo(grant):
+    with pytest.raises(RuntimeError) as erro:
+        validar_privilegios_somente_leitura([{"grant": grant}])
+
+    assert "auditor" not in str(erro.value)
+    assert "automationx" not in str(erro.value)
 
 
 def test_advisory_lock_diagnostico_recusa_banco_operacional(monkeypatch):

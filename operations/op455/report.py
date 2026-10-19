@@ -1,8 +1,10 @@
 
 import csv
+import hashlib
 import re 
 
-from urllib.parse import unquote
+from html.parser import HTMLParser
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -13,12 +15,200 @@ from ssw.settings import settings
 from ssw.utils import data_ddmmaa, dummy
 
 
+_FRASE_UNIDADE = "informe a unidade"
+_CAMPOS_COM_VALOR_DIAGNOSTICO = {"act", "f3", "reg_tipo"}
+
+
+def _normalizar_texto_diagnostico(valor: str | None) -> str:
+    return " ".join((valor or "").casefold().split())
+
+
+class _OP455HTMLDiagnosticoParser(HTMLParser):
+    """Extrai somente metadados seguros; nunca conserva o HTML recebido."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.localizacoes = {
+            "texto_visivel": False,
+            "script": False,
+            "style": False,
+            "comentario": False,
+            "atributo": False,
+        }
+        self.campos: list[dict] = []
+        self._contexto: str | None = None
+        self._campo_select: dict | None = None
+        self._opcao_selecionada: dict | None = None
+
+    @staticmethod
+    def _contem_frase(valor: str | None) -> bool:
+        return _FRASE_UNIDADE in _normalizar_texto_diagnostico(valor)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.casefold()
+        atributos = {nome.casefold(): valor for nome, valor in attrs}
+
+        if any(
+            self._contem_frase(nome) or self._contem_frase(valor)
+            for nome, valor in attrs
+        ):
+            self.localizacoes["atributo"] = True
+
+        if tag in {"script", "style"}:
+            self._contexto = tag
+
+        if tag in {"input", "select", "textarea", "button"}:
+            nome = atributos.get("name") or ""
+            tipo = atributos.get("type") or (
+                "select" if tag == "select" else tag
+            )
+            campo = {
+                "nome": nome,
+                "tipo": tipo.casefold(),
+                "selecionado": "checked" in atributos,
+                "opcoes_selecionadas": [],
+            }
+            if nome.casefold() in _CAMPOS_COM_VALOR_DIAGNOSTICO:
+                campo["valor"] = atributos.get("value") or ""
+            self.campos.append(campo)
+            if tag == "select":
+                self._campo_select = campo
+
+        if tag == "option" and self._campo_select is not None:
+            if "selected" in atributos:
+                opcao = {"selecionada": True}
+                if self._campo_select["nome"].casefold() in _CAMPOS_COM_VALOR_DIAGNOSTICO:
+                    opcao["valor"] = atributos.get("value") or ""
+                self._campo_select["opcoes_selecionadas"].append(opcao)
+                self._opcao_selecionada = opcao
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.casefold()
+        if tag in {"script", "style"}:
+            self._contexto = None
+        elif tag == "option":
+            self._opcao_selecionada = None
+        elif tag == "select":
+            self._campo_select = None
+
+    def handle_data(self, data: str) -> None:
+        if self._contem_frase(data):
+            self.localizacoes[self._contexto or "texto_visivel"] = True
+
+        if (
+            self._opcao_selecionada is not None
+            and self._campo_select is not None
+            and self._campo_select["nome"].casefold()
+            in _CAMPOS_COM_VALOR_DIAGNOSTICO
+        ):
+            texto = " ".join(data.split())
+            if texto:
+                self._opcao_selecionada["texto"] = texto
+
+    def handle_comment(self, data: str) -> None:
+        if self._contem_frase(data):
+            self.localizacoes["comentario"] = True
+
+
+def _url_sanitizada(url: str | None) -> str:
+    partes = urlsplit(url or "")
+    host = partes.hostname or ""
+    if partes.port:
+        host = f"{host}:{partes.port}"
+    return urlunsplit((partes.scheme, host, partes.path, "", ""))
+
+
 class OP455Report:
     def __init__(self, client: SSWClient) -> None:
         self.client = client
 
-    def open(self, unidade: str = "MTZ") -> None:
-        self.client.open_option("455", unidade)
+    def open(self, unidade: str = "MTZ"):
+        unidade = str(unidade or "").strip().upper()
+        if not unidade:
+            raise ValueError("Unidade não informada para abertura da OP455.")
+
+        # Reproduz a troca de unidade disparada pelo onchange do menu.
+        self.client.get(
+            "/bin/ssw0082",
+            params={
+                "quadro_menu01": unidade,
+                "dummy": dummy(),
+            },
+        )
+        return self.client.open_option("455", unidade)
+
+    @staticmethod
+    def resumir_resposta_diagnostica(response) -> dict:
+        """Produz evidência sanitizada sem devolver corpo ou cabeçalhos sensíveis."""
+        conteudo = getattr(response, "content", None)
+        if conteudo is None:
+            conteudo = str(getattr(response, "text", "")).encode(
+                "utf-8", errors="replace"
+            )
+        elif not isinstance(conteudo, bytes):
+            conteudo = bytes(conteudo)
+
+        headers = getattr(response, "headers", {}) or {}
+        content_type = str(headers.get("Content-Type", ""))
+        status = int(getattr(response, "status_code", 0) or 0)
+        tipo_base = content_type.partition(";")[0].strip().casefold()
+        html_esperado = tipo_base in {"text/html", "application/xhtml+xml"}
+
+        parser = _OP455HTMLDiagnosticoParser()
+        texto = str(getattr(response, "text", ""))
+        erro_parser = False
+        try:
+            parser.feed(texto)
+            parser.close()
+        except (ValueError, TypeError):
+            erro_parser = True
+
+        if status < 200 or status >= 300:
+            classificacao = "erro_http"
+        elif not conteudo or not html_esperado or erro_parser:
+            classificacao = "resposta_inesperada"
+        else:
+            classificacao = "html_valido"
+
+        return {
+            "status_http": status,
+            "url_final": _url_sanitizada(getattr(response, "url", "")),
+            "content_type": content_type,
+            "tamanho_bytes": len(conteudo),
+            "sha256_corpo": hashlib.sha256(conteudo).hexdigest(),
+            "classificacao_resposta": classificacao,
+            "frase_informe_unidade": {
+                nome: presente
+                for nome, presente in parser.localizacoes.items()
+            },
+            "campos_formulario": parser.campos,
+        }
+
+    @staticmethod
+    def _ids_jobs(jobs: list[dict]) -> set[str]:
+        return {
+            str(job.get("download_id") or "").strip()
+            for job in jobs
+            if str(job.get("download_id") or "").strip()
+        }
+
+    def _snapshot_op156_diagnostico(
+        self,
+        fila: OP156Queue,
+        opcao: str,
+        unidade: str,
+    ) -> set[str]:
+        response = self.client.post(
+            "/bin/ssw1440",
+            data={"dummy": dummy()},
+            retries=1,
+        )
+        jobs = fila.extrair_jobs(
+            html=response.text,
+            opcao_contains=opcao,
+            unidade=unidade,
+        )
+        return self._ids_jobs(jobs)
 
     def gerar_relatorio(
         self,
@@ -335,25 +525,18 @@ class OP455Report:
 
         return arquivo
 
-    def gerar_relatorio_ocorrencia_73(
+    def _payload_relatorio_ocorrencia_73(
         self,
         data_inicial: str,
         data_final: str,
-    ) -> str:
-        """
-        Gera o relatório OP455 para os fluxos CWB e BIG.
-
-        Os filtros de UF do remetente e última ocorrência
-        serão aplicados posteriormente no parser.
-        """
-
-        payload = {
+    ) -> dict:
+        return {
             "act": "E1",
             "cod_emp_ctb": "00",
 
-            # Unidade recebedora
-            "f3": "R",
-            "reg_tipo": "R",
+            # Tipo confirmado pelo HAR e pelo fluxo OP455 anterior.
+            # CWB/BIG é estabelecida na sessão antes da abertura da OP455.
+            "f3": "E",
 
             # Todos os documentos
             "f8": "T",
@@ -385,12 +568,142 @@ class OP455Report:
             "dummy": dummy(),
         }
 
-        response = self.client.post(
-            "/bin/ssw0230",
-            data=payload,
+    def _solicitar_relatorio_ocorrencia_73(
+        self,
+        data_inicial: str,
+        data_final: str,
+        retries: int | None = None,
+    ):
+        argumentos = {
+            "data": self._payload_relatorio_ocorrencia_73(
+                data_inicial=data_inicial,
+                data_final=data_final,
+            ),
+        }
+        if retries is not None:
+            argumentos["retries"] = retries
+        return self.client.post("/bin/ssw0230", **argumentos)
+
+    def gerar_relatorio_ocorrencia_73(
+        self,
+        data_inicial: str,
+        data_final: str,
+    ) -> str:
+        """
+        Gera o relatório OP455 para os fluxos CWB e BIG.
+
+        Os filtros de UF do remetente e última ocorrência
+        serão aplicados posteriormente no parser.
+        """
+        response = self._solicitar_relatorio_ocorrencia_73(
+            data_inicial=data_inicial,
+            data_final=data_final,
         )
 
         return response.text
+
+    def diagnosticar_geracao_ocorrencia_73(
+        self,
+        data_inicial: str,
+        data_final: str,
+        unidade: str = "CWB",
+    ) -> dict:
+        """Faz um submit consultivo, sem polling, download ou persistência."""
+        unidade = unidade.strip().upper()
+        if unidade not in {"CWB", "BIG"}:
+            raise ValueError(f"Unidade não permitida para OC73: {unidade}")
+
+        inicio = datetime.strptime(data_inicial, "%d%m%y").date()
+        fim = datetime.strptime(data_final, "%d%m%y").date()
+        if inicio > fim:
+            raise ValueError(
+                "A data inicial não pode ser posterior à data final."
+            )
+
+        opcao = "455 - Fretes Expedidos/Recebidos - CTRCs"
+        fila = OP156Queue(self.client)
+        resultado = {
+            "unidade": unidade,
+            "unidade_contexto_op455": unidade,
+            "resultado": "inconclusivo",
+            "resposta_op455": None,
+            "op156": {
+                "consultas_antes": 0,
+                "consultas_depois": 0,
+                "total_antes": None,
+                "total_depois": None,
+                "novos_relatorios": None,
+                "novo_relatorio_detectado": None,
+            },
+            "download_executado": False,
+        }
+
+        try:
+            self.open(unidade=unidade)
+            ids_antes = self._snapshot_op156_diagnostico(
+                fila=fila,
+                opcao=opcao,
+                unidade=unidade,
+            )
+        except Exception as exc:
+            resultado["resultado"] = "erro_pre_voo"
+            resultado["erro_tipo"] = type(exc).__name__
+            return resultado
+        resultado["op156"]["consultas_antes"] = 1
+        resultado["op156"]["total_antes"] = len(ids_antes)
+
+        try:
+            response = self._solicitar_relatorio_ocorrencia_73(
+                data_inicial=data_inicial,
+                data_final=data_final,
+                retries=1,
+            )
+        except Exception as exc:
+            resultado["resultado"] = "erro_submit"
+            resultado["erro_tipo"] = type(exc).__name__
+            return resultado
+
+        resumo = self.resumir_resposta_diagnostica(response)
+        resultado["resposta_op455"] = resumo
+        if resumo["classificacao_resposta"] != "html_valido":
+            resultado["resultado"] = resumo["classificacao_resposta"]
+            return resultado
+
+        try:
+            ids_depois = self._snapshot_op156_diagnostico(
+                fila=fila,
+                opcao=opcao,
+                unidade=unidade,
+            )
+        except Exception as exc:
+            resultado["resultado"] = "erro_op156_posterior"
+            resultado["erro_tipo"] = type(exc).__name__
+            return resultado
+        novos = ids_depois - ids_antes
+        resultado["op156"].update({
+            "consultas_depois": 1,
+            "total_depois": len(ids_depois),
+            "novos_relatorios": len(novos),
+            "novo_relatorio_detectado": bool(novos),
+        })
+
+        localizacoes = resumo["frase_informe_unidade"]
+        erro_visivel = localizacoes["texto_visivel"]
+        marcador_direto = self.extrair_arquivo_direto(response.text) is not None
+        resultado["marcador_arquivo_direto"] = marcador_direto
+
+        if erro_visivel:
+            resultado["resultado"] = (
+                "resposta_divergente"
+                if novos or marcador_direto
+                else "erro_unidade_visivel"
+            )
+        elif novos or marcador_direto:
+            resultado["resultado"] = "submit_aceito"
+        elif any(localizacoes.values()):
+            resultado["resultado"] = "frase_apenas_nao_visivel"
+
+        return resultado
 
     def gerar_e_baixar_ocorrencia_73(
         self,
@@ -423,10 +736,9 @@ class OP455Report:
             )
 
         opcao = "455 - Fretes Expedidos/Recebidos - CTRCs"
-
         fila = OP156Queue(self.client)
 
-        # Abre o OP455 na unidade solicitada.
+        # Estabelece CWB/BIG na sessão antes de abrir a OP455.
         self.open(unidade=unidade)
 
         # Captura IDs anteriores para não baixar

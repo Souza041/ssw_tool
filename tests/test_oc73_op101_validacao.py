@@ -171,6 +171,7 @@ class ClienteSemRede:
 @pytest.mark.parametrize(
     "observacao",
     [
+        "",
         "A" * 71,
         "BOT OC73 SEM REFERENCIA",
         "BOT OC73 | REF:OC73-123",

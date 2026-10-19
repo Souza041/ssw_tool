@@ -12,6 +12,31 @@ não substitui aprovação operacional formal.
 5. Registrar os valores das flags antes do teste. Não modificar o gate por código.
 6. Ter um segundo operador acompanhando a execução e as evidências.
 
+O comando manual é independente de `OCORRENCIA_73_ENABLED` e nunca inicia o
+scheduler. A flag global do scheduler deve permanecer `false` durante toda a
+homologação.
+
+O CTRC é obrigatório e único:
+
+```powershell
+python scripts/testar_ocorrencia_73.py --ctrc CWB123456
+```
+
+O argumento apenas fixa `OCORRENCIA_73_CTRC_TESTE` e força
+`OCORRENCIA_73_MAX_LANCAMENTOS=1` no processo manual. Ele não altera DRY_RUN,
+`OC73_ENVIO_HABILITADO` ou qualquer configuração do scheduler. Repetir
+`--ctrc`, usar separadores ou informar mais de um CTRC é recusado.
+
+Com os padrões seguros (`OCORRENCIA_73_DRY_RUN=true` e
+`OC73_ENVIO_HABILITADO=NAO`), o comando não pode lançar a ocorrência. Uma
+homologação potencialmente real exige, além dos gates existentes, autorização
+operacional separada representada por `OC73_HOMOLOGACAO_MANUAL_AUTORIZADA=SIM`.
+Essa variável não deve ser persistida nem configurada antes da janela aprovada.
+Ela é apenas uma trava técnica e não constitui, registra ou substitui a
+autorização operacional humana.
+Sua presença não contorna DRY_RUN, o gate global, a reserva, o limite, o REF ou a
+confirmação OP101.
+
 ## Seleção e verificação do CTRC
 
 - Usar um CTRC indicado pelo responsável operacional, nunca escolhido por busca
