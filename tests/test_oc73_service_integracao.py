@@ -176,6 +176,10 @@ def test_gate_de_envio_desligado_bloqueia_post(
         "modules.ocorrencia_73.service.OC73_ENVIO_HABILITADO",
         False,
     )
+    monkeypatch.setattr(
+        "modules.ocorrencia_73.service.MAX_LANCAMENTOS",
+        1,
+    )
 
     resultado = service.executar(DATA)
 

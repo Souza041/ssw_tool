@@ -135,7 +135,7 @@ def colunas_validas():
 
 def respostas_validas():
     sql = diagnostico.SQL_FIXO
-    return {
+    respostas = {
         sql["iniciar_transacao_read_only"]: [],
         sql["identidade"]: [identidade()],
         sql["tabelas"]: [
@@ -249,6 +249,9 @@ def respostas_validas():
             }
         ],
     }
+    for item in respostas[sql["indices"]]:
+        item["SUB_PART"] = None
+    return respostas
 
 
 def avaliar_schema_das_respostas(respostas):
@@ -341,7 +344,8 @@ def test_conexao_nao_habilita_multiplas_instrucoes(monkeypatch):
         {"server_uuid": "ffffffff-ffff-ffff-ffff-ffffffffffff"},
     ],
 )
-def test_identidade_inesperada_falha_antes_das_tabelas(alteracao):
+@pytest.mark.parametrize("apenas_schema", [False, True])
+def test_identidade_inesperada_falha_antes_das_tabelas(alteracao, apenas_schema):
     respostas = respostas_validas()
     respostas[diagnostico.SQL_FIXO["identidade"]] = [
         identidade(**alteracao)
@@ -353,6 +357,9 @@ def test_identidade_inesperada_falha_antes_das_tabelas(alteracao):
             config(),
             server_uuid_esperado=UUID_ESPERADO,
             connection_factory=lambda _: conexao,
+            apenas_schema=apenas_schema,
+            verificacao=None if apenas_schema else "duplicidades_scheduler",
+            confirmar_agregacao=not apenas_schema,
         )
 
     assert conexao.cursor_falso.executadas == [
@@ -363,7 +370,7 @@ def test_identidade_inesperada_falha_antes_das_tabelas(alteracao):
     assert conexao.close_chamado is True
 
 
-def test_diagnostico_completo_nao_exporta_registros_ou_segredos():
+def test_diagnostico_fracionado_nao_exporta_registros_ou_segredos():
     senha = "senha-operacional-ultrassecreta"
     conexao = ConexaoFalsa(respostas_validas())
 
@@ -371,6 +378,8 @@ def test_diagnostico_completo_nao_exporta_registros_ou_segredos():
         config(password=senha),
         server_uuid_esperado=UUID_ESPERADO,
         connection_factory=lambda _: conexao,
+        verificacao="duplicidades_scheduler",
+        confirmar_agregacao=True,
     )
     serializado = json.dumps(resultado, default=str)
 
@@ -387,9 +396,13 @@ def test_diagnostico_completo_nao_exporta_registros_ou_segredos():
         "TABLE_ROWS_EXATO"
     ] is False
     assert resultado["limites"]["registros_operacionais_exportados"] == 0
-    assert conexao.cursor_falso.executadas == list(
-        diagnostico.SQL_FIXO.values()
-    )
+    assert conexao.cursor_falso.executadas == [
+        diagnostico.SQL_FIXO[nome] for nome in (
+            "iniciar_transacao_read_only", "identidade", "tabelas", "colunas",
+            "indices", "constraints", "foreign_keys", "ddl_execucoes",
+            "ddl_tentativas", "duplicidades_scheduler",
+        )
+    ]
     assert conexao.rollback_chamado is True
     assert conexao.close_chamado is True
 
@@ -416,7 +429,7 @@ def test_erro_de_conexao_nao_vaza_segredo(monkeypatch, capsys):
     ])
     saida = capsys.readouterr()
 
-    assert retorno == 2
+    assert retorno == diagnostico.SAIDA_ERRO
     assert senha not in saida.out + saida.err
     assert "usuario-sensivel" not in saida.out + saida.err
     assert "Traceback" not in saida.out + saida.err
@@ -431,11 +444,10 @@ def test_sem_confirmacao_explica_nao_conecta(monkeypatch):
         raise AssertionError("não deveria conectar")
 
     monkeypatch.setattr(diagnostico.pymysql, "connect", conexao_proibida)
-    with pytest.raises(SystemExit):
-        diagnostico.main([
-            "--server-uuid-esperado",
-            UUID_ESPERADO,
-        ])
+    assert diagnostico.main([
+        "--server-uuid-esperado",
+        UUID_ESPERADO,
+    ]) == diagnostico.SAIDA_ERRO
     assert chamado is False
 
 
@@ -491,6 +503,139 @@ def test_fixture_schema_totalmente_conforme():
     assert resultado["estado_coleta"] == "completo"
     assert resultado["contrato_minimo"] == "conforme"
     assert resultado["estrutura_colunas"]["estado"] == "conforme"
+
+
+def test_modo_apenas_schema_nao_consulta_registros_operacionais():
+    conexao = ConexaoFalsa(respostas_validas())
+
+    resultado = diagnostico.diagnosticar(
+        config(),
+        server_uuid_esperado=UUID_ESPERADO,
+        connection_factory=lambda _: conexao,
+        apenas_schema=True,
+    )
+
+    assert resultado["escopo"] == "apenas_schema"
+    assert resultado["conformidade_schema"]["contrato_minimo"] == "conforme"
+    assert resultado["estado_coleta_integridade"] == "nao_consultada"
+    assert resultado["integridade"] is None
+    assert conexao.cursor_falso.executadas == [
+        diagnostico.SQL_FIXO[nome]
+        for nome in (
+            "iniciar_transacao_read_only", "identidade", "tabelas",
+            "colunas", "indices", "constraints", "foreign_keys",
+            "ddl_execucoes", "ddl_tentativas",
+        )
+    ]
+    assert conexao.rollback_chamado is True
+    assert conexao.close_chamado is True
+
+
+@pytest.mark.parametrize(
+    "colunas_indice,nao_unico",
+    [
+        (("serie", "fluxo", "codigo_ocorrencia"), 0),
+        (("serie", "numero", "codigo_ocorrencia"), 1),
+        (("numero", "serie", "codigo_ocorrencia"), 0),
+    ],
+)
+def test_indice_ctrc_com_composicao_ordem_ou_unicidade_incorreta(
+    colunas_indice, nao_unico,
+):
+    respostas = respostas_validas()
+    partes = [
+        item for item in respostas[diagnostico.SQL_FIXO["indices"]]
+        if item["INDEX_NAME"] == "uq_oc73_ctrc"
+    ]
+    for item, coluna_esperada in zip(partes, colunas_indice):
+        item["COLUMN_NAME"] = coluna_esperada
+        item["NON_UNIQUE"] = nao_unico
+
+    resultado = avaliar_schema_das_respostas(respostas)
+    assert resultado["unique_ctrc"]["estado"] == "nao_conforme"
+    assert resultado["contrato_minimo"] == "nao_conforme"
+
+
+def test_indice_equivalente_sem_nome_exato_nao_libera_reserva():
+    respostas = respostas_validas()
+    for item in respostas[diagnostico.SQL_FIXO["indices"]]:
+        if item["INDEX_NAME"] == "uq_oc73_ctrc":
+            item["INDEX_NAME"] = "indice_equivalente"
+
+    resultado = avaliar_schema_das_respostas(respostas)
+    assert resultado["unique_ctrc"]["indices_compativeis"] == ["indice_equivalente"]
+    assert resultado["unique_ctrc"]["nome_esperado_presente"] is False
+    assert resultado["contrato_minimo"] == "nao_conforme"
+
+
+def test_unique_por_prefixo_nao_satisfaz_contrato():
+    respostas = respostas_validas()
+    for item in respostas[diagnostico.SQL_FIXO["indices"]]:
+        if item["INDEX_NAME"] == "uq_oc73_ctrc" and item["COLUMN_NAME"] == "numero":
+            item["SUB_PART"] = 8
+
+    resultado = avaliar_schema_das_respostas(respostas)
+    assert resultado["unique_ctrc"]["estado"] == "nao_conforme"
+    assert resultado["contrato_minimo"] == "nao_conforme"
+
+
+def test_engine_diferente_de_innodb_bloqueia_conformidade():
+    respostas = respostas_validas()
+    respostas[diagnostico.SQL_FIXO["tabelas"]][1]["ENGINE"] = "MyISAM"
+
+    resultado = avaliar_schema_das_respostas(respostas)
+    assert resultado["engine"]["estado"] == "nao_conforme"
+    assert resultado["contrato_minimo"] == "nao_conforme"
+
+
+def test_fk_ausente_bloqueia_conformidade():
+    respostas = respostas_validas()
+    respostas[diagnostico.SQL_FIXO["constraints"]] = [
+        item for item in respostas[diagnostico.SQL_FIXO["constraints"]]
+        if item.get("CONSTRAINT_TYPE") != "FOREIGN KEY"
+    ]
+    respostas[diagnostico.SQL_FIXO["foreign_keys"]] = []
+
+    resultado = avaliar_schema_das_respostas(respostas)
+    assert resultado["fk_execucao"]["estado_relacao_minima"] == "nao_conforme"
+    assert resultado["contrato_minimo"] == "nao_conforme"
+
+
+def test_cli_apenas_schema_falha_fechada_quando_nao_conforme(monkeypatch, capsys):
+    respostas = respostas_validas()
+    respostas[diagnostico.SQL_FIXO["indices"]] = [
+        item for item in respostas[diagnostico.SQL_FIXO["indices"]]
+        if item["INDEX_NAME"] != "uq_oc73_ctrc"
+    ]
+    conexao = ConexaoFalsa(respostas)
+    monkeypatch.setattr(
+        diagnostico.ConfiguracaoBanco,
+        "carregar",
+        lambda: config(),
+    )
+    monkeypatch.setattr(
+        diagnostico,
+        "abrir_conexao",
+        lambda _: (_ for _ in ()).throw(AssertionError("conexao real proibida")),
+    )
+    diagnosticar_original = diagnostico.diagnosticar
+    monkeypatch.setattr(
+        diagnostico,
+        "diagnosticar",
+        lambda cfg, **kwargs: diagnosticar_original(
+            cfg, connection_factory=lambda _: conexao, **kwargs
+        ),
+    )
+
+    codigo = diagnostico.main([
+        "--somente-leitura", "--apenas-schema",
+        "--server-uuid-esperado", UUID_ESPERADO,
+    ])
+
+    assert codigo == 2
+    assert json.loads(capsys.readouterr().out)["verificacoes"]["contrato_minimo_schema"]["estado"] == "nao_conforme"
+    assert conexao.rollback_chamado is True
+    assert conexao.close_chamado is True
 
 
 def test_coluna_obrigatoria_ausente_e_nao_conforme():
@@ -650,6 +795,8 @@ def test_status_persistido_invalido_e_reportado_sem_dados_operacionais():
         config(),
         server_uuid_esperado=UUID_ESPERADO,
         connection_factory=lambda _: conexao,
+        verificacao="integridade_estados",
+        confirmar_agregacao=True,
     )
 
     estados = resultado["integridade"]["integridade_estados"]
@@ -683,6 +830,8 @@ def test_falha_da_consulta_de_estados_e_inconclusiva():
         config(),
         server_uuid_esperado=UUID_ESPERADO,
         connection_factory=lambda _: conexao,
+        verificacao="integridade_estados",
+        confirmar_agregacao=True,
     )
 
     assert resultado["estado_coleta_integridade"] == "inconclusivo"
@@ -722,6 +871,8 @@ def test_schema_incompleto_falha_sem_consultar_integridade():
             config(),
             server_uuid_esperado=UUID_ESPERADO,
             connection_factory=lambda _: conexao,
+            verificacao="duplicidades_scheduler",
+            confirmar_agregacao=True,
         )
 
     assert conexao.cursor_falso.executadas == [
@@ -746,10 +897,13 @@ def test_indice_unique_ausente_e_reportado_como_nao_conforme():
         config(),
         server_uuid_esperado=UUID_ESPERADO,
         connection_factory=lambda _: conexao,
+        verificacao="duplicidades_scheduler",
+        confirmar_agregacao=True,
     )
 
     assert resultado["conformidade_schema"]["contrato_minimo"] == "nao_conforme"
     assert resultado["conformidade_schema"]["unique_referencia"]["estado"] == "nao_conforme"
+    assert resultado["integridade"]["duplicidades_scheduler"]["estado_coleta"] == "nao_executada"
 
 
 def test_limite_atingido_nao_e_reportado_como_quantidade_exata():
@@ -764,6 +918,8 @@ def test_limite_atingido_nao_e_reportado_como_quantidade_exata():
         config(),
         server_uuid_esperado=UUID_ESPERADO,
         connection_factory=lambda _: conexao,
+        verificacao="duplicidades_ctrc",
+        confirmar_agregacao=True,
     )
     ctrc = resultado["integridade"]["duplicidades_ctrc"]
 
@@ -786,6 +942,8 @@ def test_erro_de_consulta_torna_resultados_inconclusivos_sem_vazar_erro():
         config(),
         server_uuid_esperado=UUID_ESPERADO,
         connection_factory=lambda _: conexao,
+        verificacao="duplicidades_ctrc",
+        confirmar_agregacao=True,
     )
     serializado = json.dumps(resultado)
 
@@ -797,8 +955,329 @@ def test_erro_de_consulta_torna_resultados_inconclusivos_sem_vazar_erro():
     }
     assert resultado["integridade"]["duplicidades_referencia"][
         "motivo"
-    ] == "nao_executada_apos_erro_anterior"
+    ] == "nao_selecionada"
     assert diagnostico.SQL_FIXO["duplicidades_referencia"] not in (
         conexao.cursor_falso.executadas
     )
     assert segredo not in serializado
+
+
+@pytest.mark.parametrize("codigo", [1142, 3024])
+def test_falha_em_metadados_aborta_antes_dos_agregados(codigo):
+    segredo = "detalhe_sensivel_sintetico"
+    respostas = respostas_validas()
+    respostas[diagnostico.SQL_FIXO["indices"]] = pymysql.OperationalError(
+        codigo, segredo
+    )
+    conexao = ConexaoFalsa(respostas)
+
+    with pytest.raises(diagnostico.DiagnosticoSeguroErro) as erro:
+        diagnostico.diagnosticar(
+            config(),
+            server_uuid_esperado=UUID_ESPERADO,
+            connection_factory=lambda _: conexao,
+            verificacao="duplicidades_scheduler",
+            confirmar_agregacao=True,
+        )
+
+    assert segredo not in str(erro.value)
+    assert all(
+        diagnostico.SQL_FIXO[nome] not in conexao.cursor_falso.executadas
+        for nome in (
+            "duplicidades_scheduler", "duplicidades_ctrc",
+            "duplicidades_referencia", "tentativas_orfas",
+            "integridade_estados",
+        )
+    )
+    assert conexao.rollback_chamado is True
+    assert conexao.close_chamado is True
+
+
+def test_permissao_negada_no_primeiro_agregado_interrompe_os_demais():
+    segredo = "detalhe_sensivel_sintetico"
+    respostas = respostas_validas()
+    respostas[diagnostico.SQL_FIXO["duplicidades_scheduler"]] = (
+        pymysql.OperationalError(1142, segredo)
+    )
+    conexao = ConexaoFalsa(respostas)
+
+    resultado = diagnostico.diagnosticar(
+        config(),
+        server_uuid_esperado=UUID_ESPERADO,
+        connection_factory=lambda _: conexao,
+        verificacao="duplicidades_scheduler",
+        confirmar_agregacao=True,
+    )
+
+    assert resultado["estado_coleta_integridade"] == "inconclusivo"
+    assert resultado["integridade"]["duplicidades_scheduler"]["motivo"] == "erro_consulta"
+    assert resultado["integridade"]["duplicidades_ctrc"]["motivo"] == "nao_selecionada"
+    assert diagnostico.SQL_FIXO["duplicidades_ctrc"] not in conexao.cursor_falso.executadas
+    assert segredo not in json.dumps(resultado)
+    assert conexao.rollback_chamado is True
+    assert conexao.close_chamado is True
+
+
+def executar_cli_com_respostas(monkeypatch, capsys, respostas, *opcoes):
+    conexao = ConexaoFalsa(respostas)
+    monkeypatch.setattr(diagnostico.ConfiguracaoBanco, "carregar", lambda: config())
+    original = diagnostico.diagnosticar
+    monkeypatch.setattr(
+        diagnostico, "diagnosticar",
+        lambda cfg, **kwargs: original(
+            cfg, connection_factory=lambda _: conexao, **kwargs
+        ),
+    )
+    codigo = diagnostico.main([
+        "--somente-leitura", "--server-uuid-esperado", UUID_ESPERADO,
+        *opcoes,
+    ])
+    saida = capsys.readouterr()
+    return codigo, json.loads(saida.out), conexao
+
+
+@pytest.mark.parametrize(
+    "alteracao,esperado,estado",
+    [
+        ("nenhuma", 0, "conforme"),
+        ("duplicidade", 2, "nao_conforme"),
+        ("timeout", 2, "inconclusivo"),
+        ("permissao", 2, "inconclusivo"),
+        ("parcial", 2, "inconclusivo"),
+        ("limite", 2, "nao_conforme"),
+        ("estado_invalido", 2, "nao_conforme"),
+    ],
+)
+def test_cli_fracionado_classifica_verificacao_selecionada(
+    monkeypatch, capsys, alteracao, esperado, estado,
+):
+    respostas = respostas_validas()
+    sql = diagnostico.SQL_FIXO
+    if alteracao == "duplicidade":
+        respostas[sql["duplicidades_ctrc"]] = [
+            {"grupos_ate_101": 1, "linhas_excedentes_ate_101": 1}
+        ]
+    elif alteracao in ("timeout", "permissao"):
+        codigo_mysql = 3024 if alteracao == "timeout" else 1142
+        respostas[sql["duplicidades_scheduler"]] = pymysql.OperationalError(
+            codigo_mysql, "SEGREDO-DO-SERVIDOR"
+        )
+    elif alteracao == "parcial":
+        respostas[sql["integridade_estados"]] = pymysql.OperationalError(
+            3024, "SEGREDO-DO-SERVIDOR"
+        )
+    elif alteracao == "limite":
+        respostas[sql["duplicidades_referencia"]] = [
+            {"grupos_ate_101": 101, "linhas_excedentes_ate_101": 101}
+        ]
+    elif alteracao == "estado_invalido":
+        respostas[sql["integridade_estados"]] = [
+            {"execucoes_status_invalido": 1, "tentativas_status_invalido": 0}
+        ]
+
+    selecionada = {
+        "duplicidade": "duplicidades_ctrc",
+        "parcial": "integridade_estados",
+        "limite": "duplicidades_referencia",
+        "estado_invalido": "integridade_estados",
+    }.get(alteracao, "duplicidades_scheduler")
+    codigo, resumo, conexao = executar_cli_com_respostas(
+        monkeypatch, capsys, respostas, "--verificacao", selecionada,
+        "--confirmar-agregacao", "--resumo"
+    )
+    assert codigo == esperado
+    assert resumo["conformidade"] == estado
+    assert set(resumo["verificacoes"]) == {
+        "contrato_minimo_schema", "coleta_integridade",
+        *diagnostico.CONSULTAS_INTEGRIDADE,
+    }
+    assert all(item["estado"] in {"conforme", "nao_conforme", "inconclusivo"}
+               for nome, item in resumo["verificacoes"].items()
+               if nome not in diagnostico.CONSULTAS_INTEGRIDADE or nome == selecionada)
+    assert all(resumo["verificacoes"][nome]["estado"] == "nao_executada"
+               for nome in diagnostico.CONSULTAS_INTEGRIDADE if nome != selecionada)
+    assert sum(sql in conexao.cursor_falso.executadas
+               for nome, sql in diagnostico.SQL_FIXO.items()
+               if nome in diagnostico.CONSULTAS_INTEGRIDADE) == 1
+    assert conexao.rollback_chamado and conexao.close_chamado
+    assert "SEGREDO-DO-SERVIDOR" not in json.dumps(resumo)
+
+
+def test_resumo_padrao_omite_identidade_ddl_e_valores_arbitrarios(monkeypatch, capsys):
+    respostas = respostas_validas()
+    respostas[diagnostico.SQL_FIXO["identidade"]][0]["hostname"] = "HOST-SENSIVEL"
+    respostas[diagnostico.SQL_FIXO["ddl_execucoes"]][0]["Create Table"] += " DDL-SENSIVEL"
+    codigo, resumo, _ = executar_cli_com_respostas(
+        monkeypatch, capsys, respostas,
+        "--verificacao", "duplicidades_scheduler", "--confirmar-agregacao"
+    )
+    serializado = json.dumps(resumo)
+    assert codigo == 0
+    assert resumo["escopo"] == "verificacao_operacional"
+    assert resumo["limites"]["garantia_temporal"] == "sem_limite_total_rigido"
+    for segredo in ("HOST-SENSIVEL", "DDL-SENSIVEL", UUID_ESPERADO,
+                    "mysql-operacional.interno", "CREATE TABLE", "conta-operacional"):
+        assert segredo not in serializado
+
+
+def test_relatorio_integral_exige_opcao_explicita(monkeypatch, capsys):
+    codigo, integral, _ = executar_cli_com_respostas(
+        monkeypatch, capsys, respostas_validas(), "--apenas-schema", "--completo"
+    )
+    assert codigo == 0
+    assert integral["identidade"]["server_uuid"] == UUID_ESPERADO
+    assert "ddl" in integral["tabelas"]["oc73_execucoes"]
+
+
+def test_cli_apenas_schema_conforme_nao_executa_agregados(monkeypatch, capsys):
+    codigo, resumo, conexao = executar_cli_com_respostas(
+        monkeypatch, capsys, respostas_validas(), "--apenas-schema"
+    )
+    assert codigo == 0
+    assert resumo["escopo"] == "apenas_schema"
+    assert list(resumo["verificacoes"]) == ["contrato_minimo_schema"]
+    assert all(diagnostico.SQL_FIXO[nome] not in conexao.cursor_falso.executadas
+               for nome in diagnostico.CONSULTAS_INTEGRIDADE)
+
+
+def test_cli_schema_inconclusivo_retorna_2(monkeypatch, capsys):
+    respostas = respostas_validas()
+    obter_coluna(respostas, "oc73_tentativas", "referencia").pop("COLLATION_NAME")
+    codigo, resumo, _ = executar_cli_com_respostas(
+        monkeypatch, capsys, respostas, "--apenas-schema"
+    )
+    assert codigo == 2
+    assert resumo["conformidade"] == "inconclusivo"
+    assert "contrato_minimo_schema:inconclusivo" in resumo["motivos_bloqueio"]
+
+
+def test_contagem_negativa_nao_aprova_integridade(monkeypatch, capsys):
+    respostas = respostas_validas()
+    respostas[diagnostico.SQL_FIXO["tentativas_orfas"]] = [{"total_ate_101": -1}]
+    codigo, resumo, _ = executar_cli_com_respostas(
+        monkeypatch, capsys, respostas, "--verificacao", "tentativas_orfas",
+        "--confirmar-agregacao"
+    )
+    assert codigo == 2
+    assert resumo["verificacoes"]["tentativas_orfas"]["estado"] == "inconclusivo"
+    assert resumo["verificacoes"]["integridade_estados"]["estado"] == "nao_executada"
+
+
+def test_resumo_exige_estado_global_de_coleta_completo():
+    resultado = {
+        "escopo": "schema_e_integridade",
+        "conformidade_schema": {"contrato_minimo": "conforme"},
+        "estado_coleta_integridade": "inconclusivo",
+        "integridade": {
+            nome: (
+                {"estado_coleta": "completo", "execucoes_status_invalido": 0,
+                 "tentativas_status_invalido": 0}
+                if nome == "integridade_estados" else
+                {"estado_coleta": "completo", "quantidade_exata": 0}
+            )
+            for nome in diagnostico.CONSULTAS_INTEGRIDADE
+        },
+    }
+    resumo = diagnostico.resumir_resultado(resultado)
+    assert resumo["conformidade"] == "inconclusivo"
+    assert resumo["verificacoes"]["coleta_integridade"]["estado"] == "inconclusivo"
+
+
+@pytest.mark.parametrize("nome", diagnostico.CONSULTAS_INTEGRIDADE)
+def test_cada_selecao_executa_somente_seu_agregado(monkeypatch, capsys, nome):
+    codigo, resumo, conexao = executar_cli_com_respostas(
+        monkeypatch, capsys, respostas_validas(),
+        "--verificacao", nome, "--confirmar-agregacao",
+    )
+    assert codigo == 0
+    assert resumo["verificacao_selecionada"] == nome
+    assert resumo["verificacoes"][nome]["estado"] == "conforme"
+    assert {n for n in diagnostico.CONSULTAS_INTEGRIDADE
+            if diagnostico.SQL_FIXO[n] in conexao.cursor_falso.executadas} == {nome}
+    assert conexao.rollback_chamado and conexao.close_chamado
+
+
+@pytest.mark.parametrize("argumentos", [
+    [],
+    ["--verificacao", "duplicidades_ctrc"],
+    ["--verificacao", "desconhecida", "--confirmar-agregacao"],
+    ["--apenas-schema", "--verificacao", "duplicidades_ctrc"],
+    ["--apenas-schema", "--confirmar-agregacao"],
+    ["--verificacao", "duplicidades_ctrc", "--verificacao", "tentativas_orfas",
+     "--confirmar-agregacao"],
+    ["--verificacao", "duplicidades_ctrc", "--confirmar-agregacao", "--completo"],
+])
+def test_cli_recusa_modo_ambiguo_antes_de_conectar(monkeypatch, capsys, argumentos):
+    chamadas = []
+    monkeypatch.setattr(
+        diagnostico.ConfiguracaoBanco, "carregar",
+        lambda: chamadas.append("config") or config(),
+    )
+    codigo = diagnostico.main([
+        "--somente-leitura", "--server-uuid-esperado", UUID_ESPERADO,
+        *argumentos,
+    ])
+    assert codigo == diagnostico.SAIDA_ERRO
+    assert chamadas == []
+    assert capsys.readouterr().out == ""
+
+
+def test_schema_nao_conforme_impede_agregado_e_nao_aprova(monkeypatch, capsys):
+    respostas = respostas_validas()
+    respostas[diagnostico.SQL_FIXO["indices"]] = [
+        item for item in respostas[diagnostico.SQL_FIXO["indices"]]
+        if item["INDEX_NAME"] != "uq_oc73_ctrc"
+    ]
+    codigo, resumo, conexao = executar_cli_com_respostas(
+        monkeypatch, capsys, respostas, "--verificacao", "duplicidades_scheduler",
+        "--confirmar-agregacao",
+    )
+    assert codigo == 2
+    assert resumo["verificacoes"]["contrato_minimo_schema"]["estado"] == "nao_conforme"
+    assert resumo["verificacoes"]["duplicidades_scheduler"]["estado"] == "nao_executada"
+    assert all(diagnostico.SQL_FIXO[n] not in conexao.cursor_falso.executadas
+               for n in diagnostico.CONSULTAS_INTEGRIDADE)
+
+
+def test_api_recusa_modo_legado_sem_abrir_conexao():
+    chamadas = []
+    with pytest.raises(diagnostico.DiagnosticoSeguroErro, match="Modo completo indisponível"):
+        diagnostico.diagnosticar(
+            config(), server_uuid_esperado=UUID_ESPERADO,
+            connection_factory=lambda _: chamadas.append("conexao"),
+        )
+    assert chamadas == []
+
+
+@pytest.mark.parametrize("falha", ["rollback", "close"])
+def test_falha_no_encerramento_nao_aprova_diagnostico(falha):
+    conexao = ConexaoFalsa(respostas_validas())
+    original = getattr(conexao, falha)
+    def falhar():
+        original()
+        raise RuntimeError("SEGREDO-DE-CONEXAO")
+    setattr(conexao, falha, falhar)
+    with pytest.raises(diagnostico.DiagnosticoSeguroErro, match="Encerramento da sessão") as erro:
+        diagnostico.diagnosticar(
+            config(), server_uuid_esperado=UUID_ESPERADO,
+            connection_factory=lambda _: conexao,
+            verificacao="duplicidades_scheduler", confirmar_agregacao=True,
+        )
+    assert "SEGREDO-DE-CONEXAO" not in str(erro.value)
+    assert conexao.rollback_chamado and conexao.close_chamado
+
+
+def test_selecionada_nao_executada_nunca_e_aprovada():
+    resultado = {
+        "escopo": "verificacao_operacional",
+        "verificacao_selecionada": "duplicidades_scheduler",
+        "conformidade_schema": {"contrato_minimo": "conforme"},
+        "estado_coleta_integridade": "completo",
+        "integridade": {
+            "duplicidades_scheduler": {"estado_coleta": "nao_executada"},
+        },
+    }
+    resumo = diagnostico.resumir_resultado(resultado)
+    assert resumo["verificacoes"]["duplicidades_scheduler"]["estado"] == "nao_executada"
+    assert resumo["conformidade"] == "inconclusivo"
+    assert "duplicidades_scheduler:nao_executada" in resumo["motivos_bloqueio"]

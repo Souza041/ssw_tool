@@ -159,25 +159,9 @@ def localizar_cabecalho(
         if encontrou_todas:
             return indice
 
-    primeiras_linhas = []
-
-    for indice, linha in enumerate(
-        linhas[:10]
-    ):
-        valores = [
-            normalizar_texto(valor)
-            for valor in linha
-            if normalizar_texto(valor)
-        ]
-
-        primeiras_linhas.append(
-            f"Linha {indice + 1}: {valores}"
-        )
-
     raise ValueError(
         "Não foi possível localizar o cabeçalho "
-        "do relatório OP455.\n"
-        + "\n".join(primeiras_linhas)
+        "do relatório OP455."
     )
 
 def carregar_linhas_xlsx(
@@ -273,19 +257,51 @@ def carregar_relatorio(
         for coluna in linhas[indice_cabecalho]
     ]
 
+    # O SSW pode terminar o cabeçalho com um delimitador vazio.
+    # O arquivo CWB homologado tem 144 células no cabeçalho e
+    # 143 colunas em cada registro de dados.
+    terminador_vazio = bool(cabecalho and not cabecalho[-1])
+    if terminador_vazio:
+        cabecalho.pop()
+
+    normalizados = [normalizar_sem_acento(coluna) for coluna in cabecalho]
+    if not all(normalizados) or len(normalizados) != len(set(normalizados)):
+        raise ValueError("Cabeçalho OP455 duplicado ou inválido.")
+
+    for nome_esperado in (
+        CLIENTE_COLUNA, CIDADE_COLUNA, UNIDADE_COLUNA,
+        UNIDADE_RECEPTORA_COLUNA, CTRC_COLUNA, OCORRENCIA_COLUNA,
+    ):
+        if sum(coluna in aliases_normalizados(nome_esperado) for coluna in normalizados) != 1:
+            raise ValueError("Cabeçalho OP455 obrigatório ausente ou ambíguo.")
+
     registros = []
 
-    for linha in linhas[indice_cabecalho + 1:]:
+    dados = linhas[indice_cabecalho + 1:]
+    for indice, linha in enumerate(dados):
         if not any(
             normalizar_texto(valor)
             for valor in linha
         ):
             continue
 
-        if len(linha) < len(cabecalho):
-            linha += [""] * (
-                len(cabecalho) - len(linha)
-            )
+        # O único controle comprovado no .sswweb homologado é
+        # uma linha final isolada com o marcador 9. Não ignoramos
+        # números genéricos ou linhas incompletas em outras posições.
+        if (
+            extensao == ".sswweb"
+            and terminador_vazio
+            and indice == len(dados) - 1
+            and linha == ["9"]
+            and registros
+        ):
+            continue
+
+        if terminador_vazio and len(linha) == len(cabecalho) + 1 and linha[-1] == "":
+            linha = linha[:-1]
+
+        if len(linha) != len(cabecalho):
+            raise ValueError(f"Registro OP455 com largura inválida na linha {indice_cabecalho + indice + 2}.")
 
         registro = {
             cabecalho[indice]: linha[indice]
@@ -314,15 +330,8 @@ def encontrar_coluna(
         if coluna_normalizada in aliases:
             return coluna
 
-    disponiveis = [
-        str(coluna)
-        for coluna in registro.keys()
-    ]
-
     raise KeyError(
-        "Coluna não encontrada no relatório: "
-        f"{nome_esperado}. "
-        f"Colunas disponíveis: {disponiveis}"
+        "Coluna obrigatória não encontrada no relatório OP455."
     )
 
 def normalizar_codigo_ocorrencia(
@@ -484,7 +493,6 @@ def filtrar_registros(
                 else "big_sc_oc64"
             ),
             "fluxo": fluxo,
-            "registro_original": registro,
         })
 
     return filtrados
@@ -504,7 +512,7 @@ def decompor_ctrc(
 
     if not match:
         raise ValueError(
-            f"Formato de CTRC não reconhecido: {valor}"
+            "Formato de CTRC não reconhecido."
         )
 
     return {

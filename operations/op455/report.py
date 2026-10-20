@@ -24,10 +24,16 @@ def _normalizar_texto_diagnostico(valor: str | None) -> str:
 
 
 class _OP455HTMLDiagnosticoParser(HTMLParser):
-    """Extrai somente metadados seguros; nunca conserva o HTML recebido."""
+    """Extrai metadados; valores de contexto ficam apenas no parser temporário."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
+        self.cabecalhos: list[dict] = []
+        self._cabecalho: dict | None = None
+        self._profundidade_cabecalho = 0
+        self.formularios: list[dict] = []
+        self._formulario: dict | None = None
+        self.estrutura_ambigua = False
         self.localizacoes = {
             "texto_visivel": False,
             "script": False,
@@ -46,7 +52,31 @@ class _OP455HTMLDiagnosticoParser(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.casefold()
+        nomes_atributos = [nome.casefold() for nome, _ in attrs]
+        if len(nomes_atributos) != len(set(nomes_atributos)):
+            self.estrutura_ambigua = True
         atributos = {nome.casefold(): valor for nome, valor in attrs}
+
+        if tag == "div" and self._cabecalho is not None:
+            self._profundidade_cabecalho += 1
+        if tag == "div" and atributos.get("id") == "infodiv":
+            if self._cabecalho is not None:
+                self.estrutura_ambigua = True
+            self._cabecalho = {"texto": [], "fechado": False}
+            self._profundidade_cabecalho = 1
+            self.cabecalhos.append(self._cabecalho)
+
+        if tag == "form":
+            if self._formulario is not None:
+                self.estrutura_ambigua = True
+            self._formulario = {
+                "id": atributos.get("id") or "",
+                "method": (atributos.get("method") or "").casefold(),
+                "action": atributos.get("action") or "",
+                "campos": {},
+                "fechado": False,
+            }
+            self.formularios.append(self._formulario)
 
         if any(
             self._contem_frase(nome) or self._contem_frase(valor)
@@ -74,6 +104,16 @@ class _OP455HTMLDiagnosticoParser(HTMLParser):
             if tag == "select":
                 self._campo_select = campo
 
+            if (
+                tag == "input" and self._formulario is not None
+                and self._formulario["id"] == "frm"
+                and nome.casefold() in {"f2", "f3"}
+            ):
+                self._formulario["campos"].setdefault(nome.casefold(), []).append({
+                    "id": atributos.get("id"),
+                    "value": atributos.get("value"),
+                })
+
         if tag == "option" and self._campo_select is not None:
             if "selected" in atributos:
                 opcao = {"selecionada": True}
@@ -84,7 +124,16 @@ class _OP455HTMLDiagnosticoParser(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.casefold()
-        if tag in {"script", "style"}:
+        if tag == "form":
+            if self._formulario is not None:
+                self._formulario["fechado"] = True
+            self._formulario = None
+        elif tag == "div" and self._cabecalho is not None:
+            self._profundidade_cabecalho -= 1
+            if self._profundidade_cabecalho == 0:
+                self._cabecalho["fechado"] = True
+                self._cabecalho = None
+        elif tag in {"script", "style"}:
             self._contexto = None
         elif tag == "option":
             self._opcao_selecionada = None
@@ -92,6 +141,8 @@ class _OP455HTMLDiagnosticoParser(HTMLParser):
             self._campo_select = None
 
     def handle_data(self, data: str) -> None:
+        if self._cabecalho is not None and self._contexto is None:
+            self._cabecalho["texto"].append(data)
         if self._contem_frase(data):
             self.localizacoes[self._contexto or "texto_visivel"] = True
 
@@ -121,8 +172,10 @@ def _url_sanitizada(url: str | None) -> str:
 class OP455Report:
     def __init__(self, client: SSWClient) -> None:
         self.client = client
+        self._contexto_oc73_confirmado_unidade: str | None = None
 
     def open(self, unidade: str = "MTZ"):
+        self._contexto_oc73_confirmado_unidade = None
         unidade = str(unidade or "").strip().upper()
         if not unidade:
             raise ValueError("Unidade não informada para abertura da OP455.")
@@ -136,6 +189,78 @@ class OP455Report:
             },
         )
         return self.client.open_option("455", unidade)
+
+    @staticmethod
+    def validar_contexto_abertura_ocorrencia_73(
+        response, unidade: str,
+    ) -> dict:
+        """Confirma CWB apenas com o HTML da abertura, sem guardar seu corpo."""
+        if unidade != "CWB":
+            return {"status": "nao_confirmado", "motivo": "sem_evidencia_html_big"}
+
+        try:
+            status_http = int(getattr(response, "status_code", 0) or 0)
+        except (TypeError, ValueError):
+            status_http = 0
+        if not 200 <= status_http < 300:
+            return {"status": "nao_confirmado", "motivo": "resposta_abertura_invalida"}
+        content_type = str((getattr(response, "headers", {}) or {}).get("Content-Type", ""))
+        if content_type.partition(";")[0].strip().casefold() not in {
+            "text/html", "application/xhtml+xml",
+        }:
+            return {"status": "nao_confirmado", "motivo": "resposta_abertura_nao_html"}
+
+        parser = _OP455HTMLDiagnosticoParser()
+        try:
+            parser.feed(getattr(response, "text", ""))
+            parser.close()
+        except (TypeError, ValueError):
+            return {"status": "nao_confirmado", "motivo": "html_abertura_invalido"}
+
+        if parser.estrutura_ambigua or len(parser.cabecalhos) > 1:
+            return {"status": "nao_confirmado", "motivo": "estrutura_ambigua"}
+        if not parser.cabecalhos:
+            return {"status": "nao_confirmado", "motivo": "dominio_ausente"}
+        cabecalho = parser.cabecalhos[0]
+        if not cabecalho["fechado"]:
+            return {"status": "nao_confirmado", "motivo": "html_incompleto"}
+        texto_cabecalho = " ".join(" ".join(cabecalho["texto"]).split())
+        dominios = re.findall(
+            r"dom[ií]nio\s*:\s*([A-Z0-9]+)\s+([A-Z0-9]+)(?![A-Z0-9_-])",
+            texto_cabecalho, flags=re.IGNORECASE,
+        )
+        if not dominios and not re.search(r"dom[ií]nio\s*:", texto_cabecalho, re.IGNORECASE):
+            return {"status": "nao_confirmado", "motivo": "dominio_ausente"}
+        if len(dominios) != 1 or tuple(parte.upper() for parte in dominios[0]) != ("ROD", "CWB"):
+            return {"status": "nao_confirmado", "motivo": "dominio_divergente"}
+
+        formulario = [
+            form for form in parser.formularios
+            if form["id"] == "frm"
+        ]
+        if not formulario:
+            return {"status": "nao_confirmado", "motivo": "formulario_ausente"}
+        if len(formulario) > 1:
+            return {"status": "nao_confirmado", "motivo": "formulario_duplicado"}
+        formulario = formulario[0]
+        if not formulario["fechado"]:
+            return {"status": "nao_confirmado", "motivo": "html_incompleto"}
+        if formulario["method"] != "post":
+            return {"status": "nao_confirmado", "motivo": "metodo_invalido"}
+        if formulario["action"] != "/bin/ssw0230":
+            return {"status": "nao_confirmado", "motivo": "action_invalida"}
+
+        for nome, rotulo, identificador, esperado in (
+            ("f2", "unidade", "2", "CWB"), ("f3", "tipo", "3", "A"),
+        ):
+            encontrados = formulario["campos"].get(nome, [])
+            if not encontrados:
+                return {"status": "nao_confirmado", "motivo": f"campo_{rotulo}_ausente"}
+            if len(encontrados) > 1:
+                return {"status": "nao_confirmado", "motivo": f"campo_{rotulo}_duplicado"}
+            if encontrados[0]["id"] != identificador or encontrados[0]["value"] != esperado:
+                return {"status": "nao_confirmado", "motivo": f"{rotulo}_divergente"}
+        return {"status": "confirmado"}
 
     @staticmethod
     def resumir_resposta_diagnostica(response) -> dict:
@@ -198,6 +323,8 @@ class OP455Report:
         opcao: str,
         unidade: str,
     ) -> set[str]:
+        if self._contexto_oc73_confirmado_unidade != unidade:
+            raise ValueError("Contexto da OP455 não confirmado para OP156.")
         response = self.client.post(
             "/bin/ssw1440",
             data={"dummy": dummy()},
@@ -525,6 +652,46 @@ class OP455Report:
 
         return arquivo
 
+    def _abrir_op455_oc73_cwb(self, unidade: str = "CWB"):
+        """Navega até a OP455 CWB na sessão existente, sem retentativas."""
+        unidade = unidade.strip().upper()
+
+        if unidade != "CWB":
+            raise ValueError(
+                "Abertura OC73 disponível apenas para CWB."
+            )
+
+        self._contexto_oc73_confirmado_unidade = None
+
+        self.client.get(
+            "/bin/ssw0082",
+            params={
+                "quadro_menu01": unidade,
+                "dummy": dummy(),
+            },
+            retries=1,
+        )
+
+        self.client.post(
+            "/bin/menu01",
+            data={
+                "act": "TRO",
+                "f2": unidade,
+                "f3": "455",
+                "dummy": dummy(),
+            },
+            retries=1,
+        )
+
+        return self.client.post(
+            "/bin/ssw0230",
+            data={
+                "sequencia": "455",
+                "dummy": dummy(),
+            },
+            retries=1,
+        )
+
     def _payload_relatorio_ocorrencia_73(
         self,
         data_inicial: str,
@@ -533,10 +700,11 @@ class OP455Report:
         return {
             "act": "E1",
             "cod_emp_ctb": "00",
-
-            # Tipo confirmado pelo HAR e pelo fluxo OP455 anterior.
-            # CWB/BIG é estabelecida na sessão antes da abertura da OP455.
-            "f3": "E",
+            # Unidade e tipo do submit confirmados no HAR CWB.
+            "f2": "CWB",
+            "f3": "e",
+            # Regional opcional: conserva o valor padrão apresentado no formulário.
+            "reg_tipo": "E",
 
             # Todos os documentos
             "f8": "T",
@@ -574,6 +742,8 @@ class OP455Report:
         data_final: str,
         retries: int | None = None,
     ):
+        if self._contexto_oc73_confirmado_unidade != "CWB":
+            raise ValueError("Contexto da OP455 não confirmado para submit.")
         argumentos = {
             "data": self._payload_relatorio_ocorrencia_73(
                 data_inicial=data_inicial,
@@ -590,7 +760,7 @@ class OP455Report:
         data_final: str,
     ) -> str:
         """
-        Gera o relatório OP455 para os fluxos CWB e BIG.
+        Gera o relatório OP455 para o fluxo OC73 CWB.
 
         Os filtros de UF do remetente e última ocorrência
         serão aplicados posteriormente no parser.
@@ -598,6 +768,7 @@ class OP455Report:
         response = self._solicitar_relatorio_ocorrencia_73(
             data_inicial=data_inicial,
             data_final=data_final,
+            retries=1,
         )
 
         return response.text
@@ -608,7 +779,7 @@ class OP455Report:
         data_final: str,
         unidade: str = "CWB",
     ) -> dict:
-        """Faz um submit consultivo, sem polling, download ou persistência."""
+        """Pré-voo e diagnóstico sem download ou persistência."""
         unidade = unidade.strip().upper()
         if unidade not in {"CWB", "BIG"}:
             raise ValueError(f"Unidade não permitida para OC73: {unidade}")
@@ -624,7 +795,8 @@ class OP455Report:
         fila = OP156Queue(self.client)
         resultado = {
             "unidade": unidade,
-            "unidade_contexto_op455": unidade,
+            "unidade_contexto_op455": None,
+            "contexto_op455": None,
             "resultado": "inconclusivo",
             "resposta_op455": None,
             "op156": {
@@ -639,7 +811,16 @@ class OP455Report:
         }
 
         try:
-            self.open(unidade=unidade)
+            resposta_abertura = self._abrir_op455_oc73_cwb(unidade=unidade)
+            contexto = self.validar_contexto_abertura_ocorrencia_73(
+                resposta_abertura, unidade,
+            )
+            resultado["contexto_op455"] = contexto
+            if contexto["status"] != "confirmado":
+                resultado["resultado"] = "contexto_op455_nao_confirmado"
+                return resultado
+            resultado["unidade_contexto_op455"] = unidade
+            self._contexto_oc73_confirmado_unidade = unidade
             ids_antes = self._snapshot_op156_diagnostico(
                 fila=fila,
                 opcao=opcao,
@@ -739,7 +920,17 @@ class OP455Report:
         fila = OP156Queue(self.client)
 
         # Estabelece CWB/BIG na sessão antes de abrir a OP455.
-        self.open(unidade=unidade)
+        resposta_abertura = self._abrir_op455_oc73_cwb(unidade=unidade)
+        contexto = self.validar_contexto_abertura_ocorrencia_73(
+            resposta_abertura, unidade,
+        )
+        if contexto["status"] != "confirmado":
+            raise ValueError(
+                "Contexto da OP455 não confirmado "
+                f"(contexto_op455_nao_confirmado:{contexto['motivo']}); "
+                "OP156 e submit bloqueados."
+            )
+        self._contexto_oc73_confirmado_unidade = unidade
 
         # Captura IDs anteriores para não baixar
         # um relatório antigo por engano.
@@ -747,6 +938,7 @@ class OP455Report:
             fila=fila,
             opcao=opcao,
             unidade=unidade,
+            estrito=True,
         )
 
         html = self.gerar_relatorio_ocorrencia_73(
@@ -759,22 +951,17 @@ class OP455Report:
                 f"SSW solicitou informar a unidade {unidade}."
             )
 
-        info_direto = self.extrair_arquivo_direto(html)
-
-        if info_direto:
-            arquivo = self.baixar_arquivo_direto(
-                info=info_direto,
-                output_dir=output_dir,
-            )
-        else:
-            arquivo = fila.baixar_por_opcao(
-                output_dir=output_dir,
-                opcao=opcao,
-                unidade=unidade,
-                timeout_seconds=timeout_seconds,
-                intervalo=5,
-                ignorar_ids=ids_existentes,
-            )
+        if self.extrair_arquivo_direto(html):
+            raise ValueError("Resposta direta da OP455 sem sequência OP156 confirmada.")
+        arquivo = fila.baixar_por_opcao(
+            output_dir=output_dir,
+            opcao=opcao,
+            unidade=unidade,
+            timeout_seconds=timeout_seconds,
+            intervalo=5,
+            ignorar_ids=ids_existentes,
+            estrito=True,
+        )
 
         self.validar_layout_ocorrencia_73(arquivo)
 
@@ -785,6 +972,8 @@ class OP455Report:
         fila: OP156Queue,
         opcao: str,
         unidade: str | None = None,
+        *,
+        estrito: bool = False,
     ) -> set[str]:
         """
         Captura os IDs existentes na OP156 antes de solicitar
@@ -793,12 +982,15 @@ class OP455Report:
         Assim, a automação ignora relatórios anteriores.
         """
 
-        html = fila.abrir_fila()
+        if estrito and self._contexto_oc73_confirmado_unidade != unidade:
+            raise ValueError("Contexto OP455 não confirmado para snapshot OP156.")
+        html = fila.abrir_fila(retries=1) if estrito else fila.abrir_fila()
 
         jobs = fila.extrair_jobs(
             html=html,
             opcao_contains=opcao,
             unidade=unidade,
+            **({"estrito": True, "filtrar_usuario": False} if estrito else {}),
         )
 
         ids = {
@@ -807,10 +999,10 @@ class OP455Report:
             if str(job.get("download_id") or "").strip()
         }
 
-        print(
-            "[OP455] IDs existentes antes da solicitação: "
-            f"{sorted(ids)}"
-        )
+        if estrito:
+            print(f"[OP455] Sequências anteriores na OP156: {len(ids)}")
+        else:
+            print(f"[OP455] IDs existentes antes da solicitação: {sorted(ids)}")
 
         return ids
 

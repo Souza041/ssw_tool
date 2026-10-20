@@ -4,6 +4,18 @@ Data: 16/10/2026
 
 Script: `scripts/diagnostico_oc73_operacional_readonly.py`
 
+> **Atualização Sprint 3.6.3:** os comandos históricos abaixo que não incluem
+> `--apenas-schema` ou `--verificacao` agora falham antes de conectar. A execução
+> operacional completa em sequência foi desativada. Cada agregação exige um
+> identificador da allowlist e `--confirmar-agregacao`, executando somente uma
+> verificação por processo. A sintaxe vigente e seus limites estão em
+> [`oc73_sprint_3_6_3_diagnostico_fracionado.md`](oc73_sprint_3_6_3_diagnostico_fracionado.md).
+
+O modo `--apenas-schema` preparado na Sprint 3.4 limita a coleta a identidade,
+metadados e DDL, sem consultas agregadas às linhas operacionais. O procedimento
+específico está em [`oc73_schema_audit_preparation.md`](oc73_schema_audit_preparation.md).
+Nenhuma coleta operacional foi executada nessa sprint.
+
 ## Parecer final de prontidão
 
 O código está **APTO COM RESTRIÇÕES para execução consultiva controlada**. Isso é
@@ -247,10 +259,10 @@ O relatório avalia, sem alterar o banco:
 - compatibilidade de tipo base e atributo `UNSIGNED` entre
   `oc73_tentativas.execucao_id` e `oc73_execucoes.id`; a largura de exibição de
   inteiros do MySQL 5.7 não é tratada como diferença de tipo;
-- UNIQUE de CTRC em `oc73_tentativas (serie, numero, codigo_ocorrencia)`, com
-  indicação separada sobre a presença do nome esperado `uq_oc73_ctrc`;
-- UNIQUE de referência em `oc73_tentativas (referencia)`, com indicação separada
-  sobre o nome esperado `uq_oc73_referencia`;
+- UNIQUE de CTRC em `oc73_tentativas (serie, numero, codigo_ocorrencia)` na
+  ordem indicada e com o nome `uq_oc73_ctrc` exigido pelo repository;
+- UNIQUE de referência em `oc73_tentativas (referencia)` com o nome
+  `uq_oc73_referencia` exigido pelo tratamento de colisão;
 - relação mínima de FK
   `oc73_tentativas.execucao_id -> oc73_execucoes.id`, incluindo as regras
   `UPDATE_RULE` e `DELETE_RULE` encontradas;

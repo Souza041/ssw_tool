@@ -3,7 +3,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
+
 from modules.ocorrencia_73.service import Ocorrencia73Service
+from operations.op156.queue import FilaOP156Invalida
 from operations.op455.report import OP455Report
 
 
@@ -17,33 +20,61 @@ class OP455Simulada:
 
 
 def test_payload_oc73_restaura_formato_confirmado_por_har():
-    class ClientCaptura:
-        def __init__(self):
-            self.chamadas = []
-
-        def post(self, path, data=None):
-            self.chamadas.append((path, data))
-            return SimpleNamespace(text="relatorio solicitado")
-
-    client = ClientCaptura()
-    op455 = OP455Report(client)
-
-    resposta = op455.gerar_relatorio_ocorrencia_73(
+    op455 = OP455Report(SimpleNamespace())
+    payload = op455._payload_relatorio_ocorrencia_73(
         data_inicial="191026",
         data_final="191026",
     )
 
-    assert resposta == "relatorio solicitado"
-    assert len(client.chamadas) == 1
-    path, payload = client.chamadas[0]
-    assert path == "/bin/ssw0230"
     assert payload["act"] == "E1"
-    assert payload["f3"] == "E"
-    assert "reg_tipo" not in payload
+    assert payload["cod_emp_ctb"] == "00"
+    assert payload["f2"] == "CWB"
+    assert payload["f3"] == "e"
+    assert payload["reg_tipo"] == "E"
+    assert "f5" not in payload
+    assert payload["f21"] == "T"
+    assert payload["f35"] == "E"
+    assert payload["f37"] == "B"
+
+
+def test_submit_direto_sem_contexto_confirmado_falha_antes_de_post():
+    client = SimpleNamespace(post=Mock())
+    op455 = OP455Report(client)
+
+    try:
+        op455.gerar_relatorio_ocorrencia_73("191026", "191026")
+    except ValueError as erro:
+        assert "Contexto da OP455 não confirmado" in str(erro)
+    else:
+        raise AssertionError("Submit direto deveria estar bloqueado.")
+
+    client.post.assert_not_called()
+
+
+@pytest.mark.parametrize("contexto", [None, "BIG", "MTZ"])
+def test_submit_rejeita_contexto_diferente_de_cwb(contexto):
+    client = SimpleNamespace(post=Mock())
+    op455 = OP455Report(client)
+    op455._contexto_oc73_confirmado_unidade = contexto
+
+    with pytest.raises(ValueError, match="Contexto da OP455 não confirmado"):
+        op455.gerar_relatorio_ocorrencia_73("191026", "191026")
+
+    client.post.assert_not_called()
 
 
 def test_fluxo_operacional_estabelece_cwb_antes_de_abrir_op455():
-    client = SimpleNamespace(get=Mock(), open_option=Mock())
+    client = SimpleNamespace(get=Mock(), post=Mock(), open_option=Mock())
+    client.post.return_value = SimpleNamespace(
+        text=(
+            '<div id="infodiv">Domínio: ROD CWB</div>'
+            '<form id="frm" method="POST" action="/bin/ssw0230">'
+            '<input name="f2" id="2" value="CWB">'
+            '<input name="f3" id="3" value="A"></form>'
+        ),
+        status_code=200,
+        headers={"Content-Type": "text/html"},
+    )
     op455 = OP455Report(client)
     fila = Mock()
     fila.baixar_por_opcao.return_value = Path("relatorio-cwb.sswweb")
@@ -70,10 +101,93 @@ def test_fluxo_operacional_estabelece_cwb_antes_de_abrir_op455():
     client.get.assert_called_once()
     assert client.get.call_args.args[0] == "/bin/ssw0082"
     assert client.get.call_args.kwargs["params"]["quadro_menu01"] == "CWB"
-    client.open_option.assert_called_once_with("455", "CWB")
+    assert [call.args[0] for call in client.post.call_args_list] == [
+        "/bin/menu01", "/bin/ssw0230",
+    ]
+    client.open_option.assert_not_called()
     assert capturar.call_args.kwargs["unidade"] == "CWB"
+    assert capturar.call_args.kwargs["estrito"] is True
     assert fila.baixar_por_opcao.call_args.kwargs["unidade"] == "CWB"
+    assert fila.baixar_por_opcao.call_args.kwargs["estrito"] is True
+    assert fila.baixar_por_opcao.call_args.kwargs["ignorar_ids"] == {"anterior"}
     validar.assert_called_once_with(Path("relatorio-cwb.sswweb"))
+
+
+def test_fluxo_operacional_com_html_incompleto_nao_consulta_op156_nem_submete():
+    client = SimpleNamespace(get=Mock(), post=Mock(), open_option=Mock())
+    client.post.return_value = SimpleNamespace(
+        text='<div id="infodiv">Domínio: ROD CWB</div>',
+        status_code=200,
+        headers={"Content-Type": "text/html"},
+    )
+    op455 = OP455Report(client)
+
+    with patch("operations.op455.report.OP156Queue") as fila:
+        try:
+            op455.gerar_e_baixar_ocorrencia_73(
+                output_dir=Path("downloads/teste"),
+                data_inicial="191026",
+                data_final="191026",
+                unidade="CWB",
+            )
+        except ValueError as erro:
+            assert "Contexto da OP455 não confirmado" in str(erro)
+        else:
+            raise AssertionError("Pré-voo deveria bloquear o fluxo.")
+
+    fila.return_value.abrir_fila.assert_not_called()
+    fila.return_value.baixar_por_opcao.assert_not_called()
+    client.get.assert_called_once()
+    assert [call.args[0] for call in client.post.call_args_list] == [
+        "/bin/menu01", "/bin/ssw0230",
+    ]
+    client.open_option.assert_not_called()
+
+
+def test_snapshot_op156_malformado_bloqueia_geracao():
+    client = SimpleNamespace(get=Mock(), open_option=Mock(), post=Mock(), usuario="tester")
+    abertura = SimpleNamespace(
+        text=(
+            '<div id="infodiv">Domínio: ROD CWB</div>'
+            '<form id="frm" method="POST" action="/bin/ssw0230">'
+            '<input name="f2" id="2" value="CWB">'
+            '<input name="f3" id="3" value="A"></form>'
+        ),
+        status_code=200,
+        headers={"Content-Type": "text/html"},
+    )
+    client.post.side_effect = lambda path, data=None, retries=None: (
+        abertura if path == "/bin/ssw0230"
+        else SimpleNamespace(text="<html>login</html>")
+    )
+    op455 = OP455Report(client)
+
+    with patch.object(op455, "gerar_relatorio_ocorrencia_73") as gerar:
+        with pytest.raises(FilaOP156Invalida):
+            op455.gerar_e_baixar_ocorrencia_73(
+                Path("downloads/teste"), "191026", "191026", unidade="CWB",
+            )
+
+    gerar.assert_not_called()
+    assert [call.args[0] for call in client.post.call_args_list] == [
+        "/bin/menu01", "/bin/ssw0230", "/bin/ssw1440",
+    ]
+    assert client.post.call_args.args[0] == "/bin/ssw1440"
+    assert client.post.call_args.kwargs["retries"] == 1
+
+
+def test_big_permanece_bloqueado_antes_da_op156():
+    client = SimpleNamespace(get=Mock(), open_option=Mock(), post=Mock())
+    client.open_option.return_value = SimpleNamespace(
+        text='<div id="infodiv">Domínio: ROD BIG</div>',
+        status_code=200,
+        headers={"Content-Type": "text/html"},
+    )
+    with pytest.raises(ValueError, match="Abertura OC73 disponível apenas para CWB"):
+        OP455Report(client).gerar_e_baixar_ocorrencia_73(
+            Path("downloads/teste"), "191026", "191026", unidade="BIG",
+        )
+    client.post.assert_not_called()
 
 
 def executar_preparacao(data, fluxo=None):

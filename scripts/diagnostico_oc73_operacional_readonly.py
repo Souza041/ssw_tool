@@ -25,6 +25,19 @@ VERSAO_ESPERADA = "5.7.32"
 TABELAS_PERMITIDAS = ("oc73_execucoes", "oc73_tentativas")
 LIMITE_GRUPOS = 101
 MAX_EXECUTION_TIME_SOLICITADO_MS = 5_000
+CONNECT_TIMEOUT_S = 5
+READ_TIMEOUT_S = 15
+WRITE_TIMEOUT_S = 5
+CONSULTAS_INTEGRIDADE = (
+    "duplicidades_scheduler",
+    "duplicidades_ctrc",
+    "duplicidades_referencia",
+    "tentativas_orfas",
+    "integridade_estados",
+)
+SAIDA_CONFORME = 0
+SAIDA_BLOQUEADA = 2
+SAIDA_ERRO = 3
 
 STATUS_EXECUCAO_PERMITIDOS = (
     "executando",
@@ -103,7 +116,7 @@ SQL_FIXO: Mapping[str, str] = MappingProxyType({
     ),
     "indices": (
         "SELECT TABLE_NAME, INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, "
-        "COLUMN_NAME, COLLATION, CARDINALITY, INDEX_TYPE "
+        "COLUMN_NAME, SUB_PART, COLLATION, CARDINALITY, INDEX_TYPE "
         "FROM information_schema.STATISTICS "
         "WHERE TABLE_SCHEMA = 'automationx' "
         "AND TABLE_NAME IN ('oc73_execucoes', 'oc73_tentativas') "
@@ -191,6 +204,15 @@ SQL_FIXO: Mapping[str, str] = MappingProxyType({
 
 class DiagnosticoSeguroErro(RuntimeError):
     """Erro controlado que pode ser mostrado sem detalhes da conexão."""
+
+
+class VerificacaoUnica(argparse.Action):
+    """Recusa seleção repetida em vez de aceitar silenciosamente a última."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        if getattr(namespace, self.dest) is not None:
+            raise argparse.ArgumentError(self, "selecione apenas uma verificação")
+        setattr(namespace, self.dest, values)
 
 
 @dataclass(frozen=True)
@@ -281,9 +303,9 @@ def abrir_conexao(config: ConfiguracaoBanco):
             charset="utf8mb4",
             cursorclass=DictCursor,
             autocommit=False,
-            connect_timeout=5,
-            read_timeout=15,
-            write_timeout=5,
+            connect_timeout=CONNECT_TIMEOUT_S,
+            read_timeout=READ_TIMEOUT_S,
+            write_timeout=WRITE_TIMEOUT_S,
         )
     except Exception as exc:
         raise DiagnosticoSeguroErro(
@@ -348,19 +370,25 @@ def _indices_por_nome(
                 "Metadados de índice incompletos; conformidade inconclusiva."
             ) from exc
         coluna = str(item.get("COLUMN_NAME") or "")
+        if "SUB_PART" not in item:
+            raise DiagnosticoSeguroErro(
+                "Metadados de prefixo de índice ausentes; conformidade inconclusiva."
+            )
         if not tabela or not nome or not coluna or posicao <= 0:
             raise DiagnosticoSeguroErro(
                 "Metadados de índice incompletos; conformidade inconclusiva."
             )
         indice = agrupados.setdefault(
             (tabela, nome),
-            {"unico": unico, "colunas_posicionadas": []},
+            {"unico": unico, "colunas_posicionadas": [], "prefixo": False},
         )
         if indice["unico"] != unico:
             raise DiagnosticoSeguroErro(
                 "Metadados de índice inconsistentes; conformidade inconclusiva."
             )
         indice["colunas_posicionadas"].append((posicao, coluna))
+        if item["SUB_PART"] is not None:
+            indice["prefixo"] = True
 
     for indice in agrupados.values():
         posicionadas = sorted(indice.pop("colunas_posicionadas"))
@@ -385,10 +413,14 @@ def _avaliar_unique(
         for (tabela_indice, nome), dados in indices_agrupados.items()
         if tabela_indice == tabela
         and dados["unico"]
+        and not dados["prefixo"]
         and tuple(dados["colunas"]) == colunas_esperadas
     ]
+    # O repository identifica o conflito pelo nome do índice retornado
+    # pelo MySQL. Um índice equivalente com outro nome não cumpre esse
+    # contrato, embora seja listado para facilitar o diagnóstico.
     return {
-        "estado": "conforme" if encontrados else "nao_conforme",
+        "estado": "conforme" if nome_esperado in encontrados else "nao_conforme",
         "colunas_esperadas": list(colunas_esperadas),
         "indices_compativeis": encontrados,
         "nome_esperado": nome_esperado,
@@ -742,6 +774,8 @@ def _resultado_integridade(
     campo_excedentes: str | None = None,
 ) -> dict[str, Any]:
     quantidade_observada = int(linha[campo_quantidade])
+    if quantidade_observada < 0:
+        raise ValueError("contagem agregada invalida")
     limitado = quantidade_observada >= LIMITE_GRUPOS
     resultado: dict[str, Any] = {
         "estado_coleta": "limitado" if limitado else "completo",
@@ -751,109 +785,156 @@ def _resultado_integridade(
         "limite_atingido": limitado,
     }
     if campo_excedentes is not None:
-        resultado["linhas_excedentes_observadas"] = int(
-            linha[campo_excedentes]
-        )
+        excedentes = int(linha[campo_excedentes])
+        if excedentes < 0:
+            raise ValueError("contagem agregada invalida")
+        resultado["linhas_excedentes_observadas"] = excedentes
         resultado["excedentes_sao_parciais"] = limitado
     return resultado
 
 
-def _consultar_integridade(cursor) -> tuple[dict[str, Any], str]:
-    especificacoes = (
-        (
-            "duplicidades_scheduler",
-            "grupos_ate_101",
-            "linhas_excedentes_ate_101",
-        ),
-        (
-            "duplicidades_ctrc",
-            "grupos_ate_101",
-            "linhas_excedentes_ate_101",
-        ),
-        (
-            "duplicidades_referencia",
-            "grupos_ate_101",
-            "linhas_excedentes_ate_101",
-        ),
-        ("tentativas_orfas", "total_ate_101", None),
-    )
-    resultados: dict[str, Any] = {}
-    falhou = False
-    for nome, campo_quantidade, campo_excedentes in especificacoes:
-        if falhou:
-            resultados[nome] = {
-                "estado_coleta": "inconclusivo",
-                "motivo": "nao_executada_apos_erro_anterior",
-                "quantidade_exata": None,
-            }
-            continue
-        try:
-            linhas = executar_fixo(cursor, nome)
-            if len(linhas) != 1:
-                raise ValueError("resultado agregado inesperado")
-            resultados[nome] = _resultado_integridade(
-                linhas[0],
-                campo_quantidade=campo_quantidade,
-                campo_excedentes=campo_excedentes,
-            )
-        except Exception:
-            resultados[nome] = {
-                "estado_coleta": "inconclusivo",
-                "motivo": "erro_consulta",
-                "quantidade_exata": None,
-            }
-            falhou = True
-
-    nome_estados = "integridade_estados"
-    if falhou:
-        resultados[nome_estados] = {
-            "estado_coleta": "inconclusivo",
-            "motivo": "nao_executada_apos_erro_anterior",
-            "execucoes_status_invalido": None,
-            "tentativas_status_invalido": None,
-        }
-    else:
-        try:
-            linhas = executar_fixo(cursor, nome_estados)
-            if len(linhas) != 1:
-                raise ValueError("resultado agregado inesperado")
-            execucoes_invalidas = int(
-                linhas[0]["execucoes_status_invalido"]
-            )
-            tentativas_invalidas = int(
-                linhas[0]["tentativas_status_invalido"]
-            )
-            if execucoes_invalidas < 0 or tentativas_invalidas < 0:
+def _consultar_integridade(cursor, verificacao: str) -> dict[str, Any]:
+    """Executa exatamente uma instrução agregada da allowlist."""
+    if verificacao not in CONSULTAS_INTEGRIDADE:
+        raise DiagnosticoSeguroErro("Verificação operacional inválida.")
+    try:
+        linhas = executar_fixo(cursor, verificacao)
+        if len(linhas) != 1:
+            raise ValueError("resultado agregado inesperado")
+        if verificacao == "integridade_estados":
+            execucoes = int(linhas[0]["execucoes_status_invalido"])
+            tentativas = int(linhas[0]["tentativas_status_invalido"])
+            if execucoes < 0 or tentativas < 0:
                 raise ValueError("contagem agregada invalida")
-            resultados[nome_estados] = {
+            return {
                 "estado_coleta": "completo",
                 "estado_conformidade": (
-                    "conforme"
-                    if execucoes_invalidas == 0
-                    and tentativas_invalidas == 0
-                    else "nao_conforme"
+                    "conforme" if execucoes == tentativas == 0 else "nao_conforme"
                 ),
-                "execucoes_status_invalido": execucoes_invalidas,
-                "tentativas_status_invalido": tentativas_invalidas,
+                "execucoes_status_invalido": execucoes,
+                "tentativas_status_invalido": tentativas,
             }
-        except Exception:
-            resultados[nome_estados] = {
-                "estado_coleta": "inconclusivo",
-                "motivo": "erro_consulta",
-                "execucoes_status_invalido": None,
-                "tentativas_status_invalido": None,
-            }
+        campos = {
+            "duplicidades_scheduler": ("grupos_ate_101", "linhas_excedentes_ate_101"),
+            "duplicidades_ctrc": ("grupos_ate_101", "linhas_excedentes_ate_101"),
+            "duplicidades_referencia": ("grupos_ate_101", "linhas_excedentes_ate_101"),
+            "tentativas_orfas": ("total_ate_101", None),
+        }
+        quantidade, excedentes = campos[verificacao]
+        return _resultado_integridade(
+            linhas[0], campo_quantidade=quantidade, campo_excedentes=excedentes,
+        )
+    except Exception:
+        falha = {
+            "estado_coleta": "inconclusivo",
+            "motivo": "erro_consulta",
+        }
+        if verificacao == "integridade_estados":
+            falha["execucoes_status_invalido"] = None
+            falha["tentativas_status_invalido"] = None
+        else:
+            falha["quantidade_exata"] = None
+        return falha
+
+
+def resumir_resultado(resultado: Mapping[str, Any]) -> dict[str, Any]:
+    """Classifica somente estados controlados, sem copiar identidade, DDL ou linhas."""
+    escopo = resultado.get("escopo")
+    if escopo not in ("apenas_schema", "schema_e_integridade", "verificacao_operacional"):
+        raise DiagnosticoSeguroErro("Escopo do diagnóstico inválido.")
+    selecionada = resultado.get("verificacao_selecionada")
+    if escopo == "verificacao_operacional" and selecionada not in CONSULTAS_INTEGRIDADE:
+        raise DiagnosticoSeguroErro("Verificação operacional inválida.")
+
+    schema = resultado.get("conformidade_schema")
+    estado_schema = schema.get("contrato_minimo") if isinstance(schema, Mapping) else None
+    if estado_schema not in ("conforme", "nao_conforme", "inconclusivo"):
+        estado_schema = "inconclusivo"
+    verificacoes: dict[str, dict[str, str]] = {
+        "contrato_minimo_schema": {"estado": estado_schema}
+    }
+    if escopo != "apenas_schema":
+        coleta_geral = resultado.get("estado_coleta_integridade")
+        verificacoes["coleta_integridade"] = {
+            "estado": (
+                "conforme" if coleta_geral == "completo" else
+                "nao_conforme" if coleta_geral == "limitado" else "inconclusivo"
+            ),
+            "estado_coleta": coleta_geral if coleta_geral in (
+                "completo", "limitado", "inconclusivo"
+            ) else "inconclusivo",
+        }
+        integridade = resultado.get("integridade")
+        for nome in CONSULTAS_INTEGRIDADE:
+            if escopo == "verificacao_operacional" and nome != selecionada:
+                verificacoes[nome] = {
+                    "estado": "nao_executada", "estado_coleta": "nao_executada"
+                }
+                continue
+            item = integridade.get(nome) if isinstance(integridade, Mapping) else None
+            estado = "inconclusivo"
+            coleta = "inconclusivo"
+            if isinstance(item, Mapping):
+                coleta_original = item.get("estado_coleta")
+                if coleta_original == "nao_executada" and escopo == "verificacao_operacional":
+                    verificacoes[nome] = {
+                        "estado": "nao_executada", "estado_coleta": "nao_executada"
+                    }
+                    continue
+                if coleta_original in ("completo", "limitado", "inconclusivo"):
+                    coleta = coleta_original
+                if nome == "integridade_estados":
+                    execucoes = item.get("execucoes_status_invalido")
+                    tentativas = item.get("tentativas_status_invalido")
+                    if (coleta == "completo" and type(execucoes) is int
+                            and type(tentativas) is int and execucoes >= 0
+                            and tentativas >= 0):
+                        estado = "conforme" if execucoes == tentativas == 0 else "nao_conforme"
+                else:
+                    quantidade = item.get("quantidade_exata")
+                    if coleta == "completo" and type(quantidade) is int and quantidade >= 0:
+                        estado = "conforme" if quantidade == 0 else "nao_conforme"
+                    elif coleta == "limitado" and item.get("pelo_menos") == LIMITE_GRUPOS:
+                        estado = "nao_conforme"
+            verificacoes[nome] = {"estado": estado, "estado_coleta": coleta}
 
     estados = {
-        item["estado_coleta"] for item in resultados.values()
+        item["estado"] for item in verificacoes.values()
+        if item["estado"] != "nao_executada"
     }
-    if "inconclusivo" in estados:
-        estado_geral = "inconclusivo"
-    elif "limitado" in estados:
-        estado_geral = "limitado"
-    else:
-        estado_geral = "completo"
-    return resultados, estado_geral
+    if (escopo == "verificacao_operacional"
+            and verificacoes[selecionada]["estado"] == "nao_executada"):
+        estados.add("inconclusivo")
+    conformidade = (
+        "inconclusivo" if "inconclusivo" in estados else
+        "nao_conforme" if "nao_conforme" in estados else "conforme"
+    )
+    motivos = [
+        f"{nome}:{item['estado']}"
+        for nome, item in verificacoes.items()
+        if item["estado"] not in ("conforme", "nao_executada")
+    ]
+    if (escopo == "verificacao_operacional"
+            and verificacoes[selecionada]["estado"] == "nao_executada"):
+        motivos.append(f"{selecionada}:nao_executada")
+    resumo = {
+        "escopo": escopo,
+        "conformidade": conformidade,
+        "verificacoes": verificacoes,
+        "limites": {
+            "max_execution_time_solicitado_ms": MAX_EXECUTION_TIME_SOLICITADO_MS,
+            "read_timeout_cliente_s": READ_TIMEOUT_S,
+            "connect_timeout_cliente_s": CONNECT_TIMEOUT_S,
+            "write_timeout_cliente_s": WRITE_TIMEOUT_S,
+            "max_grupos_reportados": 100,
+            "garantia_temporal": "sem_limite_total_rigido",
+            "registros_operacionais_exportados": 0,
+        },
+        "motivos_bloqueio": motivos,
+    }
+    if escopo == "verificacao_operacional":
+        resumo["verificacao_selecionada"] = selecionada
+    return resumo
 
 
 def diagnosticar(
@@ -861,8 +942,18 @@ def diagnosticar(
     *,
     server_uuid_esperado: str,
     connection_factory=abrir_conexao,
+    apenas_schema: bool = False,
+    verificacao: str | None = None,
+    confirmar_agregacao: bool = False,
 ) -> dict[str, Any]:
     """Executa o inventário fixo e sempre encerra com rollback e close."""
+    if apenas_schema:
+        if verificacao is not None or confirmar_agregacao:
+            raise DiagnosticoSeguroErro("Modos de diagnóstico incompatíveis.")
+    elif verificacao not in CONSULTAS_INTEGRIDADE or not confirmar_agregacao:
+        raise DiagnosticoSeguroErro(
+            "Modo completo indisponível; selecione uma verificação e confirme a agregação."
+        )
     conexao = None
     try:
         conexao = connection_factory(config)
@@ -901,7 +992,22 @@ def diagnosticar(
                 constraints=constraints,
                 foreign_keys=foreign_keys,
             )
-            integridade, estado_integridade = _consultar_integridade(cursor)
+            if apenas_schema:
+                integridade, estado_integridade = None, "nao_consultada"
+            else:
+                integridade = {
+                    nome: {"estado_coleta": "nao_executada", "motivo": "nao_selecionada"}
+                    for nome in CONSULTAS_INTEGRIDADE
+                }
+                if conformidade_schema["contrato_minimo"] == "conforme":
+                    integridade[verificacao] = _consultar_integridade(cursor, verificacao)
+                    estado_integridade = integridade[verificacao]["estado_coleta"]
+                else:
+                    integridade[verificacao] = {
+                        "estado_coleta": "nao_executada",
+                        "motivo": "schema_nao_conforme",
+                    }
+                    estado_integridade = "nao_executada"
 
             por_tabela = {}
             for tabela in TABELAS_PERMITIDAS:
@@ -950,6 +1056,8 @@ def diagnosticar(
 
             return {
                 "modo": "somente_leitura",
+                "escopo": "apenas_schema" if apenas_schema else "verificacao_operacional",
+                **({"verificacao_selecionada": verificacao} if not apenas_schema else {}),
                 "isolamento": (
                     "transacao_read_only_com_allowlist_sql; a conta ainda pode "
                     "possuir privilégios de escrita fora deste processo"
@@ -980,7 +1088,9 @@ def diagnosticar(
                         "rigido de tempo de parede e nao cobre conexao, rede "
                         "nem as demais consultas"
                     ),
-                    "read_timeout_cliente_s": 15,
+                    "read_timeout_cliente_s": READ_TIMEOUT_S,
+                    "connect_timeout_cliente_s": CONNECT_TIMEOUT_S,
+                    "write_timeout_cliente_s": WRITE_TIMEOUT_S,
                     "max_grupos_reportados": 100,
                     "registros_operacionais_exportados": 0,
                 },
@@ -993,14 +1103,19 @@ def diagnosticar(
         ) from exc
     finally:
         if conexao is not None:
+            falha_encerramento = False
             try:
                 conexao.rollback()
             except Exception:
-                pass
+                falha_encerramento = True
             try:
                 conexao.close()
             except Exception:
-                pass
+                falha_encerramento = True
+            if falha_encerramento and sys.exc_info()[0] is None:
+                raise DiagnosticoSeguroErro(
+                    "Encerramento da sessão não pôde ser comprovado."
+                )
 
 
 def criar_parser() -> argparse.ArgumentParser:
@@ -1014,6 +1129,30 @@ def criar_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Confirma que a execução é exclusivamente diagnóstica.",
     )
+    modo = parser.add_mutually_exclusive_group()
+    modo.add_argument(
+        "--apenas-schema",
+        action="store_true",
+        help="Consulta somente identidade e metadados estruturais; sem agregados de registros.",
+    )
+    modo.add_argument(
+        "--verificacao", choices=CONSULTAS_INTEGRIDADE,
+        action=VerificacaoUnica,
+        help="Seleciona exatamente uma agregação operacional do inventário fixo.",
+    )
+    parser.add_argument(
+        "--confirmar-agregacao", action="store_true",
+        help="Confirma explicitamente a execução da agregação selecionada.",
+    )
+    formato = parser.add_mutually_exclusive_group()
+    formato.add_argument(
+        "--resumo", action="store_true",
+        help="Exibe somente estados e limites, sem identidade do servidor ou DDL (padrão).",
+    )
+    formato.add_argument(
+        "--completo", action="store_true",
+        help="Exibe o relatório técnico integral, incluindo identidade e DDL.",
+    )
     parser.add_argument(
         "--server-uuid-esperado",
         required=True,
@@ -1024,9 +1163,25 @@ def criar_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     parser = criar_parser()
-    args = parser.parse_args(argv)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        return SAIDA_CONFORME if exc.code == 0 else SAIDA_ERRO
     if not args.somente_leitura:
-        parser.error("--somente-leitura é obrigatório")
+        print("ERRO SEGURO: --somente-leitura é obrigatório", file=sys.stderr)
+        return SAIDA_ERRO
+    if args.apenas_schema and args.confirmar_agregacao:
+        print("ERRO SEGURO: confirmação incompatível com --apenas-schema.", file=sys.stderr)
+        return SAIDA_ERRO
+    if args.verificacao and args.completo:
+        print("ERRO SEGURO: verificação operacional exige saída resumida.", file=sys.stderr)
+        return SAIDA_ERRO
+    if not args.apenas_schema and (not args.verificacao or not args.confirmar_agregacao):
+        print(
+            "ERRO SEGURO: modo completo indisponível; use --apenas-schema ou "
+            "--verificacao com --confirmar-agregacao.", file=sys.stderr,
+        )
+        return SAIDA_ERRO
 
     try:
         uuid_esperado = validar_uuid_esperado(args.server_uuid_esperado)
@@ -1034,13 +1189,18 @@ def main(argv: list[str] | None = None) -> int:
         resultado = diagnosticar(
             config,
             server_uuid_esperado=uuid_esperado,
+            apenas_schema=args.apenas_schema,
+            verificacao=args.verificacao,
+            confirmar_agregacao=args.confirmar_agregacao,
         )
+        resumo = resumir_resultado(resultado)
     except DiagnosticoSeguroErro as exc:
         print(f"ERRO SEGURO: {exc}", file=sys.stderr)
-        return 2
+        return SAIDA_ERRO
 
-    print(json.dumps(resultado, ensure_ascii=False, indent=2, default=str))
-    return 0
+    print(json.dumps(resultado if args.completo else resumo,
+                     ensure_ascii=False, indent=2, default=str))
+    return SAIDA_CONFORME if resumo["conformidade"] == "conforme" else SAIDA_BLOQUEADA
 
 
 if __name__ == "__main__":

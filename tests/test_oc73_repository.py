@@ -149,9 +149,10 @@ def test_execucao_em_andamento_bloqueia_reinicio(ambiente):
     conexao.commit.assert_not_called()
 
 
-def test_reserva_agendada_com_trava_ocupada_falha_fechada(ambiente):
+@pytest.mark.parametrize("resposta_lock", [{"adquirida": 0}, {"adquirida": None}, {}])
+def test_reserva_agendada_com_trava_ocupada_falha_fechada(ambiente, resposta_lock):
     repo, conexao, cursor, _ = ambiente
-    cursor.fetchone.return_value = {"adquirida": 0}
+    cursor.fetchone.return_value = resposta_lock
 
     resultado = repo.reservar_execucao_agendada(
         data_referencia=DATA,

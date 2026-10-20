@@ -1173,13 +1173,24 @@ class Ocorrencia73Service:
         resultado: dict,
         diretorio_auditoria: Path,
     ) -> Path:
+        def sem_registro_original(valor):
+            if isinstance(valor, dict):
+                return {
+                    chave: sem_registro_original(item)
+                    for chave, item in valor.items()
+                    if chave != "registro_original"
+                }
+            if isinstance(valor, (list, tuple)):
+                return [sem_registro_original(item) for item in valor]
+            return valor
+
         arquivo_saida = (
             diretorio_auditoria
             / "resultado.json"
         )
 
         conteudo = json.dumps(
-            resultado,
+            sem_registro_original(resultado),
             ensure_ascii=False,
             indent=2,
             default=str,
