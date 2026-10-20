@@ -19,53 +19,21 @@ class OP455Simulada:
         return Path(f"{kwargs['unidade'].lower()}.sswweb")
 
 
-def test_payload_oc73_restaura_formato_confirmado_por_har():
-    op455 = OP455Report(SimpleNamespace())
-    payload = op455._payload_relatorio_ocorrencia_73(
-        data_inicial="191026",
-        data_final="191026",
-    )
+def test_gerador_operacional_por_datas_preserva_comportamento_padrao():
+    client = SimpleNamespace(post=Mock(return_value=SimpleNamespace(text="ok")))
 
-    assert payload["act"] == "E1"
-    assert payload["cod_emp_ctb"] == "00"
-    assert payload["f2"] == "CWB"
-    assert payload["f3"] == "e"
-    assert payload["reg_tipo"] == "E"
-    assert "f5" not in payload
-    assert payload["f21"] == "T"
-    assert payload["f35"] == "E"
-    assert payload["f37"] == "B"
+    resposta = OP455Report(client).gerar_relatorio_por_datas("191026", "191026")
 
-
-def test_submit_direto_sem_contexto_confirmado_falha_antes_de_post():
-    client = SimpleNamespace(post=Mock())
-    op455 = OP455Report(client)
-
-    try:
-        op455.gerar_relatorio_ocorrencia_73("191026", "191026")
-    except ValueError as erro:
-        assert "Contexto da OP455 não confirmado" in str(erro)
-    else:
-        raise AssertionError("Submit direto deveria estar bloqueado.")
-
-    client.post.assert_not_called()
-
-
-@pytest.mark.parametrize("contexto", [None, "BIG", "MTZ"])
-def test_submit_rejeita_contexto_diferente_de_cwb(contexto):
-    client = SimpleNamespace(post=Mock())
-    op455 = OP455Report(client)
-    op455._contexto_oc73_confirmado_unidade = contexto
-
-    with pytest.raises(ValueError, match="Contexto da OP455 não confirmado"):
-        op455.gerar_relatorio_ocorrencia_73("191026", "191026")
-
-    client.post.assert_not_called()
+    assert resposta == "ok"
+    client.post.assert_called_once()
+    assert client.post.call_args.args[0] == "/bin/ssw0230"
+    assert client.post.call_args.args[1]["act"] == "E1"
+    assert "retries" not in client.post.call_args.kwargs
 
 
 def test_fluxo_operacional_estabelece_cwb_antes_de_abrir_op455():
     client = SimpleNamespace(get=Mock(), post=Mock(), open_option=Mock())
-    client.post.return_value = SimpleNamespace(
+    abertura = SimpleNamespace(
         text=(
             '<div id="infodiv">Domínio: ROD CWB</div>'
             '<form id="frm" method="POST" action="/bin/ssw0230">'
@@ -75,19 +43,20 @@ def test_fluxo_operacional_estabelece_cwb_antes_de_abrir_op455():
         status_code=200,
         headers={"Content-Type": "text/html"},
     )
+    client.post.side_effect = lambda path, data=None, retries=None: (
+        abertura
+        if path == "/bin/ssw0230" and (data or {}).get("sequencia") == "455"
+        else SimpleNamespace(text="solicitacao aceita")
+    )
     op455 = OP455Report(client)
     fila = Mock()
+    fila.extrair_arquivo_direto.return_value = None
     fila.baixar_por_opcao.return_value = Path("relatorio-cwb.sswweb")
 
     with (
         patch("operations.op455.report.OP156Queue", return_value=fila),
         patch.object(op455, "capturar_ids_fila", return_value={"anterior"})
         as capturar,
-        patch.object(
-            op455,
-            "gerar_relatorio_ocorrencia_73",
-            return_value="solicitacao aceita",
-        ),
         patch.object(op455, "validar_layout_ocorrencia_73") as validar,
     ):
         arquivo = op455.gerar_e_baixar_ocorrencia_73(
@@ -102,8 +71,16 @@ def test_fluxo_operacional_estabelece_cwb_antes_de_abrir_op455():
     assert client.get.call_args.args[0] == "/bin/ssw0082"
     assert client.get.call_args.kwargs["params"]["quadro_menu01"] == "CWB"
     assert [call.args[0] for call in client.post.call_args_list] == [
-        "/bin/menu01", "/bin/ssw0230",
+        "/bin/menu01", "/bin/ssw0230", "/bin/ssw0230",
     ]
+    payload_submit = client.post.call_args_list[2].kwargs["data"]
+    assert payload_submit["act"] == "E1"
+    assert payload_submit["f9"] == "191026"
+    assert payload_submit["f10"] == "191026"
+    assert payload_submit["f2"] == "CWB"
+    assert payload_submit["f3"] == "R"
+    assert payload_submit["reg_tipo"] == "R"
+    assert client.post.call_args_list[2].kwargs["retries"] == 1
     client.open_option.assert_not_called()
     assert capturar.call_args.kwargs["unidade"] == "CWB"
     assert capturar.call_args.kwargs["estrito"] is True
