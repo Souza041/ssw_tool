@@ -94,7 +94,16 @@ def configurar_op101(op101, ocorrencia_existente=None):
 
     op101.consultar_ctrc.return_value = consulta
     op101.abrir_ocorrencias.return_value = "<html></html>"
-    op101.listar_ocorrencias.return_value = []
+    op101.listar_ocorrencias.return_value = [
+        SimpleNamespace(
+            codigo="63",
+            data_hora="12/10/26 10:00",
+            to_dict=lambda: {
+                "codigo": "63",
+                "data_hora": "12/10/26 10:00",
+            },
+        )
+    ]
     op101.encontrar_ocorrencia.return_value = (
         ocorrencia_existente
     )
@@ -238,6 +247,46 @@ def test_limite_global_entre_cwb_e_big(
     )
 
     configurar_op101(op101)
+
+    # Simula o histórico correto de cada fluxo.
+    # CWB exige OC63; BIG exige OC64.
+    def abrir_ocorrencias_mock(**kwargs):
+        numero = kwargs["numero"]
+        return f"HISTORICO_{numero}"
+
+    def listar_ocorrencias_mock(html):
+        numero = html.replace("HISTORICO_", "")
+
+        codigo = "63" if numero == "100001" else "64"
+
+        return [
+            SimpleNamespace(
+                codigo=codigo,
+                data_hora="12/10/26 10:00",
+                to_dict=lambda codigo=codigo: {
+                    "codigo": codigo,
+                    "data_hora": "12/10/26 10:00",
+                },
+            )
+        ]
+
+    op101.abrir_ocorrencias.side_effect = abrir_ocorrencias_mock
+    op101.listar_ocorrencias.side_effect = listar_ocorrencias_mock
+
+    # Simula a última ocorrência correta para cada fluxo.
+    def historico_por_fluxo(html):
+        codigo = "64" if html == "HISTORICO_BIG" else "63"
+
+        return [
+            SimpleNamespace(
+                codigo=codigo,
+                data_hora="12/10/26 10:00",
+                to_dict=lambda: {
+                    "codigo": codigo,
+                    "data_hora": "12/10/26 10:00",
+                },
+            )
+        ]
 
     monkeypatch.setattr(
         "modules.ocorrencia_73.service.DRY_RUN",
