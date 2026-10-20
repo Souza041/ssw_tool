@@ -230,10 +230,20 @@ def test_multiplas_sequencias_aguardando_continuam_ambiguas():
         )
 
 
-@pytest.mark.parametrize("estado", ["Processando", "Em processamento"])
-def test_processamento_aguarda_sem_baixar(estado):
+@pytest.mark.parametrize(
+    ("estado", "acao"),
+    [
+        ("Processando", ""),
+        ("Em processamento", ""),
+        (
+            "Em processamento (iniciado 20/10/26 14:35:12)",
+            "Interromper",
+        ),
+    ],
+)
+def test_processamento_aguarda_sem_baixar(estado, acao):
     cliente = ClienteFalso([
-        linha("897142", estado=estado, acao=""),
+        linha("897142", estado=estado, acao=acao),
         linha("897142"),
     ])
 
@@ -241,6 +251,7 @@ def test_processamento_aguarda_sem_baixar(estado):
         OPCAO, "CWB", timeout_seconds=1, intervalo=0.001,
         ignorar_ids={"897080"}, estrito=True,
     ) == "897142"
+
     assert len(cliente.chamadas) == 2
 
 

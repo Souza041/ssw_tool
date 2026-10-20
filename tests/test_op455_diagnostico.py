@@ -211,10 +211,12 @@ def test_transicao_do_menu_preserva_identificacao_cwb():
     )
     assert submit[2]["act"] == "E1"
     assert submit[2]["cod_emp_ctb"] == "00"
-    assert submit[2]["f2"] == "CWB"
-    assert submit[2]["f3"] == "e"
-    assert submit[2]["reg_tipo"] == "E"
-    assert submit[2]["f37"] == "B"
+    assert "f2" not in submit[2]
+    assert "f3" not in submit[2]
+    assert "reg_tipo" not in submit[2]
+    assert submit[2]["f21"] == "X"
+    assert submit[2]["f37"] == "F"
+    assert submit[2]["f38"] == "B"
     assert "f5" not in submit[2]
     assert submit[3] == 1
 

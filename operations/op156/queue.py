@@ -300,7 +300,18 @@ class OP156Queue:
                 job = candidatos[0]
                 estado = _normalizar_estado(job["situacao"])
                 acao = _normalizar_estado(job["acao"])
-                if estado in {"processando", "em processamento"} and not acao:
+                if (
+                    (
+                        estado in {"processando", "em processamento"}
+                        or re.fullmatch(
+                            r"em processamento \(iniciado \d{2}/\d{2}/\d{2} "
+                            r"\d{2}:\d{2}:\d{2}\)",
+                            estado,
+                        )
+                    )
+                    and acao in {"", "interromper"}
+                ):
+                    # Estado intermediário válido: continuar aguardando.
                     pass
                 elif estado == "aguardando" and acao == "excluir":
                     pass
@@ -326,7 +337,7 @@ class OP156Queue:
             if restante <= 0:
                 raise TimeoutError("Relatório novo da OP156 não concluiu no prazo.")
             time.sleep(min(intervalo, restante))
-    
+
     def extrair_arquivo_direto(self, html: str) -> dict | None:
         html = unquote(unescape(html or ""))
 
@@ -468,7 +479,7 @@ class OP156Queue:
         if estrito:
             return self.baixar_arquivo(download_id, output_dir, estrito=True)
         return self.baixar_arquivo(download_id=download_id, output_dir=output_dir)
-    
+
     def baixar_por_opcao(
         self,
         output_dir: Path,

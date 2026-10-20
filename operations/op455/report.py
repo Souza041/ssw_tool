@@ -1,7 +1,7 @@
 
 import csv
 import hashlib
-import re 
+import re
 
 from html.parser import HTMLParser
 from urllib.parse import unquote, urlsplit, urlunsplit
@@ -14,13 +14,28 @@ from ssw.client import SSWClient
 from ssw.settings import settings
 from ssw.utils import data_ddmmaa, dummy
 
+from types import SimpleNamespace
+
 
 _FRASE_UNIDADE = "informe a unidade"
 _CAMPOS_COM_VALOR_DIAGNOSTICO = {"act", "f3", "reg_tipo"}
+_CAMPOS_COM_VALOR_CONTRATO_OP455 = {"act", "f2", "f3", "reg_tipo"}
 
 
 def _normalizar_texto_diagnostico(valor: str | None) -> str:
     return " ".join((valor or "").casefold().split())
+
+
+def _valor_contrato_op455_nao_sensivel(nome: str, valor: str) -> bool:
+    """Aceita somente códigos curtos; textos livres e tokens ficam omitidos."""
+    limites = {
+        "act": r"[A-Za-z0-9_-]{0,8}",
+        "f2": r"[A-Z0-9]{0,5}",
+        "f3": r"[A-Za-z0-9_-]{0,8}",
+        "reg_tipo": r"[A-Za-z0-9_-]{0,8}",
+    }
+    padrao = limites.get(nome.casefold())
+    return bool(padrao and re.fullmatch(padrao, valor))
 
 
 class _OP455HTMLDiagnosticoParser(HTMLParser):
@@ -74,6 +89,7 @@ class _OP455HTMLDiagnosticoParser(HTMLParser):
                 "method": (atributos.get("method") or "").casefold(),
                 "action": atributos.get("action") or "",
                 "campos": {},
+                "controles": [],
                 "fechado": False,
             }
             self.formularios.append(self._formulario)
@@ -98,9 +114,17 @@ class _OP455HTMLDiagnosticoParser(HTMLParser):
                 "selecionado": "checked" in atributos,
                 "opcoes_selecionadas": [],
             }
-            if nome.casefold() in _CAMPOS_COM_VALOR_DIAGNOSTICO:
+            nome_normalizado = nome.casefold()
+            if nome_normalizado in (
+                _CAMPOS_COM_VALOR_DIAGNOSTICO
+                | _CAMPOS_COM_VALOR_CONTRATO_OP455
+            ):
                 campo["valor"] = atributos.get("value") or ""
+            if tag == "select" and nome_normalizado in _CAMPOS_COM_VALOR_CONTRATO_OP455:
+                campo["opcoes"] = []
             self.campos.append(campo)
+            if self._formulario is not None:
+                self._formulario["controles"].append(campo)
             if tag == "select":
                 self._campo_select = campo
 
@@ -115,10 +139,19 @@ class _OP455HTMLDiagnosticoParser(HTMLParser):
                 })
 
         if tag == "option" and self._campo_select is not None:
-            if "selected" in atributos:
+            nome_select = self._campo_select["nome"].casefold()
+            selecionada = "selected" in atributos
+            if nome_select in _CAMPOS_COM_VALOR_CONTRATO_OP455:
+                opcao = {
+                    "selecionada": selecionada,
+                    "valor": atributos.get("value") or "",
+                }
+                self._campo_select["opcoes"].append(opcao)
+                if selecionada:
+                    self._campo_select["opcoes_selecionadas"].append(opcao)
+                self._opcao_selecionada = opcao
+            elif selecionada:
                 opcao = {"selecionada": True}
-                if self._campo_select["nome"].casefold() in _CAMPOS_COM_VALOR_DIAGNOSTICO:
-                    opcao["valor"] = atributos.get("value") or ""
                 self._campo_select["opcoes_selecionadas"].append(opcao)
                 self._opcao_selecionada = opcao
 
@@ -150,7 +183,7 @@ class _OP455HTMLDiagnosticoParser(HTMLParser):
             self._opcao_selecionada is not None
             and self._campo_select is not None
             and self._campo_select["nome"].casefold()
-            in _CAMPOS_COM_VALOR_DIAGNOSTICO
+            in _CAMPOS_COM_VALOR_CONTRATO_OP455
         ):
             texto = " ".join(data.split())
             if texto:
@@ -263,6 +296,146 @@ class OP455Report:
         return {"status": "confirmado"}
 
     @staticmethod
+    def extrair_contrato_formulario_op455(response) -> dict:
+        """Extrai somente o contrato sanitizado do formulário aberto em memória."""
+        parser = _OP455HTMLDiagnosticoParser()
+        try:
+            parser.feed(str(getattr(response, "text", "")))
+            parser.close()
+        except (TypeError, ValueError):
+            return {"status": "inconclusivo", "motivo": "html_invalido"}
+
+        formularios = [
+            formulario for formulario in parser.formularios
+            if formulario["action"] == "/bin/ssw0230"
+        ]
+        if len(formularios) != 1:
+            return {
+                "status": "inconclusivo",
+                "motivo": (
+                    "formulario_ausente" if not formularios
+                    else "formulario_duplicado"
+                ),
+            }
+
+        formulario = formularios[0]
+        if not formulario["fechado"]:
+            return {"status": "inconclusivo", "motivo": "html_incompleto"}
+
+        controles = []
+        campos_ocultos = []
+        for campo in formulario["controles"]:
+            nome = str(campo.get("nome") or "")
+            tipo = str(campo.get("tipo") or "")
+            controle = {"nome": nome, "tipo": tipo}
+            nome_normalizado = nome.casefold()
+
+            if tipo == "hidden" and nome:
+                campos_ocultos.append(nome)
+            if nome_normalizado in _CAMPOS_COM_VALOR_CONTRATO_OP455:
+                valor = str(campo.get("valor") or "")
+                if _valor_contrato_op455_nao_sensivel(nome_normalizado, valor):
+                    controle["valor"] = valor
+                else:
+                    controle["valor_classificacao"] = "omitido_nao_classificado"
+                if tipo == "select":
+                    controle["opcoes"] = []
+                    for opcao in campo.get("opcoes", []):
+                        valor_opcao = str(opcao.get("valor") or "")
+                        opcao_sanitizada = {
+                            "selecionada": bool(opcao.get("selecionada")),
+                        }
+                        if _valor_contrato_op455_nao_sensivel(
+                            nome_normalizado, valor_opcao,
+                        ):
+                            opcao_sanitizada["valor"] = valor_opcao
+                        else:
+                            opcao_sanitizada["valor_classificacao"] = (
+                                "omitido_nao_classificado"
+                            )
+                        controle["opcoes"].append(opcao_sanitizada)
+            controles.append(controle)
+
+        return {
+            "status": "extraido",
+            "metodo": formulario["method"],
+            "action": formulario["action"],
+            "controles": controles,
+            "campos_ocultos": sorted(set(campos_ocultos)),
+            "valores_expostos_somente_para": sorted(
+                _CAMPOS_COM_VALOR_CONTRATO_OP455
+            ),
+            "textos_opcoes_expostos": False,
+            "conclusao_payload_submit": "nao_inferida",
+        }
+
+    def pre_voo_navegacao_ocorrencia_73_cwb(self) -> dict:
+        """Valida somente a abertura da OP455 CWB e encerra o fluxo.
+
+        Este caminho não confirma o contexto interno usado pelos métodos de
+        geração. Assim, mesmo depois de um pré-voo aprovado, uma tentativa de
+        solicitar relatório com a mesma instância continua bloqueada.
+        """
+        self._contexto_oc73_confirmado_unidade = None
+
+        try:
+            response = self._abrir_op455_oc73_cwb(unidade="CWB")
+        except Exception as exc:
+            return {
+                "resultado": "erro_navegacao",
+                "unidade": "CWB",
+                "contexto": None,
+                "erro_tipo": type(exc).__name__,
+            }
+
+        contexto = self.validar_contexto_abertura_ocorrencia_73(
+            response,
+            "CWB",
+        )
+        contrato_formulario = self.extrair_contrato_formulario_op455(response)
+        conteudo = getattr(response, "content", None)
+        if conteudo is None:
+            conteudo = str(getattr(response, "text", "")).encode(
+                "utf-8", errors="replace",
+            )
+        elif not isinstance(conteudo, bytes):
+            conteudo = bytes(conteudo)
+
+        try:
+            status_http = int(getattr(response, "status_code", 0) or 0)
+        except (TypeError, ValueError):
+            status_http = 0
+        content_type_recebido = str(
+            (getattr(response, "headers", {}) or {}).get("Content-Type", "")
+        )
+        content_type_base = content_type_recebido.partition(";")[0].strip().casefold()
+        content_type = (
+            content_type_base
+            if content_type_base in {"text/html", "application/xhtml+xml"}
+            else "outro"
+        )
+
+        # Defesa em profundidade: o pré-voo nunca libera o método de submit.
+        self._contexto_oc73_confirmado_unidade = None
+        return {
+            "resultado": (
+                "contexto_confirmado"
+                if contexto["status"] == "confirmado"
+                else "contexto_nao_confirmado"
+            ),
+            "unidade": "CWB",
+            "contexto": contexto,
+            "contrato_formulario": contrato_formulario,
+            "resposta": {
+                "status_http": status_http,
+                "url_final": _url_sanitizada(getattr(response, "url", "")),
+                "content_type": content_type,
+                "tamanho_bytes": len(conteudo),
+                "sha256_corpo": hashlib.sha256(conteudo).hexdigest(),
+            },
+        }
+
+    @staticmethod
     def resumir_resposta_diagnostica(response) -> dict:
         """Produz evidência sanitizada sem devolver corpo ou cabeçalhos sensíveis."""
         conteudo = getattr(response, "content", None)
@@ -371,7 +544,7 @@ class OP455Report:
 
         response = self.client.post("/bin/ssw0230", payload)
         return response.text
-    
+
     def extrair_arquivo_direto(self, html: str) -> dict | None:
         decoded = unquote(html)
 
@@ -390,7 +563,7 @@ class OP455Report:
             "pasta": match.group(3),
             "tipo": match.group(4),
         }
-    
+
     def baixar_arquivo_direto(
         self,
         info: dict,
@@ -416,7 +589,7 @@ class OP455Report:
         file_path.write_bytes(response.content)
 
         return file_path
-    
+
     def _extrair_nome_arquivo(self, headers) -> str | None:
         content_disposition = headers.get("Content-Disposition", "")
 
@@ -459,7 +632,7 @@ class OP455Report:
             timeout_seconds=timeout_seconds,
             intervalo=5,
         )
-    
+
     def gerar_e_baixar_por_datas(
         self,
         output_dir: Path,
@@ -495,12 +668,15 @@ class OP455Report:
             timeout_seconds=timeout_seconds,
             intervalo=5,
         )
-    
+
     def gerar_relatorio_por_datas(
         self,
         data_inicial: str,
         data_final: str,
-    ) -> str:
+        retries: int | None = None,
+        *,
+        retornar_resposta: bool = False,
+    ):
         payload = {
             "act": "E1",
             "cod_emp_ctb": "00",
@@ -534,12 +710,14 @@ class OP455Report:
             "dummy": dummy(),
         }
 
-        response = self.client.post(
-            "/bin/ssw0230",
-            payload,
-        )
+        if retries is None:
+            response = self.client.post("/bin/ssw0230", payload)
+        else:
+            response = self.client.post(
+                "/bin/ssw0230", data=payload, retries=retries,
+            )
 
-        return response.text
+        return response if retornar_resposta else response.text
 
     def gerar_relatorio_documentos(
         self,
@@ -692,87 +870,6 @@ class OP455Report:
             retries=1,
         )
 
-    def _payload_relatorio_ocorrencia_73(
-        self,
-        data_inicial: str,
-        data_final: str,
-    ) -> dict:
-        return {
-            "act": "E1",
-            "cod_emp_ctb": "00",
-            # Unidade e tipo do submit confirmados no HAR CWB.
-            "f2": "CWB",
-            "f3": "e",
-            # Regional opcional: conserva o valor padrão apresentado no formulário.
-            "reg_tipo": "E",
-
-            # Todos os documentos
-            "f8": "T",
-
-            # Período de emissão
-            "f9": data_inicial,
-            "f10": data_final,
-
-            # Demais configurações do OP455
-            "f18": "T",
-            "f19": "T",
-            "f20": "S",
-            "f21": "T",
-            "f22": "T",
-            "f23": "A",
-            "f25": "T",
-            "f26": "A",
-            "f27": "A",
-            "f28": "T",
-            "ibscbs": "A",
-            "f29": "A",
-            "f30": "A",
-
-            # Excel e dados complementares
-            "f35": "E",
-            "f37": "B",
-
-            "basico": "N",
-            "dummy": dummy(),
-        }
-
-    def _solicitar_relatorio_ocorrencia_73(
-        self,
-        data_inicial: str,
-        data_final: str,
-        retries: int | None = None,
-    ):
-        if self._contexto_oc73_confirmado_unidade != "CWB":
-            raise ValueError("Contexto da OP455 não confirmado para submit.")
-        argumentos = {
-            "data": self._payload_relatorio_ocorrencia_73(
-                data_inicial=data_inicial,
-                data_final=data_final,
-            ),
-        }
-        if retries is not None:
-            argumentos["retries"] = retries
-        return self.client.post("/bin/ssw0230", **argumentos)
-
-    def gerar_relatorio_ocorrencia_73(
-        self,
-        data_inicial: str,
-        data_final: str,
-    ) -> str:
-        """
-        Gera o relatório OP455 para o fluxo OC73 CWB.
-
-        Os filtros de UF do remetente e última ocorrência
-        serão aplicados posteriormente no parser.
-        """
-        response = self._solicitar_relatorio_ocorrencia_73(
-            data_inicial=data_inicial,
-            data_final=data_final,
-            retries=1,
-        )
-
-        return response.text
-
     def diagnosticar_geracao_ocorrencia_73(
         self,
         data_inicial: str,
@@ -790,6 +887,9 @@ class OP455Report:
             raise ValueError(
                 "A data inicial não pode ser posterior à data final."
             )
+
+        # O diagnóstico nunca deve herdar uma autorização anterior.
+        self._contexto_oc73_confirmado_unidade = None
 
         opcao = "455 - Fretes Expedidos/Recebidos - CTRCs"
         fila = OP156Queue(self.client)
@@ -811,80 +911,84 @@ class OP455Report:
         }
 
         try:
-            resposta_abertura = self._abrir_op455_oc73_cwb(unidade=unidade)
-            contexto = self.validar_contexto_abertura_ocorrencia_73(
-                resposta_abertura, unidade,
-            )
-            resultado["contexto_op455"] = contexto
-            if contexto["status"] != "confirmado":
-                resultado["resultado"] = "contexto_op455_nao_confirmado"
+            try:
+                resposta_abertura = self._abrir_op455_oc73_cwb(unidade=unidade)
+                contexto = self.validar_contexto_abertura_ocorrencia_73(
+                    resposta_abertura, unidade,
+                )
+                resultado["contexto_op455"] = contexto
+                if contexto["status"] != "confirmado":
+                    resultado["resultado"] = "contexto_op455_nao_confirmado"
+                    return resultado
+                resultado["unidade_contexto_op455"] = unidade
+                self._contexto_oc73_confirmado_unidade = unidade
+                ids_antes = self._snapshot_op156_diagnostico(
+                    fila=fila,
+                    opcao=opcao,
+                    unidade=unidade,
+                )
+            except Exception as exc:
+                resultado["resultado"] = "erro_pre_voo"
+                resultado["erro_tipo"] = type(exc).__name__
                 return resultado
-            resultado["unidade_contexto_op455"] = unidade
-            self._contexto_oc73_confirmado_unidade = unidade
-            ids_antes = self._snapshot_op156_diagnostico(
-                fila=fila,
-                opcao=opcao,
-                unidade=unidade,
-            )
-        except Exception as exc:
-            resultado["resultado"] = "erro_pre_voo"
-            resultado["erro_tipo"] = type(exc).__name__
+            resultado["op156"]["consultas_antes"] = 1
+            resultado["op156"]["total_antes"] = len(ids_antes)
+
+            try:
+                response = self.gerar_relatorio_por_datas(
+                    data_inicial=data_inicial,
+                    data_final=data_final,
+                    retries=1,
+                    retornar_resposta=True,
+                )
+            except Exception as exc:
+                resultado["resultado"] = "erro_submit"
+                resultado["erro_tipo"] = type(exc).__name__
+                return resultado
+
+            resumo = self.resumir_resposta_diagnostica(response)
+            resultado["resposta_op455"] = resumo
+            if resumo["classificacao_resposta"] != "html_valido":
+                resultado["resultado"] = resumo["classificacao_resposta"]
+                return resultado
+
+            try:
+                ids_depois = self._snapshot_op156_diagnostico(
+                    fila=fila,
+                    opcao=opcao,
+                    unidade=unidade,
+                )
+            except Exception as exc:
+                resultado["resultado"] = "erro_op156_posterior"
+                resultado["erro_tipo"] = type(exc).__name__
+                return resultado
+            novos = ids_depois - ids_antes
+            resultado["op156"].update({
+                "consultas_depois": 1,
+                "total_depois": len(ids_depois),
+                "novos_relatorios": len(novos),
+                "novo_relatorio_detectado": bool(novos),
+            })
+
+            localizacoes = resumo["frase_informe_unidade"]
+            erro_visivel = localizacoes["texto_visivel"]
+            marcador_direto = self.extrair_arquivo_direto(response.text) is not None
+            resultado["marcador_arquivo_direto"] = marcador_direto
+
+            if erro_visivel:
+                resultado["resultado"] = (
+                    "resposta_divergente"
+                    if novos or marcador_direto
+                    else "erro_unidade_visivel"
+                )
+            elif novos or marcador_direto:
+                resultado["resultado"] = "submit_aceito"
+            elif any(localizacoes.values()):
+                resultado["resultado"] = "frase_apenas_nao_visivel"
+
             return resultado
-        resultado["op156"]["consultas_antes"] = 1
-        resultado["op156"]["total_antes"] = len(ids_antes)
-
-        try:
-            response = self._solicitar_relatorio_ocorrencia_73(
-                data_inicial=data_inicial,
-                data_final=data_final,
-                retries=1,
-            )
-        except Exception as exc:
-            resultado["resultado"] = "erro_submit"
-            resultado["erro_tipo"] = type(exc).__name__
-            return resultado
-
-        resumo = self.resumir_resposta_diagnostica(response)
-        resultado["resposta_op455"] = resumo
-        if resumo["classificacao_resposta"] != "html_valido":
-            resultado["resultado"] = resumo["classificacao_resposta"]
-            return resultado
-
-        try:
-            ids_depois = self._snapshot_op156_diagnostico(
-                fila=fila,
-                opcao=opcao,
-                unidade=unidade,
-            )
-        except Exception as exc:
-            resultado["resultado"] = "erro_op156_posterior"
-            resultado["erro_tipo"] = type(exc).__name__
-            return resultado
-        novos = ids_depois - ids_antes
-        resultado["op156"].update({
-            "consultas_depois": 1,
-            "total_depois": len(ids_depois),
-            "novos_relatorios": len(novos),
-            "novo_relatorio_detectado": bool(novos),
-        })
-
-        localizacoes = resumo["frase_informe_unidade"]
-        erro_visivel = localizacoes["texto_visivel"]
-        marcador_direto = self.extrair_arquivo_direto(response.text) is not None
-        resultado["marcador_arquivo_direto"] = marcador_direto
-
-        if erro_visivel:
-            resultado["resultado"] = (
-                "resposta_divergente"
-                if novos or marcador_direto
-                else "erro_unidade_visivel"
-            )
-        elif novos or marcador_direto:
-            resultado["resultado"] = "submit_aceito"
-        elif any(localizacoes.values()):
-            resultado["resultado"] = "frase_apenas_nao_visivel"
-
-        return resultado
+        finally:
+            self._contexto_oc73_confirmado_unidade = None
 
     def gerar_e_baixar_ocorrencia_73(
         self,
@@ -941,17 +1045,30 @@ class OP455Report:
             estrito=True,
         )
 
+        # Gerador exclusivo da OC73.
+        # A navegação CWB já foi confirmada anteriormente.
         html = self.gerar_relatorio_ocorrencia_73(
             data_inicial=data_inicial,
             data_final=data_final,
+            unidade=unidade,
         )
 
-        if "Informe a unidade" in html:
+        resumo = self.resumir_resposta_diagnostica(
+            SimpleNamespace(
+                text=html,
+                content=html.encode("utf-8"),
+                status_code=200,
+                headers={"Content-Type": "text/html"},
+                url="https://sistema.ssw.inf.br/bin/ssw0230",
+            )
+        )
+
+        if resumo["frase_informe_unidade"]["texto_visivel"]:
             raise ValueError(
                 f"SSW solicitou informar a unidade {unidade}."
             )
 
-        if self.extrair_arquivo_direto(html):
+        if fila.extrair_arquivo_direto(html):
             raise ValueError("Resposta direta da OP455 sem sequência OP156 confirmada.")
         arquivo = fila.baixar_por_opcao(
             output_dir=output_dir,
@@ -966,6 +1083,79 @@ class OP455Report:
         self.validar_layout_ocorrencia_73(arquivo)
 
         return arquivo
+
+    def gerar_relatorio_ocorrencia_73(
+        self,
+        data_inicial: str,
+        data_final: str,
+        unidade: str = "CWB",
+    ) -> str:
+        """Solicita OP455 com filtros exclusivos da ocorrência 73."""
+
+        unidade = unidade.strip().upper()
+
+        if unidade != "CWB":
+            raise ValueError(
+                "Geração OC73 disponível somente para CWB nesta etapa."
+            )
+
+        if self._contexto_oc73_confirmado_unidade != unidade:
+            raise ValueError(
+                "Contexto CWB não confirmado antes da geração OC73."
+            )
+
+        # Autorização de uso único: uma confirmação permite
+        # somente uma tentativa de geração.
+        # Consumir antes do POST também protege contra exceções.
+        self._contexto_oc73_confirmado_unidade = None
+
+        payload = {
+            "act": "E1",
+            "cod_emp_ctb": "00",
+
+            # Unidade e tipo específicos da OC73
+            "f2": unidade,
+            "f3": "R",
+            "reg_tipo": "R",
+            # Período
+            "f9": data_inicial,
+            "f10": data_final,
+
+            # Filtros
+            "f8": "T",
+            "f18": "T",
+            "f19": "T",
+            "f20": "S",
+            "f21": "T",
+            "f22": "T",
+            "f23": "A",
+            "f25": "T",
+            "f26": "A",
+            "f27": "A",
+            "f28": "T",
+            "ibscbs": "A",
+            "f29": "A",
+            "f30": "A",
+
+            # Exportação
+            "f35": "E",
+
+            # Dados complementares OC73
+            "f37": "B",
+            "f38": "",
+            "f39": "",
+
+            "basico": "N",
+            "dummy": dummy(),
+        }
+
+        response = self.client.post(
+            "/bin/ssw0230",
+            data=payload,
+            retries=1,
+        )
+
+        return response.text
 
     def capturar_ids_fila(
         self,
