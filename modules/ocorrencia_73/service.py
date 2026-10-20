@@ -33,6 +33,34 @@ from modules.ocorrencia_73.calendario import (
 
 TIMEZONE = ZoneInfo("America/Sao_Paulo")
 
+def obter_ultima_ocorrencia_op101(historico):
+    """Retorna a ocorrência mais recente, sem depender da ordem da tela."""
+    ocorrencias_validas = []
+
+    for ocorrencia in historico:
+        data_texto = str(ocorrencia.data_hora or "").strip()
+
+        try:
+            data_ocorrencia = datetime.strptime(
+                data_texto,
+                "%d/%m/%y %H:%M",
+            )
+        except ValueError:
+            # Uma data desconhecida impede validar com segurança.
+            return None
+
+        ocorrencias_validas.append(
+            (data_ocorrencia, ocorrencia)
+        )
+
+    if not ocorrencias_validas:
+        return None
+
+    return max(
+        ocorrencias_validas,
+        key=lambda item: item[0],
+    )[1]
+
 MAX_LANCAMENTOS = int(
     os.getenv("OCORRENCIA_73_MAX_LANCAMENTOS", "").strip()
     or "1"
@@ -60,7 +88,7 @@ OC73_ENVIO_HABILITADO = (
 # Incerto é pendência de reconciliação, não erro técnico confirmado.
 OC73_STATUS_INCERTO = frozenset({"incerto"})
 OC73_STATUS_BLOQUEADO = frozenset({
-    "bloqueado_reserva_existente", "bloqueado_transicao", "bloqueado_seguranca",
+    "bloqueado_reserva_existente", "bloqueado_transicao", "bloqueado_seguranca", "bloqueado_ultima_ocorrencia",
 })
 OC73_STATUS_ERRO_TECNICO = frozenset({
     "erro_consulta", "erro_persistencia", "erro_lancamento",
@@ -867,8 +895,29 @@ class Ocorrencia73Service:
                         ocorrencia_73 is not None
                     )
 
+                    ultima_ocorrencia_op101 = obter_ultima_ocorrencia_op101(
+                        historico
+                    )
+
+                    fluxo_atual = str(item.get("fluxo") or "").upper()
+
+                    codigo_exigido = {
+                        "CWB": "63",
+                        "BIG": "64",
+                    }.get(fluxo_atual)
+
+                    ultima_ocorrencia_valida = (
+                        ultima_ocorrencia_op101 is not None
+                        and codigo_exigido is not None
+                        and ultima_ocorrencia_op101.codigo == codigo_exigido
+                    )
+
                     if ja_existia:
                         status = "ja_existia"
+                        lancamento = None
+
+                    elif not ultima_ocorrencia_valida:
+                        status = "bloqueado_ultima_ocorrencia"
                         lancamento = None
 
                     elif DRY_RUN:
@@ -951,6 +1000,12 @@ class Ocorrencia73Service:
                         "total_historico_ocorrencias": len(
                             historico
                         ),
+                        "ultima_ocorrencia_op101": (
+                            ultima_ocorrencia_op101.to_dict()
+                            if ultima_ocorrencia_op101
+                            else None
+                        ),
+                        "codigo_ultima_ocorrencia_exigido": codigo_exigido,
                         "ocorrencia_73": (
                             ocorrencia_73.to_dict()
                             if ocorrencia_73

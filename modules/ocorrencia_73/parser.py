@@ -7,7 +7,7 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 CLIENTE_COLUNA = "Cliente Pagador"
-CIDADE_COLUNA = "Cidade do Destinatario"
+CIDADE_COLUNA = "Cidade de Entrega"
 UNIDADE_COLUNA = "Unidade Emissora"
 CTRC_COLUNA = "Serie/Numero CTRC"
 OCORRENCIA_COLUNA = "Codigo Ultima Ocorrencia"
@@ -22,10 +22,7 @@ ALIASES_COLUNAS = {
         "NOME PAGADOR",
     },
     CIDADE_COLUNA: {
-        "CIDADE DO DESTINATARIO",
-        "CIDADE DESTINATARIO",
-        "CIDADE DO DESTINO",
-        "CIDADE DESTINO",
+        "CIDADE DE ENTREGA",
     },
     UNIDADE_COLUNA: {
         "UNIDADE EMISSORA",
@@ -251,6 +248,26 @@ def carregar_relatorio(
     indice_cabecalho = localizar_cabecalho(
         linhas
     )
+
+    # Formato SSWWEB: primeira coluna identifica o tipo de linha.
+    if extensao == ".sswweb":
+        if linhas[indice_cabecalho][0].strip() != "1":
+            raise ValueError("Marcador de cabeçalho OP455 inválido.")
+
+        linhas[indice_cabecalho] = linhas[indice_cabecalho][1:]
+
+        for indice in range(indice_cabecalho + 1, len(linhas)):
+            linha = linhas[indice]
+
+            if linha == ["9"]:
+                continue
+
+            if not linha or linha[0].strip() != "2":
+                raise ValueError(
+                    f"Marcador de registro OP455 inválido na linha {indice + 1}."
+                )
+
+            linhas[indice] = linha[1:]
 
     cabecalho = [
         normalizar_texto(coluna)
