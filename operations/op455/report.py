@@ -228,8 +228,13 @@ class OP455Report:
         response, unidade: str,
     ) -> dict:
         """Confirma CWB apenas com o HTML da abertura, sem guardar seu corpo."""
-        if unidade != "CWB":
-            return {"status": "nao_confirmado", "motivo": "sem_evidencia_html_big"}
+        unidade = str(unidade or "").strip().upper()
+
+        if unidade not in {"CWB", "BIG"}:
+            return {
+                "status": "nao_confirmado",
+                "motivo": "unidade_nao_permitida",
+            }
 
         try:
             status_http = int(getattr(response, "status_code", 0) or 0)
@@ -264,7 +269,7 @@ class OP455Report:
         )
         if not dominios and not re.search(r"dom[ií]nio\s*:", texto_cabecalho, re.IGNORECASE):
             return {"status": "nao_confirmado", "motivo": "dominio_ausente"}
-        if len(dominios) != 1 or tuple(parte.upper() for parte in dominios[0]) != ("ROD", "CWB"):
+        if len(dominios) != 1 or tuple(parte.upper() for parte in dominios[0]) != ("ROD", unidade):
             return {"status": "nao_confirmado", "motivo": "dominio_divergente"}
 
         formulario = [
@@ -284,7 +289,7 @@ class OP455Report:
             return {"status": "nao_confirmado", "motivo": "action_invalida"}
 
         for nome, rotulo, identificador, esperado in (
-            ("f2", "unidade", "2", "CWB"), ("f3", "tipo", "3", "A"),
+            ("f2", "unidade", "2", unidade), ("f3", "tipo", "3", "A"),
         ):
             encontrados = formulario["campos"].get(nome, [])
             if not encontrados:
@@ -830,13 +835,13 @@ class OP455Report:
 
         return arquivo
 
-    def _abrir_op455_oc73_cwb(self, unidade: str = "CWB"):
+    def _abrir_op455_oc73(self, unidade: str = "CWB"):
         """Navega até a OP455 CWB na sessão existente, sem retentativas."""
         unidade = unidade.strip().upper()
 
-        if unidade != "CWB":
+        if unidade not in {"CWB", "BIG"}:
             raise ValueError(
-                "Abertura OC73 disponível apenas para CWB."
+                f"Unidade não permitida para OC73: {unidade}"
             )
 
         self._contexto_oc73_confirmado_unidade = None
@@ -869,6 +874,17 @@ class OP455Report:
             },
             retries=1,
         )
+        
+    def _abrir_op455_oc73_cwb(self, unidade: str = "CWB"):
+        """Compatibilidade com o pré-voo e os testes de CWB."""
+        unidade = str(unidade or "").strip().upper()
+
+        if unidade != "CWB":
+            raise ValueError(
+                "Abertura exclusiva de CWB neste método."
+            )
+
+        return self._abrir_op455_oc73(unidade=unidade)
 
     def diagnosticar_geracao_ocorrencia_73(
         self,
@@ -912,7 +928,7 @@ class OP455Report:
 
         try:
             try:
-                resposta_abertura = self._abrir_op455_oc73_cwb(unidade=unidade)
+                resposta_abertura = self._abrir_op455_oc73(unidade=unidade)
                 contexto = self.validar_contexto_abertura_ocorrencia_73(
                     resposta_abertura, unidade,
                 )
@@ -1024,7 +1040,7 @@ class OP455Report:
         fila = OP156Queue(self.client)
 
         # Estabelece CWB/BIG na sessão antes de abrir a OP455.
-        resposta_abertura = self._abrir_op455_oc73_cwb(unidade=unidade)
+        resposta_abertura = self._abrir_op455_oc73(unidade=unidade)
         contexto = self.validar_contexto_abertura_ocorrencia_73(
             resposta_abertura, unidade,
         )
@@ -1094,14 +1110,14 @@ class OP455Report:
 
         unidade = unidade.strip().upper()
 
-        if unidade != "CWB":
+        if unidade not in {"CWB", "BIG"}:
             raise ValueError(
-                "Geração OC73 disponível somente para CWB nesta etapa."
+                f"Unidade não permitida para OC73: {unidade}"
             )
 
         if self._contexto_oc73_confirmado_unidade != unidade:
             raise ValueError(
-                "Contexto CWB não confirmado antes da geração OC73."
+                f"Contexto {unidade} não confirmado antes da geração OC73."
             )
 
         # Autorização de uso único: uma confirmação permite

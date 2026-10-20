@@ -231,10 +231,26 @@ def test_big_nao_e_confirmado_sem_evidencia_real():
         data_inicial="191026", data_final="191026", unidade="BIG",
     )
 
-    assert resultado["resultado"] == "erro_pre_voo"
-    assert resultado["erro_tipo"] == "ValueError"
+    assert resultado["resultado"] == "contexto_op455_nao_confirmado"
+    assert resultado["contexto_op455"]["status"] == "nao_confirmado"
+    assert resultado["op156"]["consultas_antes"] == 0
+    assert resultado["op156"]["consultas_depois"] == 0
+    assert resultado["download_executado"] is False
+
+    # Não houve exceção: o contexto foi rejeitado de forma controlada.
+    assert "erro_tipo" not in resultado
+
+    # Nenhuma unidade foi confirmada.
     assert resultado["unidade_contexto_op455"] is None
-    assert cliente.chamadas == []
+
+    # Somente a navegação é permitida.
+    # Não pode consultar OP156 nem solicitar geração do relatório.
+    assert len(cliente.chamadas) == 3
+    assert [chamada[1] for chamada in cliente.chamadas] == [
+        "/bin/ssw0082",
+        "/bin/menu01",
+        "/bin/ssw0230",
+    ]
 
 
 @pytest.mark.parametrize("unidade", ["CWB", "BIG", "MTZ"])
