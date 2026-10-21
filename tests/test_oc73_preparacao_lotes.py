@@ -160,11 +160,14 @@ def test_big_permanece_bloqueado_antes_da_op156():
         status_code=200,
         headers={"Content-Type": "text/html"},
     )
-    with pytest.raises(ValueError, match="Abertura OC73 disponível apenas para CWB"):
+    with pytest.raises(ValueError, match="contexto_op455_nao_confirmado",):
         OP455Report(client).gerar_e_baixar_ocorrencia_73(
             Path("downloads/teste"), "191026", "191026", unidade="BIG",
         )
-    client.post.assert_not_called()
+    assert [call.args[0] for call in client.post.call_args_list] == [
+        "/bin/menu01",
+        "/bin/ssw0230",
+    ]
 
 
 def executar_preparacao(data, fluxo=None):

@@ -254,7 +254,9 @@ def test_limite_global_entre_cwb_e_big(
         numero = kwargs["numero"]
         return f"HISTORICO_{numero}"
 
-    def listar_ocorrencias_mock(html):
+    def listar_ocorrencias_mock(html, *, estrito=False):
+        assert estrito is True
+
         numero = html.replace("HISTORICO_", "")
 
         codigo = "63" if numero == "100001" else "64"
@@ -483,3 +485,152 @@ def test_ssw_rejeitou_lancamento(ambiente, monkeypatch):
     service.repository.confirmar_lancamento.assert_not_called()
 
     op101.confirmar_ocorrencia_73.return_value = None
+
+def test_xml_truncado_bloqueia_integracao(
+    ambiente,
+    monkeypatch,
+):
+    from operations.op101.ocorrencias import OP101Ocorrencias
+
+    service, op101 = ambiente
+
+    monkeypatch.setattr(
+        service,
+        "preparar_lotes_oc73",
+        lambda **kwargs: preparacao([item("100101")]),
+    )
+
+    configurar_op101(op101)
+
+    op101.abrir_ocorrencias.return_value = (
+        "<r><f0>12/10/26 09:00</f0>"
+        "<f5>63 - Teste</f5></r>"
+        "<r><f0>12/10/26 10:00</f0>"
+        "<f5>77 - Teste</f5>"
+    )
+
+    op101.listar_ocorrencias.side_effect = (
+        OP101Ocorrencias.listar_ocorrencias
+    )
+
+    resultado = service.executar(DATA)
+
+    assert resultado["itens"][0]["status"] == "erro_consulta"
+    assert resultado["total_lancado"] == 0
+
+    op101.listar_ocorrencias.assert_called_once()
+    assert op101.listar_ocorrencias.call_args.kwargs["estrito"] is True
+
+    op101.lancar_ocorrencia_73.assert_not_called()
+    service.repository.reservar_ctrc.assert_not_called()
+
+
+def test_codigo_invalido_bloqueia_integracao(
+    ambiente,
+    monkeypatch,
+):
+    from operations.op101.ocorrencias import OP101Ocorrencias
+
+    service, op101 = ambiente
+
+    monkeypatch.setattr(
+        service,
+        "preparar_lotes_oc73",
+        lambda **kwargs: preparacao([item("100102")]),
+    )
+
+    configurar_op101(op101)
+
+    op101.abrir_ocorrencias.return_value = (
+        "<r><f0>12/10/26 09:00</f0>"
+        "<f5>63 - Teste</f5></r>"
+        "<r><f0>12/10/26 10:00</f0>"
+        "<f5>OC 77 - Teste</f5></r>"
+    )
+
+    op101.listar_ocorrencias.side_effect = (
+        OP101Ocorrencias.listar_ocorrencias
+    )
+
+    resultado = service.executar(DATA)
+
+    assert resultado["itens"][0]["status"] == "erro_consulta"
+    assert resultado["total_lancado"] == 0
+
+    op101.lancar_ocorrencia_73.assert_not_called()
+    service.repository.reservar_ctrc.assert_not_called()
+
+
+def test_ultima_oc_incorreta_bloqueia_integracao(
+    ambiente,
+    monkeypatch,
+):
+    from operations.op101.ocorrencias import OP101Ocorrencias
+
+    service, op101 = ambiente
+
+    monkeypatch.setattr(
+        service,
+        "preparar_lotes_oc73",
+        lambda **kwargs: preparacao([item("100103")]),
+    )
+
+    configurar_op101(op101)
+
+    op101.abrir_ocorrencias.return_value = (
+        "<r><f0>12/10/26 09:00</f0>"
+        "<f5>63 - Teste</f5></r>"
+        "<r><f0>12/10/26 10:00</f0>"
+        "<f5>47 - Teste</f5></r>"
+    )
+
+    op101.listar_ocorrencias.side_effect = (
+        OP101Ocorrencias.listar_ocorrencias
+    )
+
+    resultado = service.executar(DATA)
+
+    assert (
+        resultado["itens"][0]["status"]
+        == "bloqueado_ultima_ocorrencia"
+    )
+
+    assert resultado["total_lancado"] == 0
+    op101.lancar_ocorrencia_73.assert_not_called()
+    service.repository.reservar_ctrc.assert_not_called()
+
+
+def test_historico_valido_permanece_dry_run(
+    ambiente,
+    monkeypatch,
+):
+    from operations.op101.ocorrencias import OP101Ocorrencias
+
+    service, op101 = ambiente
+
+    monkeypatch.setattr(
+        service,
+        "preparar_lotes_oc73",
+        lambda **kwargs: preparacao([item("100104")]),
+    )
+
+    configurar_op101(op101)
+
+    op101.abrir_ocorrencias.return_value = (
+        "<r><f0>12/10/26 09:00</f0>"
+        "<f5>47 - Teste</f5></r>"
+        "<r><f0>12/10/26 10:00</f0>"
+        "<f5>63 - Teste</f5></r>"
+    )
+
+    op101.listar_ocorrencias.side_effect = (
+        OP101Ocorrencias.listar_ocorrencias
+    )
+
+    resultado = service.executar(DATA)
+
+    assert resultado["itens"][0]["status"] == "pendente_lancamento"
+    assert resultado["total_lancado"] == 0
+
+    op101.lancar_ocorrencia_73.assert_not_called()
+    service.repository.reservar_ctrc.assert_not_called()

@@ -34,11 +34,22 @@ from modules.ocorrencia_73.calendario import (
 TIMEZONE = ZoneInfo("America/Sao_Paulo")
 
 def obter_ultima_ocorrencia_op101(historico):
-    """Retorna a ocorrência mais recente, sem depender da ordem da tela."""
+    """
+    Retorna a ocorrencia cronologicamente mais recente.
+
+    Regras de seguranca:
+    - Historico vazio: bloqueia.
+    - Data invalida: bloqueia.
+    - Empate entre codigos diferentes no horario mais recente:
+      bloqueia.
+    - Empate entre codigos iguais: permitido.
+    """
     ocorrencias_validas = []
 
     for ocorrencia in historico:
-        data_texto = str(ocorrencia.data_hora or "").strip()
+        data_texto = str(
+            ocorrencia.data_hora or ""
+        ).strip()
 
         try:
             data_ocorrencia = datetime.strptime(
@@ -46,7 +57,6 @@ def obter_ultima_ocorrencia_op101(historico):
                 "%d/%m/%y %H:%M",
             )
         except ValueError:
-            # Uma data desconhecida impede validar com segurança.
             return None
 
         ocorrencias_validas.append(
@@ -56,10 +66,25 @@ def obter_ultima_ocorrencia_op101(historico):
     if not ocorrencias_validas:
         return None
 
-    return max(
-        ocorrencias_validas,
-        key=lambda item: item[0],
-    )[1]
+    data_mais_recente = max(
+        data for data, _ in ocorrencias_validas
+    )
+
+    ultimas = [
+        ocorrencia
+        for data, ocorrencia in ocorrencias_validas
+        if data == data_mais_recente
+    ]
+
+    codigos = {
+        str(ocorrencia.codigo).strip()
+        for ocorrencia in ultimas
+    }
+
+    if len(codigos) != 1 or not all(codigos):
+        return None
+
+    return ultimas[0]
 
 MAX_LANCAMENTOS = int(
     os.getenv("OCORRENCIA_73_MAX_LANCAMENTOS", "").strip()
@@ -878,10 +903,9 @@ class Ocorrencia73Service:
                         )
                     )
 
-                    historico = (
-                        op101.listar_ocorrencias(
-                            html_ocorrencias
-                        )
+                    historico = op101.listar_ocorrencias(
+                        html_ocorrencias,
+                        estrito=True,
                     )
 
                     ocorrencia_73 = (

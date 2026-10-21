@@ -23,6 +23,8 @@ ALIASES_COLUNAS = {
     },
     CIDADE_COLUNA: {
         "CIDADE DE ENTREGA",
+        "CIDADE DO DESTINATARIO",
+        "CIDADE DO DESTINATÁRIO",
     },
     UNIDADE_COLUNA: {
         "UNIDADE EMISSORA",
@@ -142,14 +144,9 @@ def localizar_cabecalho(
         encontrou_todas = True
 
         for nome_esperado in obrigatorias:
-            aliases = aliases_normalizados(
-                nome_esperado
-            )
+            aliases = aliases_normalizados(nome_esperado)
 
-            if not (
-                aliases
-                & colunas_normalizadas
-            ):
+            if not (aliases & colunas_normalizadas):
                 encontrou_todas = False
                 break
 
@@ -249,11 +246,16 @@ def carregar_relatorio(
         linhas
     )
 
-    # Formato SSWWEB: primeira coluna identifica o tipo de linha.
-    if extensao == ".sswweb":
-        if linhas[indice_cabecalho][0].strip() != "1":
-            raise ValueError("Marcador de cabeçalho OP455 inválido.")
+    # Dois layouts reconhecidos:
+    # - Marcado: cabeçalho 1, registros 2 e controle final 9.
+    # - Tabular: cabeçalho e registros diretamente nas colunas.
+    formato_marcado = (
+        extensao == ".sswweb"
+        and linhas[indice_cabecalho]
+        and linhas[indice_cabecalho][0].strip() == "1"
+    )
 
+    if formato_marcado:
         linhas[indice_cabecalho] = linhas[indice_cabecalho][1:]
 
         for indice in range(indice_cabecalho + 1, len(linhas)):
@@ -289,8 +291,16 @@ def carregar_relatorio(
         CLIENTE_COLUNA, CIDADE_COLUNA, UNIDADE_COLUNA,
         UNIDADE_RECEPTORA_COLUNA, CTRC_COLUNA, OCORRENCIA_COLUNA,
     ):
-        if sum(coluna in aliases_normalizados(nome_esperado) for coluna in normalizados) != 1:
-            raise ValueError("Cabeçalho OP455 obrigatório ausente ou ambíguo.")
+        correspondencias =[
+            coluna
+            for coluna in normalizados
+            if coluna in aliases_normalizados(nome_esperado)
+        ]
+
+        if nome_esperado == CIDADE_COLUNA:
+            cidades_validas = {
+                "CIDADE DE ENTREGA",
+            }
 
     registros = []
 
@@ -333,22 +343,28 @@ def encontrar_coluna(
     registro: dict,
     nome_esperado: str,
 ) -> str:
-    aliases = aliases_normalizados(
-        nome_esperado
-    )
 
-    for coluna in registro:
-        coluna_normalizada = (
-            normalizar_sem_acento(
-                coluna
-            )
-        )
+    aliases = aliases_normalizados(nome_esperado)
 
-        if coluna_normalizada in aliases:
-            return coluna
+    colunas_encontradas = {
+        normalizar_sem_acento(coluna): coluna
+        for coluna in registro
+        if normalizar_sem_acento(coluna) in aliases
+    }
+
+    if nome_esperado == CIDADE_COLUNA:
+        # Prioridade para a cidade efetiva de entrega.
+        if "CIDADE DE ENTREGA" in colunas_encontradas:
+            return colunas_encontradas["CIDADE DE ENTREGA"]
+
+        if "CIDADE DO DESTINATARIO" in colunas_encontradas:
+            return colunas_encontradas["CIDADE DO DESTINATARIO"]
+
+    if len(colunas_encontradas) == 1:
+        return next(iter(colunas_encontradas.values()))
 
     raise KeyError(
-        "Coluna obrigatória não encontrada no relatório OP455."
+        "Coluna obrigatória não encontrada ou ambígua no relatório OP455."
     )
 
 def normalizar_codigo_ocorrencia(

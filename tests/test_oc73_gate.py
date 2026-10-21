@@ -1,5 +1,8 @@
 from datetime import date
 from unittest.mock import MagicMock
+
+import pytest
+
 from modules.ocorrencia_73.gate import PortaoOC73
 from tests.test_oc73_bloqueio_persistencia import REFERENCIA_TESTE
 
@@ -118,3 +121,53 @@ def test_sem_referencia_persistida_nunca_envia():
     enviar.assert_not_called()
     confirmar.assert_not_called()
     r.iniciar_envio.assert_not_called()
+
+def test_falha_ao_persistir_incerto_exige_intervencao_manual():
+    r = repo()
+    r.marcar_incerto.side_effect = RuntimeError(
+        "MySQL indisponivel"
+    )
+
+    enviar = MagicMock(side_effect=TimeoutError("Timeout POST"))
+    confirmar = MagicMock()
+
+    with pytest.raises(
+        RuntimeError,
+        match="intervenção manual necessária",
+    ):
+        PortaoOC73(r).processar(
+            **args(),
+            enviar=enviar,
+            confirmar=confirmar,
+        )
+
+    enviar.assert_called_once()
+    confirmar.assert_not_called()
+    r.marcar_incerto.assert_called_once()
+    r.confirmar_lancamento.assert_not_called()
+
+
+def test_falha_ao_confirmar_persistencia_nao_reenvia():
+    r = repo()
+    r.confirmar_lancamento.side_effect = RuntimeError(
+        "Falha ao persistir confirmacao"
+    )
+
+    enviar = MagicMock()
+
+    def confirmar(referencia):
+        return {
+            "codigo": "73",
+            "complemento": f"BOT OC73 | REF:{referencia}",
+        }
+
+    resultado = PortaoOC73(r).processar(
+        **args(),
+        enviar=enviar,
+        confirmar=confirmar,
+    )
+
+    assert resultado.status == "incerto"
+    enviar.assert_called_once_with(REFERENCIA_TESTE)
+    r.confirmar_lancamento.assert_called_once()
+    r.marcar_incerto.assert_called_once()

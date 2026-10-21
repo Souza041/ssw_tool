@@ -542,6 +542,8 @@ class OP101Ocorrencias:
     def listar_ocorrencias(
         cls,
         html: str,
+        *,
+        estrito: bool = False,
     ) -> list[OcorrenciaHistorico]:
         """
         Converte as linhas XML da tela de ocorrências em objetos.
@@ -559,6 +561,25 @@ class OP101Ocorrencias:
         html = unescape(
             str(html or "")
         )
+
+        if estrito:
+            aberturas = re.findall(
+                r"<r(?:\s[^>]*)?>",
+                html,
+                flags=re.IGNORECASE,
+            )
+
+            fechamentos = re.findall(
+                r"</r\s*>",
+                html,
+                flags=re.IGNORECASE,
+            )
+
+            if len(aberturas) != len(fechamentos):
+                raise ValueError(
+                    "Historico OP101 incompleto: "
+                    "quantidade de aberturas e fechamentos XML divergente."
+                )
 
         registros_xml = re.findall(
             r"<r>(.*?)</r>",
@@ -594,6 +615,12 @@ class OP101Ocorrencias:
             )
 
             if not match_codigo:
+                if estrito:
+                    raise ValueError(
+                        "Historico OP101 contem registro sem "
+                        "codigo de ocorrencia valido."
+                    )
+
                 continue
 
             codigo = match_codigo.group(1).strip()
@@ -620,6 +647,12 @@ class OP101Ocorrencias:
                     complemento=campos["f6"],
                     ocorrencia_ssw=campos["f10"],
                 )
+            )
+
+        # Fora do for: valida o resultado completo.
+        if estrito and not ocorrencias:
+            raise ValueError(
+                "Historico OP101 vazio ou sem ocorrencias interpretaveis."
             )
 
         return ocorrencias
