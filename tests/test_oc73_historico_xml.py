@@ -82,7 +82,7 @@ def test_linha_sem_f5_bloqueada():
         match="registro sem codigo",
     ):
         interpretar(xml)
-        
+
 def test_campo_f5_truncado_nao_pode_autorizar():
     xml = (
         linha("20/10/26 09:00", "63 - Teste")

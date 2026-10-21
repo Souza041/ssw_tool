@@ -2,6 +2,8 @@ import csv
 import re
 import unicodedata
 
+import os
+
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -393,6 +395,7 @@ def filtrar_registros(
     rotas_permitidas: dict[str, set[str]] | None = None,
     *,
     fluxo: str,
+    regra_big_experimental: bool = False,
 ) -> list[dict]:
 
     fluxo = normalizar_texto(fluxo)
@@ -425,7 +428,17 @@ def filtrar_registros(
         )
     else:
         coluna_uf = encontrar_coluna(
-            exemplo, UF_REMETENTE_COLUNA
+            exemplo,
+            UF_REMETENTE_COLUNA,
+        )
+
+        coluna_receptora = (
+            encontrar_coluna(
+                exemplo,
+                UNIDADE_RECEPTORA_COLUNA,
+            )
+            if regra_big_experimental
+            else None
         )
 
     emissoras_permitidas = {
@@ -469,10 +482,20 @@ def filtrar_registros(
                 registro.get(coluna_uf)
             )
 
-            elegivel = (
-                uf_remetente == "SC"
-                and ocorrencia == "64"
-            )
+            if regra_big_experimental:
+                receptora = normalizar_sem_acento(
+                    registro.get(coluna_receptora)
+                )
+
+                elegivel = (
+                    receptora == "BIG"
+                    and ocorrencia == "64"
+                )
+            else:
+                elegivel = (
+                    uf_remetente == "SC"
+                    and ocorrencia == "64"
+                )
 
         if not elegivel:
             continue

@@ -6,6 +6,8 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 from html import unescape
 
+import unicodedata
+
 from modules.ocorrencia_73.referencia import (
     referencia_valida,
     ocorrencia_confirma_referencia,
@@ -582,10 +584,16 @@ class OP101Ocorrencias:
                 )
 
         registros_xml = re.findall(
-            r"<r>(.*?)</r>",
+            r"<r(?:\s[^>]*)?>(.*?)</r\s*>",
             html,
             flags=re.IGNORECASE | re.DOTALL,
         )
+
+        if estrito and len(registros_xml) != len(aberturas):
+            raise ValueError(
+                "Historico OP101 incompleto: "
+                "nem todos os registros XML foram interpretados."
+            )
 
         ocorrencias = []
 
@@ -616,9 +624,38 @@ class OP101Ocorrencias:
 
             if not match_codigo:
                 if estrito:
+                    texto_complementar = "".join(
+                        caractere
+                        for caractere in unicodedata.normalize(
+                            "NFKD",
+                            campos["f6"],
+                        )
+                        if not unicodedata.combining(caractere)
+                    ).upper().strip()
+
+                    eventos_informativos = (
+                        "CTRC APONTADO PARA MANIFESTO NA UNIDADE",
+                        "GERADO COM DADOS IMPORTADOS ATRAVES DA OPCAO",
+                    )
+
+                    evento_conhecido = any(
+                        texto_complementar.startswith(prefixo)
+                        for prefixo in eventos_informativos
+                    )
+
+                    linha_informativa = (
+                        not campo_ocorrencia
+                        and not campos["f10"]
+                        and campos["f3"] == campos["f0"]
+                        and evento_conhecido
+                    )
+
+                    if linha_informativa:
+                        continue
+
                     raise ValueError(
-                        "Historico OP101 contem registro sem "
-                        "codigo de ocorrencia valido."
+                        "Historico OP101 contem registro sem codigo "
+                        "de ocorrencia valido ou formato nao reconhecido."
                     )
 
                 continue
