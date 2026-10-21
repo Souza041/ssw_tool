@@ -9,12 +9,13 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 CLIENTE_COLUNA = "Cliente Pagador"
-CIDADE_COLUNA = "Cidade de Entrega"
+CIDADE_COLUNA = "Cidade do Destinatário"
 UNIDADE_COLUNA = "Unidade Emissora"
 CTRC_COLUNA = "Serie/Numero CTRC"
 OCORRENCIA_COLUNA = "Codigo Ultima Ocorrencia"
 UNIDADE_RECEPTORA_COLUNA = "Unidade Receptora"
 UF_REMETENTE_COLUNA = "UF do Remetente"
+UF_EXPEDIDOR_COLUNA = "UF do Expedidor"
 
 ALIASES_COLUNAS = {
     CLIENTE_COLUNA: {
@@ -24,7 +25,6 @@ ALIASES_COLUNAS = {
         "NOME PAGADOR",
     },
     CIDADE_COLUNA: {
-        "CIDADE DE ENTREGA",
         "CIDADE DO DESTINATARIO",
         "CIDADE DO DESTINATÁRIO",
     },
@@ -55,6 +55,10 @@ ALIASES_COLUNAS = {
     UF_REMETENTE_COLUNA: {
         "UF DO REMETENTE",
         "UF REMETENTE",
+    },
+    UF_EXPEDIDOR_COLUNA: {
+        "UF DO EXPEDIDOR",
+        "UF EXPEDIDOR",
     },
 }
 
@@ -354,14 +358,6 @@ def encontrar_coluna(
         if normalizar_sem_acento(coluna) in aliases
     }
 
-    if nome_esperado == CIDADE_COLUNA:
-        # Prioridade para a cidade efetiva de entrega.
-        if "CIDADE DE ENTREGA" in colunas_encontradas:
-            return colunas_encontradas["CIDADE DE ENTREGA"]
-
-        if "CIDADE DO DESTINATARIO" in colunas_encontradas:
-            return colunas_encontradas["CIDADE DO DESTINATARIO"]
-
     if len(colunas_encontradas) == 1:
         return next(iter(colunas_encontradas.values()))
 
@@ -400,6 +396,12 @@ def filtrar_registros(
 
     fluxo = normalizar_texto(fluxo)
 
+    if regra_big_experimental:
+        raise ValueError(
+            "Regra BIG experimental desativada. "
+            "A regra autorizada exige UF do Expedidor = SC e OC64."
+        )
+
     if fluxo not in {"CWB", "BIG"}:
         raise ValueError(
             f"Fluxo inválido para OC73: {fluxo}"
@@ -429,16 +431,7 @@ def filtrar_registros(
     else:
         coluna_uf = encontrar_coluna(
             exemplo,
-            UF_REMETENTE_COLUNA,
-        )
-
-        coluna_receptora = (
-            encontrar_coluna(
-                exemplo,
-                UNIDADE_RECEPTORA_COLUNA,
-            )
-            if regra_big_experimental
-            else None
+            UF_EXPEDIDOR_COLUNA,
         )
 
     emissoras_permitidas = {
@@ -478,24 +471,14 @@ def filtrar_registros(
             )
 
         else:
-            uf_remetente = normalizar_sem_acento(
+            uf_expedidor = normalizar_sem_acento(
                 registro.get(coluna_uf)
             )
 
-            if regra_big_experimental:
-                receptora = normalizar_sem_acento(
-                    registro.get(coluna_receptora)
-                )
-
-                elegivel = (
-                    receptora == "BIG"
-                    and ocorrencia == "64"
-                )
-            else:
-                elegivel = (
-                    uf_remetente == "SC"
-                    and ocorrencia == "64"
-                )
+            elegivel = (
+                uf_expedidor == "SC"
+                and ocorrencia == "64"
+            )
 
         if not elegivel:
             continue
@@ -541,6 +524,9 @@ def filtrar_registros(
             ),
             "uf_remetente": obter_opcional(
                 UF_REMETENTE_COLUNA
+            ),
+            "uf_expedidor": obter_opcional(
+                UF_EXPEDIDOR_COLUNA
             ),
             "ultima_ocorrencia": ocorrencia,
             "regra_filtro": (

@@ -817,6 +817,12 @@ class OP455Report:
 
             return arquivo
 
+        print(
+            f"[OP455][{unidade}] Aguardando novo relatório na OP156; "
+            f"timeout da fila={timeout_seconds}s.",
+            flush=True,
+        )
+        
         # Se foi para a OP156, aceita SOMENTE um ID novo,
         # criado depois da solicitação acima.
         arquivo = fila.baixar_por_opcao(
@@ -874,7 +880,7 @@ class OP455Report:
             },
             retries=1,
         )
-        
+
     def _abrir_op455_oc73_cwb(self, unidade: str = "CWB"):
         """Compatibilidade com o pré-voo e os testes de CWB."""
         unidade = str(unidade or "").strip().upper()
@@ -1059,6 +1065,11 @@ class OP455Report:
             opcao=opcao,
             unidade=unidade,
             estrito=True,
+        )
+
+        print(
+            f"[OP455][{unidade}] Iniciando POST de geração.",
+            flush=True,
         )
 
         # Gerador exclusivo da OC73.

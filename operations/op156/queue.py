@@ -274,8 +274,24 @@ class OP156Queue:
             raise ValueError("Snapshot OP156 contém sequência inválida.")
         maior_anterior = max((int(item) for item in ignorar_ids), default=-1)
         deadline = time.monotonic() + timeout_seconds
+        tentativa = 0
+
         while True:
+            tentativa += 1
+
+            print(
+                f"[OP156][{unidade}] Consulta {tentativa}: "
+                "iniciando requisicao.",
+                flush=True,
+            )
+
             html = self.abrir_fila(retries=1)
+
+            print(
+                f"[OP156][{unidade}] Consulta {tentativa}: "
+                "resposta recebida.",
+                flush=True,
+            )
             try:
                 jobs = self.extrair_jobs(
                     html, opcao, unidade, estrito=True, filtrar_usuario=True,
@@ -286,6 +302,15 @@ class OP156Queue:
                 ) else "lista_op156_ambigua")
                 raise
             candidatos = [job for job in jobs if job["sequencia"] not in ignorar_ids]
+
+            print(
+                f"[OP156][{unidade}] "
+                f"Registros filtrados={len(jobs)}; "
+                f"novos candidatos={len(candidatos)}; "
+                f"tempo restante={max(0, deadline - time.monotonic()):.1f}s.",
+                flush=True,
+            )
+            
             if any(int(job["sequencia"]) <= maior_anterior for job in candidatos):
                 _registrar_rejeicao_op156(
                     "sequencia_anterior_ausente", candidatos=len(candidatos),

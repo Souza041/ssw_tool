@@ -1,3 +1,4 @@
+
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -61,27 +62,27 @@ def calcular_janelas_oc73(
 
     if fluxo is not None:
         fluxo = str(fluxo).strip().upper()
+
         if fluxo not in AGENDAMENTO_POR_FLUXO:
-            raise ValueError(f"Fluxo OC73 inválido: {fluxo!r}")
+            raise ValueError(
+                f"Fluxo OC73 inválido: {fluxo!r}"
+            )
 
     dia_semana = data_referencia.weekday()
     janelas = []
 
-    # Sábado: nenhuma execução.
-    if dia_semana == 5:
-        return janelas
-
-    # Domingo: inclui sábado e domingo.
-    inicio_cwb = (
-        data_referencia - timedelta(days=1)
-        if dia_semana == 6
-        else data_referencia
-    )
-
+    # CWB: domingo a sexta; sábado não executa.
+    # Domingo consulta sábado + domingo.
     if (
         fluxo in {None, "CWB"}
         and dia_semana in AGENDAMENTO_POR_FLUXO["CWB"].dias_semana
     ):
+        inicio_cwb = (
+            data_referencia - timedelta(days=1)
+            if dia_semana == 6
+            else data_referencia
+        )
+
         janelas.append(
             JanelaOC73(
                 fluxo="CWB",
@@ -90,7 +91,7 @@ def calcular_janelas_oc73(
             )
         )
 
-    # BIG: segunda a quinta.
+    # BIG: somente segunda a quinta.
     if (
         fluxo in {None, "BIG"}
         and dia_semana in AGENDAMENTO_POR_FLUXO["BIG"].dias_semana

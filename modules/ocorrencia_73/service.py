@@ -6,6 +6,8 @@ from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from uuid import uuid4
+
 from modules.ocorrencia_73.config import (
     CLIENTES_PERMITIDOS,
     DRY_RUN,
@@ -209,9 +211,11 @@ class Ocorrencia73Service:
         self,
         data_referencia: date,
     ) -> dict[str, Path]:
+
         diretorio_base = (
             self.base_output_dir
             / data_referencia.isoformat()
+            / uuid4().hex
         )
 
         diretorio_original = (
@@ -498,6 +502,7 @@ class Ocorrencia73Service:
             "regra_filtro",
             "fluxo",
             "uf_remetente",
+            "uf_expedidor",
         ]
 
         with csv_saida.open(
@@ -544,19 +549,17 @@ class Ocorrencia73Service:
         total_registros = 0
 
         for janela in janelas:
-            fluxo = janela.fluxo
+            fluxo_atual = janela.fluxo
 
             print(
-                f"[OC73] Preparando {fluxo}: "
+                f"[OC73] Preparando {fluxo_atual}: "
                 f"{janela.data_inicial_ssw} até "
                 f"{janela.data_final_ssw}"
             )
 
             # Cada fluxo recebe seu próprio diretório.
             # Isso evita colisão entre arquivos baixados.
-            diretorio_fluxo = (
-                diretorio_original / fluxo.lower()
-            )
+            diretorio_fluxo = diretorio_original / fluxo_atual.lower()
 
             diretorio_fluxo.mkdir(
                 parents=True,
@@ -568,7 +571,7 @@ class Ocorrencia73Service:
                     output_dir=diretorio_fluxo,
                     data_inicial=janela.data_inicial_ssw,
                     data_final=janela.data_final_ssw,
-                    unidade=fluxo,
+                    unidade=fluxo_atual,
                     timeout_seconds=300,
                 )
             )
@@ -577,7 +580,7 @@ class Ocorrencia73Service:
 
             filtrados = filtrar_registros(
                 registros=registros,
-                fluxo=fluxo,
+                fluxo=fluxo_atual,
             )
 
             total_registros += len(registros)
@@ -600,7 +603,7 @@ class Ocorrencia73Service:
                     }
 
             lotes.append({
-                "fluxo": fluxo,
+                "fluxo": fluxo_atual,
                 "data_inicial": (
                     janela.data_inicial.isoformat()
                 ),
@@ -613,7 +616,7 @@ class Ocorrencia73Service:
             })
 
             print(
-                f"[OC73] {fluxo}: "
+                f"[OC73] {fluxo_atual}: "
                 f"{len(registros)} registros, "
                 f"{len(filtrados)} elegíveis."
             )
