@@ -1,0 +1,2 @@
+# Complemento às dependências já instaladas do sistema, para Windows.
+tzdata>=2024.1

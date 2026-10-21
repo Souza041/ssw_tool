@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="topbar"><h1>Documentos LG</h1><p>Acompanhe os relatórios e baixe os arquivos concluídos.</p></div>
+<div class="card" style="max-width:1000px"><h3 id="titulo">Executando extração</h3><p id="progresso" aria-live="polite">Aguardando atualização…</p><progress id="barra" max="3" value="0" style="width:100%;height:16px"></progress><pre id="logs" style="background:#0f172a;color:#dbeafe;padding:20px;border-radius:12px;white-space:pre-wrap;max-height:420px;overflow:auto;font-size:13px;line-height:1.8"></pre><p id="erro" role="alert" style="color:#b91c1c"></p><div id="files"></div><a class="back" href="/documentos-lg">← Voltar para Documentos LG</a></div>
+<script>
+const url='/documentos-lg/jobs/'+{{ job_id | tojson }}+'/estado';
+let failures=0;
+async function update(){try{const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error(r.status===401?'Sessão expirada. Entre novamente para acompanhar.':'Não foi possível consultar esta execução.');const d=await r.json();failures=0;document.getElementById('progresso').textContent=d.progress+' de '+d.total+' etapas concluídas';const barra=document.getElementById('barra');barra.max=d.total||1;barra.value=d.progress;document.getElementById('logs').textContent=d.logs.join('\n');document.getElementById('erro').textContent=d.error||'';document.getElementById('titulo').textContent=d.status==='done'?'Extração concluída':d.status==='error'?'Extração interrompida':'Executando extração';const files=document.getElementById('files');files.replaceChildren();for(const f of d.files){const box=document.createElement('div');box.className='success';const label=document.createElement('p');label.textContent=f.periodo;const a=document.createElement('a');a.textContent='Baixar '+f.name;a.href=f.url;a.download='';box.append(label,a);files.append(box);}if(d.status==='running')setTimeout(update,1500);}catch(e){document.getElementById('erro').textContent=e.message;if(++failures<5)setTimeout(update,3000);}}
+update();
+</script>
+{% endblock %}

@@ -112,3 +112,7 @@ def startup_event():
         "[STARTUP] Schedulers inicializados",
         flush=True,
     )
+
+# Rotina documental LG
+from web.documentos_lg import router as documentos_lg_router
+app.include_router(documentos_lg_router)
