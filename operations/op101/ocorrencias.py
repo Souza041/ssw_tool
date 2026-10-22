@@ -638,9 +638,22 @@ class OP101Ocorrencias:
                         "GERADO COM DADOS IMPORTADOS ATRAVES DA OPCAO",
                     )
 
-                    evento_conhecido = any(
-                        texto_complementar.startswith(prefixo)
-                        for prefixo in eventos_informativos
+                    evento_rastreamento_sacflow = (
+                        campos["f12"].casefold() == "sacflow"
+                        and re.fullmatch(
+                            r"RASTREAMENTOS \d{2}:\d{2} - \d{2}:\d{2}:\s*"
+                            r"SACFLOW \(WHATSAPP\): .+\s+"
+                            r"TOTAL: \d+ RASTREAMENTO\(S\)",
+                            texto_complementar,
+                        ) is not None
+                    )
+
+                    evento_conhecido = (
+                        any(
+                            texto_complementar.startswith(prefixo)
+                            for prefixo in eventos_informativos
+                        )
+                        or evento_rastreamento_sacflow
                     )
 
                     linha_informativa = (
@@ -906,6 +919,7 @@ class OP101Ocorrencias:
                 "FAMILIA": familia,
                 "dummy": self._dummy(),
             },
+            retries=1,
         )
 
         texto = str(
@@ -967,7 +981,8 @@ class OP101Ocorrencias:
         )
 
         historico = self.listar_ocorrencias(
-            html
+            html,
+            estrito=True,
         )
 
         if not referencia_valida(referencia):
