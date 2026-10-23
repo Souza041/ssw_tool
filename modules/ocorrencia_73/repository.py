@@ -466,3 +466,136 @@ class Ocorrencia73Repository:
                     raise RuntimeError(
                         "Tentativa não está em envio_iniciado."
                     )
+
+    @contextmanager
+    def trava_rechecagem_big(self, execucao_id):
+        """Serializa execução original e rechecagens do mesmo pai no MySQL.
+
+        A conexão dedicada fica aberta durante a seção crítica; GET_LOCK é
+        liberado automaticamente se o processo cair. O callable permite
+        conferir a posse imediatamente antes de um envio.
+        """
+        nome = f"ssw_tool:oc73:big:exec:{int(execucao_id)}"
+        conexao = self.connection_factory()
+        adquirida = False
+        try:
+            with conexao.cursor() as cursor:
+                cursor.execute("SELECT GET_LOCK(%s, 0) AS ok", (nome,))
+                adquirida = (cursor.fetchone() or {}).get("ok") == 1
+
+            def possui_trava():
+                if not adquirida:
+                    return False
+                with conexao.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT IS_USED_LOCK(%s) = CONNECTION_ID() AS ok", (nome,),
+                    )
+                    return (cursor.fetchone() or {}).get("ok") == 1
+
+            yield possui_trava
+        finally:
+            if adquirida:
+                try:
+                    with conexao.cursor() as cursor:
+                        cursor.execute("SELECT RELEASE_LOCK(%s)", (nome,))
+                except Exception:
+                    pass
+            conexao.close()
+
+    def registrar_rechecagem_big(
+        self, *, execucao_id, data_referencia, item, limite_envios,
+        proxima_consulta_em, limite_em,
+    ):
+        import json
+        if int(limite_envios) <= 0:
+            raise ValueError("Limite de envios deve ser positivo.")
+        with self.transacao() as conexao:
+            with conexao.cursor() as cursor:
+                # Repetir a captura não reabre estados terminais nem amplia prazo.
+                cursor.execute(
+                    """INSERT INTO oc73_rechecagens_big (
+                        execucao_id, data_referencia, serie, numero, item_json,
+                        limite_envios, proxima_consulta_em, limite_em,
+                        criado_em, atualizado_em
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)""",
+                    (execucao_id, data_referencia, item["serie"], item["numero"],
+                     json.dumps(item, ensure_ascii=False), limite_envios,
+                     proxima_consulta_em, limite_em, self.agora(), self.agora()),
+                )
+                return cursor.lastrowid
+
+    def listar_rechecagens_big(self, agora):
+        with self.transacao() as conexao:
+            with conexao.cursor() as cursor:
+                cursor.execute(
+                    """SELECT * FROM oc73_rechecagens_big
+                    WHERE status = 'aguardando' AND proxima_consulta_em <= %s
+                    ORDER BY proxima_consulta_em, id LIMIT 100""", (agora,),
+                )
+                return cursor.fetchall()
+
+    def buscar_rechecagem_big(self, identificador):
+        with self.transacao() as conexao:
+            with conexao.cursor() as cursor:
+                cursor.execute(
+                    "SELECT * FROM oc73_rechecagens_big WHERE id = %s", (identificador,),
+                )
+                return cursor.fetchone()
+
+    def atualizar_rechecagem_big(
+        self, identificador, *, status, codigo=None, detalhe="", proxima=None,
+        tentativa_id=None, consultou=False,
+    ):
+        with self.transacao() as conexao:
+            with conexao.cursor() as cursor:
+                cursor.execute(
+                    """UPDATE oc73_rechecagens_big SET status=%s, ultimo_codigo=%s,
+                    detalhe=%s, proxima_consulta_em=COALESCE(%s,proxima_consulta_em),
+                    tentativa_id=COALESCE(%s,tentativa_id),
+                    consultas=consultas+%s,
+                    ultima_consulta_em=IF(%s, %s, ultima_consulta_em), atualizado_em=%s
+                    WHERE id=%s AND status='aguardando'""",
+                    (status, codigo, detalhe[:2000], proxima, tentativa_id,
+                     int(consultou), int(consultou), self.agora(), self.agora(), identificador),
+                )
+                if cursor.rowcount != 1:
+                    raise RuntimeError("Pendência não está aguardando; atualização abortada.")
+
+    def contar_tentativas_rechecagem_big(self, execucao_id):
+        with self.transacao() as conexao:
+            with conexao.cursor() as cursor:
+                cursor.execute(
+                    """SELECT COUNT(*) AS total FROM oc73_tentativas
+                    WHERE execucao_id=%s OR execucao_id IN (
+                        SELECT execucao_envio_id FROM oc73_rechecagens_big
+                        WHERE execucao_id=%s AND execucao_envio_id IS NOT NULL
+                    )""", (execucao_id, execucao_id),
+                )
+                return int(cursor.fetchone()["total"])
+
+    def iniciar_envio_rechecagem_big(self, pendencia):
+        # Execução filha e vínculo são persistidos na MESMA transação antes do envio.
+        with self.transacao() as conexao:
+            with conexao.cursor() as cursor:
+                cursor.execute(
+                    """SELECT execucao_envio_id FROM oc73_rechecagens_big
+                    WHERE id=%s AND status='aguardando' FOR UPDATE""", (pendencia["id"],),
+                )
+                registro = cursor.fetchone()
+                if registro is None:
+                    raise RuntimeError("Pendência não está aguardando.")
+                if registro["execucao_envio_id"] is not None:
+                    return registro["execucao_envio_id"]
+                cursor.execute(
+                    """INSERT INTO oc73_execucoes (
+                        data_referencia, triggered_by, status, dry_run, iniciado_em
+                    ) VALUES (%s,'rechecagem:BIG','executando',0,%s)""",
+                    (pendencia["data_referencia"], self.agora()),
+                )
+                identificador = cursor.lastrowid
+                cursor.execute(
+                    "UPDATE oc73_rechecagens_big SET execucao_envio_id=%s WHERE id=%s",
+                    (identificador, pendencia["id"]),
+                )
+                return identificador

@@ -392,6 +392,7 @@ def filtrar_registros(
     *,
     fluxo: str,
     regra_big_experimental: bool = False,
+    incluir_espera_big: bool = False,
 ) -> list[dict]:
 
     fluxo = normalizar_texto(fluxo)
@@ -477,7 +478,7 @@ def filtrar_registros(
 
             elegivel = (
                 uf_expedidor == "SC"
-                and ocorrencia == "64"
+                and (ocorrencia == "64" or (incluir_espera_big and ocorrencia == "77"))
             )
 
         if not elegivel:
@@ -532,7 +533,7 @@ def filtrar_registros(
             "regra_filtro": (
                 "cwb_oc63"
                 if fluxo == "CWB"
-                else "big_sc_oc64"
+                else ("big_sc_aguardando_oc64" if ocorrencia == "77" else "big_sc_oc64")
             ),
             "fluxo": fluxo,
         })

@@ -13,6 +13,7 @@ from modules.ocorrencia_73.calendario import (
     calcular_janelas_oc73,
 )
 from modules.ocorrencia_73.config import DRY_RUN
+from modules.ocorrencia_73.rechecagem_politica import rechecagem_big_habilitada
 from modules.ocorrencia_73.repository import Ocorrencia73Repository
 from modules.ocorrencia_73.service import Ocorrencia73Service
 
@@ -130,6 +131,24 @@ def executar_ocorrencia_73_agendada(
         return None
 
 
+def executar_rechecagens_big():
+    # A data é da pendência persistida; sexta 00h20 pode continuar a quinta.
+    if not rechecagem_big_habilitada() or DRY_RUN:
+        return []
+    from modules.ocorrencia_73.service import OC73_ENVIO_HABILITADO, MAX_LANCAMENTOS, CTRC_TESTE
+    if not OC73_ENVIO_HABILITADO:
+        return []
+    from modules.ocorrencia_73.rechecagem_big import RechecagemBIG
+    try:
+        return RechecagemBIG(Ocorrencia73Repository()).executar_pendentes(
+            dry_run=DRY_RUN, envio_habilitado=OC73_ENVIO_HABILITADO,
+            max_lancamentos=MAX_LANCAMENTOS, ctrc_teste=CTRC_TESTE,
+        )
+    except Exception:
+        logger.exception("[OC73] Falha na rodada de rechecagem BIG.")
+        return []
+
+
 def iniciar_scheduler_ocorrencia_73() -> bool:
     if not env_bool("OCORRENCIA_73_ENABLED", False):
         logger.warning(
@@ -178,9 +197,20 @@ def iniciar_scheduler_ocorrencia_73() -> bool:
                 MISFIRE_GRACE_TIME,
             )
 
+        if rechecagem_big_habilitada():
+            _scheduler.add_job(
+                executar_rechecagens_big,
+                trigger=CronTrigger(second=0, timezone=TIMEZONE),
+                id="ocorrencia_73_rechecagem_big",
+                name="OC73 BIG: retomar consultas persistidas",
+                replace_existing=True, max_instances=1, coalesce=True,
+                misfire_grace_time=MISFIRE_GRACE_TIME,
+                next_run_time=datetime.now(TIMEZONE),
+            )
+
         _scheduler.start()
         logger.info(
-            "[OCORRENCIA 73] Scheduler recorrente iniciado com %s jobs.",
-            len(AGENDAMENTOS_OC73),
+            "[OCORRENCIA 73] Scheduler iniciado: %s jobs principais; rechecagem BIG=%s.",
+            len(AGENDAMENTOS_OC73), rechecagem_big_habilitada(),
         )
         return True
