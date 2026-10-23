@@ -1,6 +1,9 @@
 import csv
 import os
 import json
+from contextlib import nullcontext
+
+from modules.ocorrencia_73.rechecagem_politica import rechecagem_big_habilitada
 
 from datetime import date, datetime
 from pathlib import Path
@@ -116,6 +119,7 @@ OC73_ENVIO_HABILITADO = (
 OC73_STATUS_INCERTO = frozenset({"incerto"})
 OC73_STATUS_BLOQUEADO = frozenset({
     "bloqueado_reserva_existente", "bloqueado_transicao", "bloqueado_seguranca", "bloqueado_ultima_ocorrencia",
+    "rechecagem_fora_janela", "rechecagem_expirada",
 })
 OC73_STATUS_ERRO_TECNICO = frozenset({
     "erro_consulta", "erro_persistencia", "erro_lancamento",
@@ -126,6 +130,7 @@ def calcular_indicadores_oc73(itens: list[dict]) -> dict[str, int]:
     """Classifica estados sem confundir tentativa incerta com lançamento."""
     estados = [item.get("status") for item in itens]
     return {
+        "total_aguardando_oc64": sum(x in {"aguardando_oc64", "aguardando_oc64_simulacao"} for x in estados),
         "total_incerto": sum(x in OC73_STATUS_INCERTO for x in estados),
         "total_bloqueado": sum(x in OC73_STATUS_BLOQUEADO for x in estados),
         "total_erro_tecnico": sum(x in OC73_STATUS_ERRO_TECNICO for x in estados),
@@ -578,9 +583,13 @@ class Ocorrencia73Service:
 
             registros = carregar_relatorio(arquivo)
 
+            argumentos_filtro = {}
+            if fluxo_atual == "BIG" and rechecagem_big_habilitada():
+                argumentos_filtro["incluir_espera_big"] = True
             filtrados = filtrar_registros(
                 registros=registros,
                 fluxo=fluxo_atual,
+                **argumentos_filtro,
             )
 
             total_registros += len(registros)
@@ -669,35 +678,55 @@ class Ocorrencia73Service:
                 dry_run=False,
             )
 
-        try:
-            resultado = self._executar_interno(
-                data_referencia,
-                triggered_by,
-                execucao_id,
-                fluxo,
-            )
-        except BaseException as exc:
-            repo.finalizar_execucao(
-                execucao_id=execucao_id, status="erro",
-                mensagem_erro=f"{type(exc).__name__}: {exc}"[:2000],
-            )
-            raise
-        indicadores = calcular_indicadores_oc73(resultado.get("itens", []))
-        resultado.update(indicadores)
-        pendencias = sum(indicadores.values())
-        # Compatibilidade: total_erros inclui falhas técnicas e estados incertos,
-        # mas não bloqueios deliberados. O estado da execução considera os três.
-        total_erros = indicadores["total_erro_tecnico"] + indicadores["total_incerto"]
-        repo.finalizar_execucao(
-            execucao_id=execucao_id,
-            status="concluido_com_pendencias" if pendencias else "concluido",
-            total_relatorio=resultado.get("total_relatorio", 0),
-            total_filtrado=resultado.get("total_filtrado", 0),
-            total_lancado=resultado.get("total_lancado", 0),
-            total_erros=total_erros,
+        contexto_trava = (
+            repo.trava_rechecagem_big(execucao_id)
+            if rechecagem_big_habilitada() and not DRY_RUN
+            else nullcontext(lambda: True)
         )
-        resultado["execucao_id"] = execucao_id
-        return resultado
+        with contexto_trava as possui_trava:
+            if not possui_trava():
+                raise RuntimeError("Execução ocupada por outro processo de rechecagem.")
+            self._possui_trava_rechecagem = possui_trava
+            try:
+                resultado = self._executar_interno(
+                    data_referencia,
+                    triggered_by,
+                    execucao_id,
+                    fluxo,
+                )
+            except BaseException as exc:
+                repo.finalizar_execucao(
+                    execucao_id=execucao_id, status="erro",
+                    mensagem_erro=f"{type(exc).__name__}: {exc}"[:2000],
+                )
+                raise
+            indicadores = calcular_indicadores_oc73(resultado.get("itens", []))
+            resultado.update(indicadores)
+            pendencias = sum(indicadores.values())
+            # Compatibilidade: total_erros inclui falhas técnicas e estados incertos,
+            # mas não bloqueios deliberados. O estado da execução considera os três.
+            total_erros = indicadores["total_erro_tecnico"] + indicadores["total_incerto"]
+            repo.finalizar_execucao(
+                execucao_id=execucao_id,
+                status="concluido_com_pendencias" if pendencias else "concluido",
+                total_relatorio=resultado.get("total_relatorio", 0),
+                total_filtrado=resultado.get("total_filtrado", 0),
+                total_lancado=resultado.get("total_lancado", 0),
+                total_erros=total_erros,
+            )
+            resultado["execucao_id"] = execucao_id
+            return resultado
+
+    def _enviar_oc73_com_trava(self, op101, **argumentos):
+        verificar = getattr(self, "_possui_trava_rechecagem", lambda: True)
+        if not verificar():
+            raise RuntimeError("Posse da trava perdida antes do envio OC73.")
+        if rechecagem_big_habilitada():
+            from modules.ocorrencia_73.rechecagem_politica import agora_local
+            agora = agora_local()
+            argumentos["data_ocorrencia"] = agora.date()
+            argumentos["hora_ocorrencia"] = agora.strftime("%H%M")
+        return op101.lancar_ocorrencia_73(**argumentos)
 
     def _executar_interno(
         self,
@@ -943,6 +972,21 @@ class Ocorrencia73Service:
                         status = "ja_existia"
                         lancamento = None
 
+                    elif (
+                        fluxo_atual == "BIG"
+                        and rechecagem_big_habilitada()
+                        and ultima_ocorrencia_op101 is not None
+                        and ultima_ocorrencia_op101.codigo == "77"
+                    ):
+                        from modules.ocorrencia_73.rechecagem_big import RechecagemBIG
+                        status = RechecagemBIG(self.repository).registrar(
+                            item=item, execucao_id=execucao_id,
+                            data_referencia=data_referencia, limite_envios=MAX_LANCAMENTOS,
+                            dry_run=DRY_RUN, envio_habilitado=OC73_ENVIO_HABILITADO,
+                            ctrc_teste=CTRC_TESTE,
+                        )
+                        lancamento = None
+
                     elif not ultima_ocorrencia_valida:
                         status = "bloqueado_ultima_ocorrencia"
                         lancamento = None
@@ -982,7 +1026,7 @@ class Ocorrencia73Service:
                                 serie=item["serie"], numero=item["numero"],
                                 fluxo=item["fluxo"],
                                 data_inicial=data_ini, data_final=data_fim,
-                                enviar=lambda referencia: op101.lancar_ocorrencia_73(
+                                enviar=lambda referencia: self._enviar_oc73_com_trava(op101,
                                     seq_ctrc=consulta.seq_ctrc,
                                     familia=consulta.familia,
                                     data_ocorrencia=data_referencia,
@@ -996,7 +1040,10 @@ class Ocorrencia73Service:
                                         seq_ctrc=consulta.seq_ctrc,
                                         local=consulta.local,
                                         familia=consulta.familia,
-                                        data_referencia=data_referencia,
+                                        data_referencia=(
+                                            datetime.now(TIMEZONE).date()
+                                            if rechecagem_big_habilitada() else data_referencia
+                                        ),
                                         referencia=referencia,
                                     )
                                 ),
