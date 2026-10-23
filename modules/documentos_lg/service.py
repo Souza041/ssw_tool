@@ -1,11 +1,15 @@
 from pathlib import Path
 import re
 
+from datetime import datetime
+
+from .importador import importar
+
 from operations.op455.report import OP455Report
 from operations.op930.report import OP930Report
 from web.jobs import add_log, set_progress
 from ssw.utils import dummy
-from .op435 import Extrator, Inputs, comando, BASE
+from .op435 import Extrator, Inputs, comando, BASE, FILTROS
 from .filtro import filtrar
 
 LG_CNPJ = '01166372000155'
@@ -50,6 +54,27 @@ def validar_download(path):
         raise ValueError('O download retornou uma página HTML em vez do relatório.')
     return path
 
+def importar_com_log(job, relatorio, arquivo, inicio, fim):
+    add_log(
+        job,
+        f"{relatorio}: importando o arquivo no MySQL.",
+    )
+
+    resultado = importar(
+        relatorio,
+        arquivo,
+        inicio.isoformat(),
+        fim.isoformat(),
+    )
+
+    add_log(
+        job,
+        f"{relatorio}: {resultado['status']} | "
+        f"importação {resultado['importacao_id']} | "
+        f"{resultado['registros']} registros.",
+    )
+
+    return resultado
 
 def executar(job, client, config, pasta):
     pasta = Path(pasta)
@@ -78,6 +103,18 @@ def executar(job, client, config, pasta):
         publicar(csv_path, 'OP435 · base LG filtrada')
         publicar(csv_path.with_suffix('.filtro.json'), 'OP435 · resumo do filtro')
         add_log(job, f"OP435: {resumo['registros_mantidos']} de {resumo['registros_lidos']} registros mantidos.")
+        inicio435 = datetime.strptime(
+            FILTROS["t_data_ref_ini"],
+            "%d%m%y",
+        ).date()
+
+        importar_com_log(
+            job,
+            "OP435",
+            csv_path,
+            inicio435,
+            config["data_final"],
+        )
         set_progress(job, 1, total)
         if config['modo'] != 'completo':
             return None
@@ -88,6 +125,13 @@ def executar(job, client, config, pasta):
             data_final=config['fim455'].strftime('%d%m%y'), timeout_seconds=config['timeout'])
         publicar(path, 'OP455 · documentos, base bruta')
         set_progress(job, 2, total)
+        importar_com_log(
+            job,
+            "OP455",
+            path,
+            config["inicio455"],
+            config["fim455"],
+        )
         add_log(job, 'OP930: iniciando extração do grupo LG.')
         adapter.open_option('930', config['unidade'])
         path = OP930Report(adapter).gerar_e_baixar_por_cnpj(
@@ -95,6 +139,13 @@ def executar(job, client, config, pasta):
             data_final=config['fim930'].strftime('%d%m%y'), cnpj=LG_CNPJ, grupo='LG',
             timeout_seconds=config['timeout'])
         publicar(path, 'OP930 · grupo LG, base bruta')
+        importar_com_log(
+            job,
+            "OP930",
+            path,
+            config["inicio930"],
+            config["fim930"],
+        )
         set_progress(job, 3, total)
         add_log(job, 'Sequência concluída. Bases OP455 e OP930 preservadas sem tratamento.')
         return None

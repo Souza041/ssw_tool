@@ -39,6 +39,15 @@ def test_filtro_preserva_bruto_e_nomes(tmp_path):
 
 @pytest.fixture
 def fake_operations(monkeypatch):
+    monkeypatch.setattr(
+        service,
+        "importar",
+        Mock(return_value={
+            "status": "concluida",
+            "importacao_id": 1,
+            "registros": 1,
+        }),
+    )
     calls = []
 
     class Extract:

@@ -36,7 +36,7 @@ def conectar():
         charset="utf8mb4",
         cursorclass=pymysql.cursors.DictCursor,
         connect_timeout=15,
-        read_timeout=60,
-        write_timeout=60,
+        read_timeout=180,
+        write_timeout=180,
         autocommit=False,
     )
