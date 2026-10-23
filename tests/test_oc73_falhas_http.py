@@ -69,8 +69,9 @@ class ClienteHTTPFalso:
     def get(self, path, **kwargs):
         return SimpleNamespace(text="73 - ENTREGA SERA REALIZADA AMANHA")
 
-    def post(self, path, data):
+    def post(self, path, data, *, retries=None):
         if path == "/bin/ssw0122":
+            assert retries == 1, "O envio da OC73 deve usar retries=1."
             self.posts_envio += 1
             self.ultimo_payload_envio = data
             if self.falha_envio is not None:

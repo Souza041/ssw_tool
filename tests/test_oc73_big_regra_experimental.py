@@ -1,89 +1,52 @@
+import pytest
+
 from modules.ocorrencia_73.parser import filtrar_registros
 
 
-def registro(
-    ctrc,
-    ocorrencia,
-    receptora,
-    uf,
-    emissora="JOI",
-):
+def registro(uf, ocorrencia="64", receptora="BIG"):
     return {
-        "Serie/Numero CTRC": ctrc,
+        "Serie/Numero CTRC": "JOI123456",
         "Codigo Ultima Ocorrencia": ocorrencia,
         "Unidade Receptora": receptora,
-        "UF do Remetente": uf,
-        "Unidade Emissora": emissora,
-        "Cidade de Entrega": "CURITIBA",
+        "UF do Expedidor": uf,
+        "Unidade Emissora": "JOI",
+        "Cidade do Destinatario": "CURITIBA",
         "Cliente Pagador": "TESTE",
     }
 
 
-def test_big_experimental_aceita_mg_sp():
-    registros = [
-        registro("JOI123456", "64", "BIG", "MG"),
-        registro("JOI123457", "64", "BIG", "SP"),
-    ]
-
-    resultado = filtrar_registros(
-        registros,
-        fluxo="BIG",
-        regra_big_experimental=True,
-    )
-
-    assert len(resultado) == 2
-
-
-def test_big_experimental_exige_receptora_big():
-    registros = [
-        registro("JOI123456", "64", "JOI", "MG"),
-    ]
-
-    resultado = filtrar_registros(
-        registros,
-        fluxo="BIG",
-        regra_big_experimental=True,
-    )
-
-    assert resultado == []
+@pytest.mark.parametrize(
+    "fluxo,uf,ocorrencia,receptora",
+    [
+        ("BIG", "MG", "64", "BIG"),
+        ("BIG", "SP", "64", "BIG"),
+        ("BIG", "MG", "64", "JOI"),
+        ("BIG", "MG", "63", "BIG"),
+        ("CWB", "PR", "64", "CWB"),
+    ],
+)
+def test_regra_experimental_permanece_bloqueada(
+    fluxo, uf, ocorrencia, receptora
+):
+    with pytest.raises(ValueError, match="experimental desativada"):
+        filtrar_registros(
+            [registro(uf, ocorrencia, receptora)],
+            fluxo=fluxo,
+            regra_big_experimental=True,
+        )
 
 
-def test_big_experimental_exige_oc64():
-    registros = [
-        registro("JOI123456", "63", "BIG", "MG"),
-    ]
+@pytest.mark.parametrize("uf,esperado", [("SC", 1), ("MG", 0), ("SP", 0)])
+def test_big_padrao_exige_uf_expedidor_sc(uf, esperado):
+    item = registro(uf)
+    # UF do Remetente divergente não deve decidir a elegibilidade.
+    item["UF do Remetente"] = "MG" if uf == "SC" else "SC"
 
-    resultado = filtrar_registros(
-        registros,
-        fluxo="BIG",
-        regra_big_experimental=True,
-    )
+    resultado = filtrar_registros([item], fluxo="BIG")
 
-    assert resultado == []
-
-
-def test_big_padrao_continua_exigindo_sc():
-    registros = [
-        registro("JOI123456", "64", "BIG", "MG"),
-    ]
-
-    resultado = filtrar_registros(
-        registros,
-        fluxo="BIG",
-    )
-
-    assert resultado == []
+    assert len(resultado) == esperado
 
 
 def test_cwb_nao_aceita_oc64():
-    registros = [
-        registro("CWB123456", "64", "CWB", "PR"),
-    ]
-
-    resultado = filtrar_registros(
-        registros,
-        fluxo="CWB",
-        regra_big_experimental=True,
-    )
-
+    resultado = filtrar_registros([registro("PR")], fluxo="CWB")
     assert resultado == []

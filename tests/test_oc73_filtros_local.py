@@ -6,7 +6,7 @@ def registro(ctrc, emissora, cidade, uf, ocorrencia):
         "Serie/Numero CTRC": ctrc,
         "Unidade Emissora": emissora,
         "Cidade do Destinatario": cidade,
-        "UF do Remetente": uf,
+        "UF do Expedidor": uf,
         "Codigo da Ultima Ocorrencia": ocorrencia,
     }
 
