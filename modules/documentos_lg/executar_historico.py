@@ -191,7 +191,10 @@ def executar(
     aplicar=False,
     retomar=False,
     timeout=600,
+    tipo="historica",
 ):
+    if tipo not in {"historica", "incremental"}:
+        raise ValueError("Tipo de execução inválido.")
     if not 30 <= timeout <= 1800:
         raise ValueError(
             "Timeout deve estar entre 30 e 1800 segundos."
@@ -380,7 +383,7 @@ def executar(
             arquivo,
             tarefa["inicio_periodo"].isoformat(),
             tarefa["fim_periodo"].isoformat(),
-            tipo="historica",
+            tipo=tipo,
         )
 
         finalizar(

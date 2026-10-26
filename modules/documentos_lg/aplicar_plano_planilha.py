@@ -316,14 +316,16 @@ def aplicar(arquivo_plano, executar=False):
                 "O original mudou durante a aplicação."
             )
 
-        print(json.dumps({
+        resultado = {
             "status": "concluida",
             "celulas_atualizadas": len(alteracoes),
             "arquivo_gerado": str(destino),
             "arquivo_sha256": sha_arquivo(destino),
             "original_preservado": True,
             "demais_componentes_verificados": True,
-        }, ensure_ascii=False, indent=2))
+        }
+        print(json.dumps(resultado, ensure_ascii=False, indent=2))
+        return resultado
 
     except BaseException:
         if criado:

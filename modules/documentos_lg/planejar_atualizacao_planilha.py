@@ -402,6 +402,7 @@ def planejar(caminho):
         "arquivo_plano": str(destino),
         "amostras_alteracoes": alteracoes[:10],
     }, ensure_ascii=False, indent=2, default=str))
+    return destino
 
 
 def main():
