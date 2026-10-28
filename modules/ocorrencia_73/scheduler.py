@@ -57,7 +57,35 @@ def env_bool(
     }
 
 
+_execution_lock = Lock()
+
+
 def executar_ocorrencia_73_agendada(
+    fluxo: str,
+    data_referencia: date | None = None,
+) -> dict | None:
+    print(
+        f"[OC73][{fluxo}] Aguardando acesso exclusivo ao fluxo agendado.",
+        flush=True,
+    )
+    with _execution_lock:
+        print(
+            f"[OC73][{fluxo}] Acesso exclusivo obtido.",
+            flush=True,
+        )
+        try:
+            return _executar_ocorrencia_73_agendada_serializada(
+                fluxo=fluxo,
+                data_referencia=data_referencia,
+            )
+        finally:
+            print(
+                f"[OC73][{fluxo}] Acesso exclusivo liberado.",
+                flush=True,
+            )
+
+
+def _executar_ocorrencia_73_agendada_serializada(
     fluxo: str,
     data_referencia: date | None = None,
 ) -> dict | None:
