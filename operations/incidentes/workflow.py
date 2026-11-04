@@ -27,6 +27,16 @@ from operations.incidentes.xml_parser_enricher import (enriquecer_base_com_xml_c
 
 from operations.incidentes.exporter import (exportar_incidentes,)
 
+from modules.incidentes.mysql_gate import importar_snapshot_validado
+
+from modules.incidentes.publicacao_integrada import (
+    finalizar_publicacao_incidentes,
+)
+
+from modules.incidentes.integridade import (
+    validar_quantidade_linhas,
+)
+
 def executar_incidentes_op930(
     client: SSWClient,
     data_inicial: str,
@@ -36,6 +46,7 @@ def executar_incidentes_op930(
     timeout_seconds: int = 300,
     job=None,
     log_func=None,
+    importar_mysql: bool = False,
 ) -> Path:
     def log(msg: str):
         if log_func:
@@ -62,6 +73,9 @@ def executar_incidentes_op930(
 
     total = sum(len(cnpjs) for cnpjs in grupos.values())
     atual = 0
+    falhas_extracao = []
+    sem_dados = []
+    extraidos = []
 
     if job:
         from web.jobs import set_progress
@@ -84,7 +98,8 @@ def executar_incidentes_op930(
                 )
 
             except RelatorioSemDados:
-                log(f"{grupo}: nenhum relatório encontrado.")
+                sem_dados.append((grupo, cnpj))
+                log(f"{grupo}: nenhum relatório encontrado para {cnpj}.")
 
                 if job:
                     from web.jobs import set_progress
@@ -93,7 +108,8 @@ def executar_incidentes_op930(
                 continue
 
             except TimeoutError:
-                log(f"{grupo}: tempo limite ao aguardar relatório.")
+                falhas_extracao.append((grupo, cnpj, "TIMEOUT"))
+                log(f"{grupo}: tempo limite ao aguardar relatório para {cnpj}.")
 
                 if job:
                     from web.jobs import set_progress
@@ -102,6 +118,7 @@ def executar_incidentes_op930(
                 continue
 
             except Exception as exc:
+                falhas_extracao.append((grupo, cnpj, str(exc)))
                 log(
                     f"{grupo}: relatório não gerado ou falhou. "
                     f"Erro: {exc}"
@@ -113,6 +130,7 @@ def executar_incidentes_op930(
 
                 continue
 
+            extraidos.append((grupo, cnpj))
             log(f"Arquivo baixado: {arquivo.name}")
 
             log(
@@ -313,6 +331,8 @@ def executar_incidentes_op930(
         ignore_index=True,
     )
 
+    quantidade_esperada = len(base_final)
+
     log(
         "Base consolidada inicial: "
         f"{len(base_final)} registros."
@@ -351,6 +371,13 @@ def executar_incidentes_op930(
         log_func=log_func,
     )
 
+    validar_quantidade_linhas(
+        etapa="OP101",
+        quantidade_esperada=quantidade_esperada,
+        quantidade_obtida=len(base_enriquecida),
+        log=log,
+    )
+
     log("Enriquecimento OP101 finalizado.")
 
     base_enriquecida = preparar_base_analitica(
@@ -359,8 +386,15 @@ def executar_incidentes_op930(
 
     log("Preparando colunas analíticas para dashboard...")
 
+    validar_quantidade_linhas(
+        etapa="ANALYTICS",
+        quantidade_esperada=quantidade_esperada,
+        quantidade_obtida=len(base_enriquecida),
+        log=log,
+    )
+
     log("Colunas analíticas preparadas.")
-    
+
     log("Iniciando download dos XMLs vinculados aos CTRCs...")
 
     base_enriquecida = baixar_xmls_cte(
@@ -372,6 +406,13 @@ def executar_incidentes_op930(
         apenas_debitos=False,
     )
 
+    validar_quantidade_linhas(
+        etapa="DOWNLOAD_XML",
+        quantidade_esperada=quantidade_esperada,
+        quantidade_obtida=len(base_enriquecida),
+        log=log,
+    )
+
     log("Download dos XMLs finalizado.")
 
     log("Iniciando leitura dos XMLs dos CT-es...")
@@ -380,6 +421,13 @@ def executar_incidentes_op930(
         df=base_enriquecida,
         job=job,
         log_func=log_func,
+    )
+
+    validar_quantidade_linhas(
+        etapa="PARSER_XML",
+        quantidade_esperada=quantidade_esperada,
+        quantidade_obtida=len(base_enriquecida),
+        log=log,
     )
 
     log("Leitura dos XMLs dos CT-es finalizada.")
@@ -461,60 +509,29 @@ def executar_incidentes_op930(
     )
 
     # ---------------------------------------------------------
-    # 6. Publica a base de auditoria para o dashboard
-    # ---------------------------------------------------------
-    publisher = IncidentPublisher()
-
-    publicacao = publisher.publish(
-        arquivo_auditoria
-    )
-
-    log(
-        "Base publicada para o dashboard: "
-        f"{publicacao['current']}"
-    )
-
-    log(
-        "Cópia histórica gerada: "
-        f"{publicacao['history']}"
-    )
-
-    if publicacao["history_removed"] > 0:
-        log(
-            "Históricos antigos removidos: "
-            f"{publicacao['history_removed']}"
-        )
-
-    # ---------------------------------------------------------
-    # 7. Publica a base de volume para o dashboard
+    # Sprint 3.4 - Finalizacao integrada e auditavel
     # ---------------------------------------------------------
 
-    volume_publisher = VolumePublisher()
+    from modules.incidentes.persistence import importar_auditoria
 
-    publicacao_volume = (
-        volume_publisher.publish(
-            arquivo_volume
-        )
+    resultado_publicacao = finalizar_publicacao_incidentes(
+        arquivo_auditoria=arquivo_auditoria,
+        arquivo_volume=arquivo_volume,
+        importar_mysql=importar_mysql,
+        total=total,
+        extraidos=extraidos,
+        sem_dados=sem_dados,
+        falhas_extracao=falhas_extracao,
+        importar_auditoria=importar_auditoria,
+        importar_snapshot_validado=importar_snapshot_validado,
+        incident_publisher_factory=IncidentPublisher,
+        volume_publisher_factory=VolumePublisher,
+        log=log,
     )
 
     log(
-        "Base de volume publicada para o dashboard: "
-        f"{publicacao_volume['current']}"
+        "Resultado final da publicacao: "
+        f"{resultado_publicacao}"
     )
-
-    log(
-        "Histórico de volume gerado: "
-        f"{publicacao_volume['history']}"
-    )
-
-    if (
-        publicacao_volume[
-            "history_removed"
-        ] > 0
-    ):
-        log(
-            "Históricos antigos de volume removidos: "
-            f"{publicacao_volume['history_removed']}"
-        )
 
     return arquivo_auditoria

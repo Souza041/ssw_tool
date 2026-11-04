@@ -864,6 +864,101 @@ class IncidentesService:
             rows=rows,
         )
 
+
+    def consultar_registros_regra(
+        self,
+        regra: str,
+        filtros: DashboardFilters,
+        pagina: int = 1,
+        limite: int = 25,
+        busca: str = "",
+    ) -> dict:
+        if not regra.strip():
+            raise ValueError("Informe a regra.")
+
+        if pagina < 1 or not 1 <= limite <= 100:
+            raise ValueError("Paginação inválida.")
+
+        base = aplicar_filtros_dashboard(
+            self.repository.auditoria(),
+            filtros,
+        )
+
+        base = normalizar_colunas(base)
+
+        coluna_regra = encontrar_coluna_logica(
+            base, "regra_debito"
+        )
+
+        if coluna_regra is None:
+            raise ValueError(
+                "Coluna de regra não encontrada."
+            )
+
+        print("[DEBUG OC11] Coluna identificada:", coluna_regra)
+
+        print(
+            "[DEBUG OC11] Regras encontradas:",
+            serie_texto(base, coluna_regra)
+            .value_counts(dropna=False)
+            .head(20)
+            .to_dict()
+        )
+
+        print("[DEBUG OC11] Regra solicitada:", repr(regra))
+        print("[DEBUG OC11] Total antes do filtro:", len(base))
+
+        base = base.loc[
+            serie_texto(base, coluna_regra).eq(regra)
+        ].copy()
+
+        # Pesquisa apenas em campos de identificação.
+        if busca.strip():
+            termos = ["CTRC", "NOTA_FISCAL", "NF"]
+            colunas = [
+                coluna for coluna in base.columns
+                if coluna.upper() in termos
+            ]
+
+            if colunas:
+                mascara = pd.Series(
+                    False, index=base.index
+                )
+
+                for coluna in colunas:
+                    mascara |= (
+                        base[coluna]
+                        .fillna("")
+                        .astype(str)
+                        .str.contains(
+                            busca.strip(),
+                            case=False,
+                            regex=False,
+                        )
+                    )
+
+                base = base.loc[mascara]
+
+        total = len(base)
+        inicio = (pagina - 1) * limite
+        fim = inicio + limite
+
+        registros = dataframe_para_registros(
+            base.iloc[inicio:fim]
+        )
+
+        return {
+            "regra": regra,
+            "total": total,
+            "pagina": pagina,
+            "limite": limite,
+            "total_paginas": (
+                (total + limite - 1) // limite
+            ),
+            "registros": registros,
+        }
+
+
     # --------------------------------------------------
     # Regras
     # --------------------------------------------------

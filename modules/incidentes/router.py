@@ -287,3 +287,48 @@ def recarregar_cache():
                 "o cache de incidentes."
             ),
         ) from exc
+
+
+@router.get("/api/regras/registros")
+def consultar_registros_regra(
+    regra: str = Query(..., min_length=1),
+    pagina: int = Query(1, ge=1),
+    limite: int = Query(25, ge=1, le=100),
+    busca: str = Query(""),
+    data_inicial: Optional[date] = None,
+    data_final: Optional[date] = None,
+    grupos_clientes: Optional[List[str]] = Query(None),
+    clientes: Optional[List[str]] = Query(None),
+    unidades: Optional[List[str]] = Query(None),
+    codigos_ocorrencia: Optional[List[str]] = Query(None),
+    status_debito: Optional[List[str]] = Query(None),
+    regras_debito: Optional[List[str]] = Query(None),
+    produtos: Optional[List[str]] = Query(None),
+    tipos_operacao: Optional[List[str]] = Query(None),
+):
+    filtros = DashboardFilters(
+        data_inicial=data_inicial,
+        data_final=data_final,
+        grupos_clientes=grupos_clientes or [],
+        clientes=clientes or [],
+        unidades=unidades or [],
+        codigos_ocorrencia=codigos_ocorrencia or [],
+        status_debito=status_debito or [],
+        regras_debito=regras_debito or [],
+        produtos=produtos or [],
+        tipos_operacao=tipos_operacao or [],
+    )
+
+    try:
+        return service.consultar_registros_regra(
+            regra=regra,
+            filtros=filtros,
+            pagina=pagina,
+            limite=limite,
+            busca=busca,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from exc
