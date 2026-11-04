@@ -10,7 +10,7 @@ def registro(ctrc, emissora='CWB', cidade='CURITIBA', ocorrencia='63', uf='PR', 
         'Unidade Receptora': receptora,
         'Serie/Numero CTRC': ctrc,
         'Codigo Ultima Ocorrencia': ocorrencia,
-        'UF do Remetente': uf,
+        'UF do Expedidor': uf,
     }
 
 
