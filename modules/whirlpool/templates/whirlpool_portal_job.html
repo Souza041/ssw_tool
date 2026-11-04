@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="topbar">
+    <h1>Whirlpool — Homologação do portal</h1>
+    <p>Consulta e download em PORTAL_DRY_RUN. Nenhum e-mail será enviado.</p>
+</div>
+<div class="card" style="max-width:900px">
+    <h3 id="titulo">Execução em andamento</h3>
+    <p id="progresso" aria-live="polite">Preparando job…</p>
+    <progress id="barra" value="0" max="1" style="width:100%"></progress>
+    <pre id="logs" style="background:#0f172a;color:#dbeafe;padding:18px;border-radius:12px;white-space:pre-wrap;max-height:360px;overflow:auto"></pre>
+    <p id="erro" role="alert" style="color:#b91c1c"></p>
+    <div id="arquivos"></div>
+    <a class="back" href="/whirlpool/emails">← Voltar para Whirlpool</a>
+</div>
+<script>
+(function () {
+    const endpoint = "/whirlpool/emails/portal-jobs/{{ job_id }}/estado";
+    let failures = 0;
+    async function update() {
+        try {
+            const response = await fetch(endpoint, {cache: "no-store"});
+            if (!response.ok) throw new Error(response.status === 401 ? "Sessão expirada." : "Não foi possível consultar o job.");
+            const data = await response.json();
+            failures = 0;
+            document.getElementById("titulo").textContent = data.status === "done" ? "Homologação concluída" : data.status === "error" ? "Homologação interrompida" : "Execução em andamento";
+            document.getElementById("progresso").textContent = data.progress + " de " + data.total + " transportes processados · SMTP não executado";
+            const bar = document.getElementById("barra");
+            bar.max = data.total || 1; bar.value = data.progress;
+            document.getElementById("logs").textContent = data.logs.join("\n");
+            document.getElementById("erro").textContent = data.error || "";
+            const files = document.getElementById("arquivos"); files.replaceChildren();
+            data.files.forEach(function (file) {
+                const link = document.createElement("a"); link.href = file.url;
+                link.textContent = "Baixar " + file.name + " — transporte " + file.transporte;
+                link.style.display = "block"; link.style.marginTop = "10px";
+                files.appendChild(link);
+            });
+            if (data.status === "running") setTimeout(update, 1500);
+        } catch (error) {
+            document.getElementById("erro").textContent = error.message;
+            if (++failures < 3) setTimeout(update, 3000);
+        }
+    }
+    update();
+})();
+</script>
+{% endblock %}

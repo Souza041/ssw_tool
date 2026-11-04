@@ -56,6 +56,8 @@ data/incidentes/history/*
 data/incidentes/volume/current/*
 data/incidentes/volume/history/*
 
+var/whirlpool/
+
 # Mantém somente a estrutura das pastas
 !data/incidentes/current/.gitkeep
 !data/incidentes/history/.gitkeep
