@@ -5,7 +5,11 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.middleware.gzip import GZipMiddleware
+from starlette.responses import PlainTextResponse
 from web.session_config import carregar_configuracao_sessao
+from web.qa_mode import qa_enabled, qa_data_dir
+from web.session_store import SESSION_MAX_AGE_SECONDS
 
 
 logger = logging.getLogger(__name__)
@@ -15,38 +19,44 @@ logger.info(
     session_security.environment,
     session_security.source,
 )
+QA_MODE = qa_enabled()
 
-from web.routes import router
-from modules.metricas.routes import router as metricas_router
+if not QA_MODE:
+    from web.routes import router
+    from modules.metricas.routes import router as metricas_router
 
-#from modules.metricas.scheduler import iniciar_scheduler_metricas
-
-from starlette.middleware.gzip import GZipMiddleware
-
-from modules.incidentes.router import (
-    router as incidentes_router,
-)
-from modules.documentos.web import router as documentos_router
-from modules.whirlpool.routes import router as whirlpool_router
-
-from modules.ocorrencia_73.scheduler import (
-    iniciar_scheduler_ocorrencia_73,
-)
-from modules.ocorrencia_73.routes import (
-    router as ocorrencia_73_router,
-)
-from web.session_store import SESSION_MAX_AGE_SECONDS
+    from modules.incidentes.router import router as incidentes_router
+    from modules.documentos.web import router as documentos_router
+    from modules.whirlpool.routes import router as whirlpool_router
+    from modules.ocorrencia_73.scheduler import iniciar_scheduler_ocorrencia_73
+    from modules.ocorrencia_73.routes import router as ocorrencia_73_router
 
 mimetypes.add_type("text/css", ".css")
 mimetypes.add_type("application/javascript", ".js")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+RUNTIME_DIR = qa_data_dir(BASE_DIR) if QA_MODE else Path.cwd()
 
-Path("downloads").mkdir(exist_ok=True)
-Path("uploads").mkdir(exist_ok=True)
-Path("temp").mkdir(exist_ok=True)
+if QA_MODE:
+    for directory in ("downloads", "uploads", "temp"):
+        (RUNTIME_DIR / directory).mkdir(parents=True, exist_ok=True)
+else:
+    Path("downloads").mkdir(exist_ok=True)
+    Path("uploads").mkdir(exist_ok=True)
+    Path("temp").mkdir(exist_ok=True)
 
 app = FastAPI(title="SSW Tool")
+
+if QA_MODE:
+    @app.get("/qa/health")
+    def qa_health():
+        return {"qa_mode": True, "operational_routes": False}
+
+@app.middleware("http")
+async def bloquear_operacoes_qa(request, call_next):
+    if QA_MODE and request.url.path != "/qa/health" and not request.url.path.startswith("/static/"):
+        return PlainTextResponse("Operações desabilitadas no ambiente QA.", status_code=503)
+    return await call_next(request)
 
 app.add_middleware(
     SessionMiddleware,
@@ -65,7 +75,11 @@ app.mount(
     name="static",
 )
 
-app.mount("/downloads", StaticFiles(directory=str(BASE_DIR / "downloads")), name="downloads")
+app.mount(
+    "/downloads",
+    StaticFiles(directory=str((RUNTIME_DIR if QA_MODE else BASE_DIR) / "downloads")),
+    name="downloads",
+)
 
 app.mount(
     "/metricas-static",
@@ -86,18 +100,19 @@ app.mount(
     name="incidentes-static",
 )
 
-app.include_router(router)
-app.include_router(metricas_router)
-
-app.include_router(
-    incidentes_router
-)
-app.include_router(documentos_router)
-app.include_router(ocorrencia_73_router)
-app.include_router(whirlpool_router)
+if not QA_MODE:
+    app.include_router(router)
+    app.include_router(metricas_router)
+    app.include_router(incidentes_router)
+    app.include_router(documentos_router)
+    app.include_router(ocorrencia_73_router)
+    app.include_router(whirlpool_router)
 
 @app.on_event("startup")
 def startup_event():
+    if QA_MODE:
+        logger.info("QA ativo: schedulers operacionais não iniciados.")
+        return
     #print(
     #    "[STARTUP] Iniciando scheduler de metricas",
     #    flush=True,
