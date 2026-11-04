@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+.lg{max-width:1400px}.lg .card{max-width:none;margin-bottom:22px}.lg h1{margin:0 0 8px}.lg .muted{color:#64748b}.lg .form-grid{display:grid;grid-template-columns:repeat(3,minmax(160px,1fr));gap:18px}.lg .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0}.lg .stat{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:18px}.lg .stat strong{display:block;font-size:28px;margin-top:8px}.lg .scroll{overflow-x:auto}.lg table{width:100%;border-collapse:collapse;font-size:13px}.lg th,.lg td{text-align:left;padding:12px;border-bottom:1px solid #e2e8f0;vertical-align:top}.lg th{color:#64748b;white-space:nowrap}.lg .badge{display:inline-block;border-radius:6px;padding:5px 8px;background:#eff6ff;color:#1d4ed8;font-size:12px;white-space:nowrap}.lg .ENVIADO{background:#dcfce7;color:#166534}.lg .CONFERIR,.lg .ERRO_CONSULTA{background:#fff1f2;color:#9f1239}.lg .alert{padding:16px;border-radius:10px;background:#fff7ed;color:#9a3412;margin:16px 0}.lg a{color:#1d4ed8}.lg .actions{display:flex;gap:16px;align-items:center}.lg .actions button{width:auto}.lg .filter{display:flex;gap:12px;align-items:center}.lg .filter select{width:auto;margin:0}.lg .filter button{width:auto}.lg .message{max-width:400px;overflow-wrap:anywhere}@media(max-width:800px){.lg .form-grid{grid-template-columns:1fr}}
+</style>
+<div class="lg">
+<div class="topbar"><h1>LG · Mapeamento POD</h1><p>Consulte o período e acompanhe o mapeamento e o envio dos comprovantes para aprovação.</p></div>
+{% if error %}<div class="alert">{{ error }}</div>{% endif %}
+<div class="card">
+<h3>Consultar comprovantes</h3>
+<p class="muted">Somente arquivos com nome iniciado por ROBR e status PENDING entram no novo mapeamento. Para o retroativo, ajuste as datas abaixo; para a rotina diária, mantenha hoje.</p>
+<form method="post" action="/lg-pod/executar">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<div class="form-grid">
+<div><label for="start">Data inicial do comprovante</label><input id="start" type="date" name="data_inicial" value="{{ today }}" max="{{ today }}" required></div>
+<div><label for="end">Data final do comprovante</label><input id="end" type="date" name="data_final" value="{{ today }}" max="{{ today }}" required></div>
+<div><label for="mode">Ação</label><select id="mode" name="modo"><option value="simular">Consultar sem enviar</option>{% if send_enabled %}<option value="executar">Mapear e enviar para aprovação</option>{% endif %}</select></div>
+</div>
+<div class="actions"><button type="submit" {% if error %}disabled{% endif %}>Iniciar consulta</button><span class="muted">As consultas sem envio também ficam no histórico.</span></div>
+</form>
+</div>
+{% if report and report.run %}
+{% set r = report.run %}{% set c = report.counts %}
+<div class="card">
+<div class="actions"><h3 style="margin:0">Resultado da execução</h3><span class="badge">{{ r.status }}</span><a href="/lg-pod?execucao={{ r.id }}">Atualizar</a></div>
+<p class="muted">{{ r.data_inicial }} a {{ r.data_final }} · {{ 'Consulta sem envio' if r.simulacao else 'Mapeamento e envio' }} · {{ r.solicitado_por }}</p>
+<p>{{ r.mensagem }}</p>
+<div class="cards">
+<div class="stat">Enviados para aprovação<strong>{{ c.get('ENVIADO',0) }}</strong></div>
+<div class="stat">Consultados sem envio<strong>{{ c.get('SIMULADO',0) }}</strong></div>
+<div class="stat">Mapeados, falta envio<strong>{{ c.get('MAPEADO',0) }}</strong></div>
+<div class="stat">Conferir resultado<strong>{{ c.get('CONFERIR',0)+c.get('ENVIO_SOLICITADO',0)+c.get('MAPEAMENTO_SOLICITADO',0) }}</strong></div>
+<div class="stat">Erros na consulta<strong>{{ c.get('ERRO_CONSULTA',0) }}</strong></div>
+<div class="stat">Ignorados<strong>{{ c.get('IGNORADO',0) }}</strong></div>
+</div>
+{% if r.status in ['EXECUTANDO','AGUARDANDO'] %}<p class="muted">Processamento em andamento. O relatório atualiza a cada 8 segundos.</p><script>setTimeout(() => window.location.reload(),8000);</script>{% endif %}
+<form class="filter" method="get"><input type="hidden" name="execucao" value="{{ r.id }}"><label for="stage">Exibir</label><select id="stage" name="etapa"><option value="">Todas as situações</option>{% for key in c %}<option value="{{ key }}" {% if stage==key %}selected{% endif %}>{{ key }} ({{ c[key] }})</option>{% endfor %}</select><button>Filtrar</button></form>
+<div class="scroll"><table><thead><tr><th>Arquivo</th><th>NF / Série</th><th>Resultado</th><th>Mensagem</th><th>Atualizado</th></tr></thead><tbody>
+{% for i in report['items'] %}<tr><td>{{ i.arquivo }}<br><small class="muted">POD {{ i.pod_id }} · Registro {{ i.id }}</small></td><td>{{ i.nf or '—' }} / {{ i.serie or '—' }}</td><td><span class="badge {{ i.etapa }}">{{ i.etapa }}</span></td><td class="message">{{ i.mensagem }}</td><td>{{ i.atualizado_em }}</td></tr>{% else %}<tr><td colspan="5">Nenhum item registrado para este filtro.</td></tr>{% endfor %}
+</tbody></table></div>
+<p class="muted">{{ report.total }} itens · Página {{ page }}{% if page>1 %} · <a href="?execucao={{ r.id }}&page={{ page-1 }}&etapa={{ stage|urlencode }}">Anterior</a>{% endif %}{% if page*100<report.total %} · <a href="?execucao={{ r.id }}&page={{ page+1 }}&etapa={{ stage|urlencode }}">Próxima</a>{% endif %}</p>
+<p class="muted">“Enviado” indica envio para aprovação. A aprovação final pertence à LG.</p>
+</div>
+{% endif %}
+<div class="card"><h3>Histórico</h3><div class="scroll"><table><thead><tr><th>Início</th><th>Período</th><th>Ação</th><th>Situação</th><th></th></tr></thead><tbody>
+{% for r in history %}<tr><td>{{ r.iniciado_em }}</td><td>{{ r.data_inicial }} a {{ r.data_final }}</td><td>{{ 'Consulta' if r.simulacao else 'Mapear e enviar' }}</td><td><span class="badge">{{ r.status }}</span></td><td><a href="/lg-pod?execucao={{ r.id }}">Ver relatório</a></td></tr>{% else %}<tr><td colspan="5">Nenhuma execução registrada.</td></tr>{% endfor %}
+</tbody></table></div></div>
+</div>
+{% endblock %}

@@ -28,6 +28,7 @@ if not QA_MODE:
     from modules.incidentes.router import router as incidentes_router
     from modules.incidentes.consulta_routes import router as incidentes_consulta_router
     from modules.documentos.web import router as documentos_router
+    from modules.lg_pod.routes import router as lg_pod_router
     from modules.whirlpool.routes import router as whirlpool_router
     from web.documentos_lg import router as documentos_lg_router
     from modules.ocorrencia_73.scheduler import iniciar_scheduler_ocorrencia_73
@@ -108,6 +109,7 @@ if not QA_MODE:
     app.include_router(incidentes_router)
     app.include_router(incidentes_consulta_router)
     app.include_router(documentos_router)
+    app.include_router(lg_pod_router)
     app.include_router(ocorrencia_73_router)
     app.include_router(whirlpool_router)
     app.include_router(documentos_lg_router)
