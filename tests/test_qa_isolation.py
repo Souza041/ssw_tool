@@ -35,7 +35,9 @@ def test_qa_startup_e_rotas_operacionais_bloqueados(monkeypatch, tmp_path):
     try:
         main.startup_event()
         assert not main.app.routes or all(
-            getattr(route, "path", "") not in ("/login", "/op001", "/whirlpool/emails")
+            getattr(route, "path", "") not in (
+                "/login", "/op001", "/whirlpool/emails", "/documentos-lg",
+            )
             for route in main.app.routes
         )
         async def forbidden_call_next(_request):
@@ -44,7 +46,7 @@ def test_qa_startup_e_rotas_operacionais_bloqueados(monkeypatch, tmp_path):
         for path in (
             "/login", "/op001", "/api/metricas/refresh",
             "/whirlpool/emails/qualquer/portal-dry-run",
-            "/downloads/qualquer", "/oc73/observabilidade",
+            "/downloads/qualquer", "/oc73/observabilidade", "/documentos-lg/executar",
         ):
             request = SimpleNamespace(url=SimpleNamespace(path=path))
             coroutine = main.bloquear_operacoes_qa(request, forbidden_call_next)
@@ -68,7 +70,7 @@ def test_modo_normal_preserva_rotas_scheduler_e_downloads(monkeypatch):
     try:
         main = importlib.import_module("web.main")
         paths = {getattr(route, "path", "") for route in main.app.routes}
-        assert {"/login", "/op001", "/whirlpool/emails"} <= paths
+        assert {"/login", "/op001", "/whirlpool/emails", "/documentos-lg"} <= paths
         assert callable(main.iniciar_scheduler_ocorrencia_73)
         downloads = next(route for route in main.app.routes if route.path == "/downloads")
         assert Path(downloads.app.directory) == main.BASE_DIR / "downloads"
