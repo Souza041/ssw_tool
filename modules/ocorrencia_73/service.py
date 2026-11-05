@@ -1,6 +1,7 @@
 import csv
 import os
 import json
+from modules.ocorrencia_73.datas_oc63 import motivo_bloqueio_data_oc63
 from contextlib import nullcontext
 
 from modules.ocorrencia_73.rechecagem_politica import rechecagem_big_habilitada
@@ -504,6 +505,9 @@ class Ocorrencia73Service:
             "unidade_emissora",
             "unidade_receptora",
             "ultima_ocorrencia",
+            "data_oc63_relatorio",
+            "data_inicial_ocorrencia",
+            "data_final_ocorrencia",
             "regra_filtro",
             "fluxo",
             "uf_remetente",
@@ -557,8 +561,8 @@ class Ocorrencia73Service:
             fluxo_atual = janela.fluxo
 
             print(
-                f"[OC73] Preparando {fluxo_atual}: "
-                f"{janela.data_inicial_ssw} até "
+                f"[OC73] Preparando {fluxo_atual} | emissão: "
+                f"{janela.data_inicial_emissao_ssw} até "
                 f"{janela.data_final_ssw}"
             )
 
@@ -574,7 +578,7 @@ class Ocorrencia73Service:
             arquivo = (
                 op455.gerar_e_baixar_ocorrencia_73(
                     output_dir=diretorio_fluxo,
-                    data_inicial=janela.data_inicial_ssw,
+                    data_inicial=janela.data_inicial_emissao_ssw,
                     data_final=janela.data_final_ssw,
                     unidade=fluxo_atual,
                     timeout_seconds=300,
@@ -584,6 +588,17 @@ class Ocorrencia73Service:
             registros = carregar_relatorio(arquivo)
 
             argumentos_filtro = {}
+            rejeitados_datas = []
+            if fluxo_atual == "CWB":
+                argumentos_filtro.update(
+                    data_inicial_ocorrencia=janela.data_inicial,
+                    data_final_ocorrencia=janela.data_final,
+                    diagnostico_datas=rejeitados_datas,
+                )
+                print(
+                    f"[OC73][CWB] Janela OC63: {janela.data_inicial} até {janela.data_final}",
+                    flush=True,
+                )
             if fluxo_atual == "BIG" and rechecagem_big_habilitada():
                 argumentos_filtro["incluir_espera_big"] = True
             filtrados = filtrar_registros(
@@ -591,6 +606,9 @@ class Ocorrencia73Service:
                 fluxo=fluxo_atual,
                 **argumentos_filtro,
             )
+
+            if rejeitados_datas:
+                print(f"[OC73][CWB] Bloqueados pela data da OC63: {len(rejeitados_datas)}", flush=True)
 
             total_registros += len(registros)
 
@@ -603,8 +621,12 @@ class Ocorrencia73Service:
                 if chave not in ctrcs_unicos:
                     ctrcs_unicos[chave] = {
                         **item,
+                        **({
+                            "data_inicial_ocorrencia": janela.data_inicial.isoformat(),
+                            "data_final_ocorrencia": janela.data_final.isoformat(),
+                        } if fluxo_atual == "CWB" else {}),
                         "data_inicial_pesquisa": (
-                            janela.data_inicial.isoformat()
+                            janela.data_inicial_emissao.isoformat()
                         ),
                         "data_final_pesquisa": (
                             janela.data_final.isoformat()
@@ -619,6 +641,9 @@ class Ocorrencia73Service:
                 "data_final": (
                     janela.data_final.isoformat()
                 ),
+                "data_inicial_emissao": janela.data_inicial_emissao.isoformat(),
+                "data_final_emissao": janela.data_final.isoformat(),
+                "rejeitados_data_oc63": rejeitados_datas,
                 "arquivo": str(arquivo),
                 "total_relatorio": len(registros),
                 "total_filtrado": len(filtrados),
@@ -790,6 +815,8 @@ class Ocorrencia73Service:
                 lote["fluxo"]: {
                     "data_inicial": lote["data_inicial"],
                     "data_final": lote["data_final"],
+                    "data_inicial_emissao": lote.get("data_inicial_emissao", lote["data_inicial"]),
+                    "data_final_emissao": lote.get("data_final_emissao", lote["data_final"]),
                     "total_relatorio": lote["total_relatorio"],
                     "total_filtrado": lote["total_filtrado"],
                 }
@@ -968,6 +995,17 @@ class Ocorrencia73Service:
                         and ultima_ocorrencia_op101.codigo == codigo_exigido
                     )
 
+                    motivo_data_oc63 = None
+                    if fluxo_atual == "CWB" and ultima_ocorrencia_valida:
+                        janela_oc63 = calcular_janelas_oc73(data_referencia, fluxo="CWB")
+                        motivo_data_oc63 = (
+                            motivo_bloqueio_data_oc63(
+                                ultima_ocorrencia_op101.data_hora,
+                                janela_oc63[0].data_inicial,
+                                janela_oc63[0].data_final,
+                            ) if janela_oc63 else "data_oc63_fora_do_calendario"
+                        )
+
                     if ja_existia:
                         status = "ja_existia"
                         lancamento = None
@@ -988,6 +1026,10 @@ class Ocorrencia73Service:
                         lancamento = None
 
                     elif not ultima_ocorrencia_valida:
+                        status = "bloqueado_ultima_ocorrencia"
+                        lancamento = None
+
+                    elif motivo_data_oc63:
                         status = "bloqueado_ultima_ocorrencia"
                         lancamento = None
 
@@ -1079,6 +1121,7 @@ class Ocorrencia73Service:
                             if ultima_ocorrencia_op101
                             else None
                         ),
+                        **({"motivo_bloqueio_data_oc63": motivo_data_oc63} if fluxo_atual == "CWB" else {}),
                         "codigo_ultima_ocorrencia_exigido": codigo_exigido,
                         "ocorrencia_73": (
                             ocorrencia_73.to_dict()
