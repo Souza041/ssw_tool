@@ -44,6 +44,18 @@ class JanelaOC73:
     data_final: date
 
     @property
+    def data_inicial_emissao(self) -> date:
+        # A janela operacional permanece independente da emissão.
+        return (
+            self.data_final - timedelta(days=3)
+            if self.fluxo == "CWB" else self.data_inicial
+        )
+
+    @property
+    def data_inicial_emissao_ssw(self) -> str:
+        return self.data_inicial_emissao.strftime("%d%m%y")
+
+    @property
     def data_inicial_ssw(self) -> str:
         return self.data_inicial.strftime("%d%m%y")
 

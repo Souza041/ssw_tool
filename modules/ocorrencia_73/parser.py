@@ -3,7 +3,9 @@ import re
 import unicodedata
 
 import os
+from modules.ocorrencia_73.datas_oc63 import motivo_bloqueio_data_oc63
 
+from datetime import date
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -393,6 +395,9 @@ def filtrar_registros(
     fluxo: str,
     regra_big_experimental: bool = False,
     incluir_espera_big: bool = False,
+    data_inicial_ocorrencia: date | None = None,
+    data_final_ocorrencia: date | None = None,
+    diagnostico_datas: list[dict] | None = None,
 ) -> list[dict]:
 
     fluxo = normalizar_texto(fluxo)
@@ -410,6 +415,15 @@ def filtrar_registros(
 
     if not registros:
         return []
+
+    validar_datas_cwb = fluxo == "CWB" and (
+        data_inicial_ocorrencia is not None or data_final_ocorrencia is not None
+    )
+    if validar_datas_cwb and (
+        data_inicial_ocorrencia is None or data_final_ocorrencia is None
+        or data_inicial_ocorrencia > data_final_ocorrencia
+    ):
+        raise ValueError("Informe uma janela completa e válida para a OC63.")
 
     exemplo = registros[0]
 
@@ -491,6 +505,26 @@ def filtrar_registros(
         if not ctrc:
             continue
 
+        data_oc63_relatorio = ""
+        if validar_datas_cwb:
+            # Data de inclusão não substitui a data efetiva da ocorrência.
+            colunas_data = [
+                chave for chave in registro
+                if normalizar_sem_acento(chave) == "DATA DA ULTIMA OCORRENCIA"
+            ]
+            if len(colunas_data) == 1:
+                data_oc63_relatorio = str(registro.get(colunas_data[0]) or "").strip()
+            motivo = motivo_bloqueio_data_oc63(
+                data_oc63_relatorio, data_inicial_ocorrencia, data_final_ocorrencia
+            )
+            if motivo:
+                if diagnostico_datas is not None:
+                    diagnostico_datas.append({
+                        "ctrc": ctrc, "motivo": motivo,
+                        "data_oc63_relatorio": data_oc63_relatorio,
+                    })
+                continue
+
         dados_ctrc = decompor_ctrc(ctrc)
 
         # Recupera os campos informativos que
@@ -507,6 +541,7 @@ def filtrar_registros(
                 return ""
 
         filtrados.append({
+            **({"data_oc63_relatorio": data_oc63_relatorio} if validar_datas_cwb else {}),
             "ctrc_original": ctrc,
             "serie": dados_ctrc["serie"],
             "numero": dados_ctrc["numero"],
