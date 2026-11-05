@@ -81,14 +81,15 @@ def test_reinicio_apos_horario_nao_agenda_disparo_antigo(monkeypatch):
         10,
         15,
         23,
-        31,
+        56,
         tzinfo=scheduler_oc73.TIMEZONE,
     )
 
     for _, configuracao in falso.jobs:
         proximo = configuracao["trigger"].get_next_fire_time(None, agora)
         assert proximo > agora
-        assert (proximo.hour, proximo.minute) == (23, 30)
+        assert proximo.date() > agora.date()
+        assert (proximo.hour, proximo.minute) == (23, 55)
 
 
 def test_sabado_nao_instancia_repositorio(monkeypatch):
