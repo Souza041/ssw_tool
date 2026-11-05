@@ -12,7 +12,7 @@ class AgendamentoOC73:
     fluxo: str
     dias_semana: tuple[int, ...]
     hora: int = 23
-    minuto: int = 30
+    minuto: int = 55
 
     @property
     def dias_apscheduler(self) -> str:
