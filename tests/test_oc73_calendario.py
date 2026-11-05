@@ -88,11 +88,11 @@ def test_domingo_na_virada_do_ano():
     assert janela.data_final == date(2023, 1, 1)
 
 
-def test_agendamentos_usam_brasilia_as_23h30():
+def test_agendamentos_usam_brasilia_as_23h55():
     assert TIMEZONE.key == "America/Sao_Paulo"
     assert {item.fluxo for item in AGENDAMENTOS_OC73} == {"CWB", "BIG"}
     assert all(
-        (item.hora, item.minuto) == (23, 30)
+        (item.hora, item.minuto) == (23, 55)
         for item in AGENDAMENTOS_OC73
     )
     dias = {
