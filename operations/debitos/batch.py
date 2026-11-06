@@ -412,28 +412,33 @@ def processar_planilha_debitos(
                     vencimento,
                 )
 
-                # Regra de histórico OP475 por CNPJ.
-                historico = ""
+                # Histórico OP475:
+                # - Usa o concatenado quando houver conteúdo.
+                # - Permite vazio para clientes comuns.
+                # - Exige preenchimento para CNPJs especiais.
 
-                if cnpj in CNPJS_HISTORICO_CONCATENADO:
-                    historico_raw = _valor_coluna(
-                        row,
-                        col,
-                        "HISTORICO_CONCATENADO",
+                historico_raw = _valor_coluna(
+                    row,
+                    col,
+                    "HISTORICO_CONCATENADO",
+                )
+
+                if pd.isna(historico_raw):
+                    historico_raw = ""
+
+                historico = str(historico_raw).strip()
+
+                if historico.lower() in {"nan", "none"}:
+                    historico = ""
+
+                if (
+                    cnpj in CNPJS_HISTORICO_CONCATENADO
+                    and not historico
+                ):
+                    raise ValueError(
+                        f"NF={nf} | CNPJ={cnpj} | "
+                        "Histórico concatenado obrigatório para este cliente."
                     )
-
-                    if pd.isna(historico_raw):
-                        historico_raw = ""
-
-                    historico = str(historico_raw).strip()
-
-                    if not historico or historico.lower() in {"nan", "none"}:
-                        raise ValueError(
-                            f"NF={nf} | CNPJ={cnpj} | "
-                            "Histórico concatenado obrigatório para este cliente. "
-                            "Verifique a coluna "
-                            "'Concatenado Campo Histórico SSW475'."
-                        )
 
                 if job:
                     add_log(
