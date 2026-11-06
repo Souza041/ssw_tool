@@ -48,7 +48,7 @@ class JanelaOC73:
         # A janela operacional permanece independente da emissão.
         return (
             self.data_final - timedelta(days=3)
-            if self.fluxo == "CWB" else self.data_inicial
+            if self.fluxo in {"CWB", "BIG"} else self.data_inicial
         )
 
     @property

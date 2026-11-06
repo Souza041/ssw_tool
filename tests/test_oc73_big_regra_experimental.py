@@ -10,7 +10,7 @@ def registro(uf, ocorrencia="64", receptora="BIG"):
         "Unidade Receptora": receptora,
         "UF do Expedidor": uf,
         "Unidade Emissora": "JOI",
-        "Cidade do Destinatario": "CURITIBA",
+        "Cidade do Destinatario": "FLORIANOPOLIS",
         "Cliente Pagador": "TESTE",
     }
 
@@ -36,8 +36,8 @@ def test_regra_experimental_permanece_bloqueada(
         )
 
 
-@pytest.mark.parametrize("uf,esperado", [("SC", 1), ("MG", 0), ("SP", 0)])
-def test_big_padrao_exige_uf_expedidor_sc(uf, esperado):
+@pytest.mark.parametrize("uf,esperado", [("SC", 1), ("MG", 1), ("SP", 1)])
+def test_big_padrao_independe_de_uf(uf, esperado):
     item = registro(uf)
     # UF do Remetente divergente não deve decidir a elegibilidade.
     item["UF do Remetente"] = "MG" if uf == "SC" else "SC"

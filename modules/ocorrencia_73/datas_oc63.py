@@ -17,12 +17,12 @@ def interpretar_data_oc63(valor):
     return None
 
 
-def motivo_bloqueio_data_oc63(valor, inicio: date, fim: date):
+def motivo_bloqueio_data_oc63(valor, inicio: date, fim: date, *, codigo="63"):
     if inicio > fim:
         raise ValueError("Janela de ocorrência invertida.")
     data = interpretar_data_oc63(valor)
     if data is None:
-        return "data_oc63_ausente_ou_invalida"
+        return f"data_oc{codigo}_ausente_ou_invalida"
     if not inicio <= data <= fim:
-        return "data_oc63_fora_da_janela"
+        return f"data_oc{codigo}_fora_da_janela"
     return None

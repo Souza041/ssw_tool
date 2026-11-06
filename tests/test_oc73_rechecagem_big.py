@@ -21,7 +21,8 @@ def dt(texto):
 
 
 def item():
-    return dict(serie="JOI", numero="123", fluxo="BIG", uf_expedidor="SC",
+    return dict(serie="JOI", numero="123", fluxo="BIG", uf_expedidor="SP",
+                cidade_destinatario="Florianópolis", unidade_receptora="BIG",
                 ultima_ocorrencia="77", data_inicial_pesquisa="2026-10-22",
                 data_final_pesquisa="2026-10-22")
 
@@ -206,8 +207,8 @@ class RechecagemTests(unittest.TestCase):
         self.now = dt('2026-10-22T20:00:00')
         self.assertEqual(self.registrar(), 'rechecagem_fora_janela')
 
-    def test_uf_errada_nao_entra(self):
-        self.assertEqual(self.registrar(item=dict(item(), uf_expedidor='PR')),
+    def test_receptora_errada_nao_entra(self):
+        self.assertEqual(self.registrar(item=dict(item(), unidade_receptora='JOI')),
                          'bloqueado_ultima_ocorrencia')
         self.assertFalse(self.repo.rows)
 
@@ -429,17 +430,19 @@ class PoliticaTests(unittest.TestCase):
         _, limite = janela_rechecagem(date(2026,10,22))
         self.assertIsNone(proxima_rechecagem(dt('2026-10-23T00:30:00'), limite))
 
-    def test_parser_77_apenas_opt_in_e_sc(self):
-        registro = {'Serie/Numero CTRC':'JOI123-4','UF do Expedidor':'SC',
+    def test_parser_77_apenas_opt_in_e_destino_big(self):
+        registro = {'Serie/Numero CTRC':'JOI123-4','UF do Expedidor':'SP',
+                    'Cidade do Destinatario':'FLORIANOPOLIS','Unidade Receptora':'BIG',
                     'Codigo Ultima Ocorrencia':'77'}
         self.assertEqual(filtrar_registros([registro],fluxo='BIG'), [])
         candidatos = filtrar_registros([registro],fluxo='BIG', incluir_espera_big=True)
-        self.assertEqual(candidatos[0]['regra_filtro'], 'big_sc_aguardando_oc64')
-        registro['UF do Expedidor'] = 'PR'
+        self.assertEqual(candidatos[0]['regra_filtro'], 'big_florianopolis_aguardando_oc64')
+        registro['Cidade do Destinatario'] = 'BIGUACU'
         self.assertEqual(filtrar_registros([registro],fluxo='BIG', incluir_espera_big=True), [])
 
     def test_parser_outra_ocorrencia_nao_entra(self):
-        registro = {'Serie/Numero CTRC':'JOI123-4','UF do Expedidor':'SC',
+        registro = {'Serie/Numero CTRC':'JOI123-4','UF do Expedidor':'SP',
+                    'Cidade do Destinatario':'FLORIANOPOLIS','Unidade Receptora':'BIG',
                     'Codigo Ultima Ocorrencia':'62'}
         self.assertEqual(filtrar_registros([registro],fluxo='BIG', incluir_espera_big=True), [])
 

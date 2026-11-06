@@ -3,6 +3,7 @@ import json
 import logging
 
 from modules.ocorrencia_73.gate import PortaoOC73
+from modules.ocorrencia_73.parser import rota_big_permitida
 from modules.ocorrencia_73.rechecagem_politica import (
     CODIGOS_ESPERA_BIG, agora_local, data_local, data_mysql,
     janela_rechecagem, proxima_rechecagem, rechecagem_big_habilitada,
@@ -23,7 +24,9 @@ class RechecagemBIG:
                   dry_run, envio_habilitado, ctrc_teste=""):
         if not rechecagem_big_habilitada():
             return "bloqueado_ultima_ocorrencia"
-        if item.get("fluxo") != "BIG" or item.get("uf_expedidor") != "SC":
+        if item.get("fluxo") != "BIG" or not rota_big_permitida(
+            item.get("cidade_destinatario"), item.get("unidade_receptora")
+        ):
             return "bloqueado_ultima_ocorrencia"
         inicio, limite = janela_rechecagem(data_referencia)
         agora = self.clock()
@@ -90,10 +93,11 @@ class RechecagemBIG:
             return terminar("expirado", "Prazo 00h30 encerrado; nenhuma consulta SSW realizada.")
         try:
             item = json.loads(pendencia["item_json"])
-            if (item.get("fluxo") != "BIG" or item.get("uf_expedidor") != "SC"
+            if (item.get("fluxo") != "BIG" or not rota_big_permitida(
+                    item.get("cidade_destinatario"), item.get("unidade_receptora"))
                     or item.get("serie") != pendencia["serie"]
                     or item.get("numero") != pendencia["numero"]):
-                return terminar("bloqueado_dados", "Identidade ou filtro SC inválido na pendência.")
+                return terminar("bloqueado_dados", "Identidade ou destino BIG inválido na pendência.")
             # Revalida calendário/prazo da origem, sem aplicar o calendário da sexta.
             inicio, limite_original = janela_rechecagem(pendencia["data_referencia"])
             if self.clock() < inicio or limite != limite_original:

@@ -354,14 +354,13 @@ def encontrar_coluna(
 
     aliases = aliases_normalizados(nome_esperado)
 
-    colunas_encontradas = {
-        normalizar_sem_acento(coluna): coluna
-        for coluna in registro
+    colunas_encontradas = [
+        coluna for coluna in registro
         if normalizar_sem_acento(coluna) in aliases
-    }
+    ]
 
     if len(colunas_encontradas) == 1:
-        return next(iter(colunas_encontradas.values()))
+        return colunas_encontradas[0]
 
     raise KeyError(
         "Coluna obrigatória não encontrada ou ambígua no relatório OP455."
@@ -387,6 +386,14 @@ def normalizar_codigo_ocorrencia(
         int(match.group(1))
     )
 
+def rota_big_permitida(cidade_destinatario, unidade_receptora) -> bool:
+    """Critérios de destino compartilhados pelo relatório e pela rechecagem."""
+    return (
+        normalizar_sem_acento(cidade_destinatario) == "FLORIANOPOLIS"
+        and normalizar_sem_acento(unidade_receptora) == "BIG"
+    )
+
+
 def filtrar_registros(
     registros: list[dict],
     clientes_permitidos: set[str] | None = None,
@@ -405,7 +412,7 @@ def filtrar_registros(
     if regra_big_experimental:
         raise ValueError(
             "Regra BIG experimental desativada. "
-            "A regra autorizada exige UF do Expedidor = SC e OC64."
+            "A regra autorizada exige destinatário em Florianópolis, receptora BIG e OC64."
         )
 
     if fluxo not in {"CWB", "BIG"}:
@@ -416,14 +423,14 @@ def filtrar_registros(
     if not registros:
         return []
 
-    validar_datas_cwb = fluxo == "CWB" and (
+    validar_datas_evento = fluxo in {"CWB", "BIG"} and (
         data_inicial_ocorrencia is not None or data_final_ocorrencia is not None
     )
-    if validar_datas_cwb and (
+    if validar_datas_evento and (
         data_inicial_ocorrencia is None or data_final_ocorrencia is None
         or data_inicial_ocorrencia > data_final_ocorrencia
     ):
-        raise ValueError("Informe uma janela completa e válida para a OC63.")
+        raise ValueError("Informe uma janela completa e válida para a ocorrência.")
 
     exemplo = registros[0]
 
@@ -444,10 +451,8 @@ def filtrar_registros(
             exemplo, CIDADE_COLUNA
         )
     else:
-        coluna_uf = encontrar_coluna(
-            exemplo,
-            UF_EXPEDIDOR_COLUNA,
-        )
+        coluna_cidade = encontrar_coluna(exemplo, CIDADE_COLUNA)
+        coluna_receptora = encontrar_coluna(exemplo, UNIDADE_RECEPTORA_COLUNA)
 
     emissoras_permitidas = {
         "BHZ", "CWB", "GRU", "JOI"
@@ -486,12 +491,10 @@ def filtrar_registros(
             )
 
         else:
-            uf_expedidor = normalizar_sem_acento(
-                registro.get(coluna_uf)
-            )
-
             elegivel = (
-                uf_expedidor == "SC"
+                rota_big_permitida(
+                    registro.get(coluna_cidade), registro.get(coluna_receptora)
+                )
                 and (ocorrencia == "64" or (incluir_espera_big and ocorrencia == "77"))
             )
 
@@ -506,7 +509,7 @@ def filtrar_registros(
             continue
 
         data_oc63_relatorio = ""
-        if validar_datas_cwb:
+        if validar_datas_evento and ocorrencia == ("63" if fluxo == "CWB" else "64"):
             # Data de inclusão não substitui a data efetiva da ocorrência.
             colunas_data = [
                 chave for chave in registro
@@ -515,13 +518,14 @@ def filtrar_registros(
             if len(colunas_data) == 1:
                 data_oc63_relatorio = str(registro.get(colunas_data[0]) or "").strip()
             motivo = motivo_bloqueio_data_oc63(
-                data_oc63_relatorio, data_inicial_ocorrencia, data_final_ocorrencia
+                data_oc63_relatorio, data_inicial_ocorrencia, data_final_ocorrencia,
+                codigo="63" if fluxo == "CWB" else "64",
             )
             if motivo:
                 if diagnostico_datas is not None:
                     diagnostico_datas.append({
                         "ctrc": ctrc, "motivo": motivo,
-                        "data_oc63_relatorio": data_oc63_relatorio,
+                        "data_oc63_relatorio" if fluxo == "CWB" else "data_oc64_relatorio": data_oc63_relatorio,
                     })
                 continue
 
@@ -541,7 +545,7 @@ def filtrar_registros(
                 return ""
 
         filtrados.append({
-            **({"data_oc63_relatorio": data_oc63_relatorio} if validar_datas_cwb else {}),
+            **({"data_oc63_relatorio" if fluxo == "CWB" else "data_oc64_relatorio": data_oc63_relatorio} if validar_datas_evento else {}),
             "ctrc_original": ctrc,
             "serie": dados_ctrc["serie"],
             "numero": dados_ctrc["numero"],
@@ -568,7 +572,7 @@ def filtrar_registros(
             "regra_filtro": (
                 "cwb_oc63"
                 if fluxo == "CWB"
-                else ("big_sc_aguardando_oc64" if ocorrencia == "77" else "big_sc_oc64")
+                else ("big_florianopolis_aguardando_oc64" if ocorrencia == "77" else "big_florianopolis_oc64")
             ),
             "fluxo": fluxo,
         })
