@@ -648,12 +648,39 @@ class OP101Ocorrencias:
                         ) is not None
                     )
 
+                    # Formatos administrativos observados na OP101. Não aceitar
+                    # qualquer texto com f5 vazio como uma instrução válida.
+                    formatos_manifesto = (
+                        r"DACTE CONFERIDO NA SAIDA DO MANIFESTO [A-Z]{3}[0-9]{1,20}-[0-9]",
+                        r"MANIFESTO [A-Z]{3}[0-9]{1,20}-[0-9] CANCELADO\.",
+                        r"- OPC 034 MANIFESTO [A-Z]{3}[0-9]{1,20}-[0-9] - DACTE CAPTURADO\.",
+                    )
+                    evento_manifesto = any(
+                        re.fullmatch(formato, texto_complementar) is not None
+                        for formato in formatos_manifesto
+                    )
+                    if evento_manifesto:
+                        # Tags ausentes, duplicadas ou truncadas não podem ser
+                        # confundidas com campos explicitamente vazios.
+                        for indice in (0, 3, 5, 6, 10):
+                            tags = re.findall(
+                                rf"<f{indice}>(.*?)</f{indice}>", registro_xml,
+                                flags=re.IGNORECASE | re.DOTALL,
+                            )
+                            if len(tags) != 1:
+                                raise ValueError("Instrução OP101 com campos XML incompletos ou duplicados.")
+                        try:
+                            datetime.strptime(campos["f0"], "%d/%m/%y %H:%M")
+                        except ValueError as erro:
+                            raise ValueError("Instrução OP101 com data inválida.") from erro
+
                     evento_conhecido = (
                         any(
                             texto_complementar.startswith(prefixo)
                             for prefixo in eventos_informativos
                         )
                         or evento_rastreamento_sacflow
+                        or evento_manifesto
                     )
 
                     linha_informativa = (
