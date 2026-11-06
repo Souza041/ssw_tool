@@ -642,6 +642,11 @@ class OP475Despesas:
         contexto: dict,
     ) -> tuple[str, str]:
 
+        print(
+            "[DEBUG OP475 CONSISTE PARCELA] "
+            f"historico={historico!r}"
+        )
+
         response = self.client.get(
             "/bin/ssw0094",
             params={
@@ -906,6 +911,11 @@ class OP475Despesas:
 
             "dummy": dummy(),
         }
+
+        print(
+            "[DEBUG OP475 INC2] "
+            f"historico={payload.get('historico')!r}"
+        )
 
         response = self.client.post(
             "/bin/ssw0094",
