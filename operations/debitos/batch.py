@@ -153,6 +153,19 @@ def _valor_coluna(
 
     return row.get(nome, padrao)
 
+def normalizar_cnpj(valor) -> str:
+    digitos = somente_digitos(valor)
+
+    if not digitos:
+        return ""
+
+    if len(digitos) > 14:
+        raise ValueError(
+            f"CNPJ possui mais de 14 dígitos: {digitos}"
+        )
+
+    return digitos.zfill(14)
+
 def processar_planilha_debitos(
     *,
     client,
@@ -205,7 +218,7 @@ def processar_planilha_debitos(
     # até encontrar a primeira série livre.
     contador_nf: dict[str, int] = defaultdict(int)
     series: dict[int, int] = {}
-    proxima_serie_nf: dict[str, int] = {}                                 
+    proxima_serie_nf: dict[str, int] = {}
 
 
     if executar_475 and "NF" in col:
@@ -249,7 +262,7 @@ def processar_planilha_debitos(
             or ""
         ).strip().upper()
 
-        cnpj = somente_digitos(
+        cnpj = normalizar_cnpj(
             _valor_coluna(
                 row,
                 col,
@@ -452,6 +465,17 @@ def processar_planilha_debitos(
                     )
 
                 op475.open()
+
+                print(
+                    "\n[DEBUG HISTORICO BATCH]"
+                    f"\nNF={nf}"
+                    f"\nCNPJ={cnpj}"
+                    f"\nCNPJ ESPECIAL={cnpj in CNPJ_HISTORICO_CONCATENADO}"
+                    f"\nMOTIVO={motivo!r}"
+                    f"\nCONCATENADO={historico_concat!r}"
+                    f"\nHISTORICO ESCOLHIDO={historico!r}"
+                    "\n"
+                )
 
                 resultado_475 = op475.lancar(
                     cnpj=cnpj,
