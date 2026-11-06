@@ -51,7 +51,7 @@ class JanelasCWB(unittest.TestCase):
 
     def test_big_e_horarios_preservados(self):
         j = calcular_janelas_oc73(D, fluxo="BIG")[0]
-        self.assertEqual(j.data_inicial_emissao, D)
+        self.assertEqual(j.data_inicial_emissao, date(2026,11,2))
         self.assertEqual(j.data_inicial, D)
         self.assertTrue(all((j.hora,j.minuto)==(23,55) for j in AGENDAMENTOS_OC73))
         self.assertEqual(calcular_janelas_oc73(date(2026,11,7), fluxo="CWB"), [])
@@ -159,15 +159,49 @@ class JanelasCWB(unittest.TestCase):
                 _,chamadas,_=self.executar_com_historico(data,referencia=date(2026,11,8))
                 self.assertEqual(chamadas,esperado)
 
-    def test_big_nao_recebe_restricao_nova_de_data(self):
+    def test_big_oc64_antiga_agora_bloqueada(self):
         r,chamadas,_=self.executar_com_historico("04/11/26 16:25",codigo="64",fluxo="BIG")
-        self.assertEqual(chamadas,1)
-        self.assertEqual(r["total_lancado"],1)
+        self.assertEqual(chamadas,0)
+        self.assertEqual(r["total_lancado"],0)
 
     def test_op101_dry_run_nao_envia(self):
         r,chamadas,_=self.executar_com_historico("05/11/26 16:25",real=False)
         self.assertEqual(chamadas,0)
         self.assertEqual(r["itens"][0]["status"],"pendente_lancamento")
+
+
+class JanelasBIG(unittest.TestCase):
+    def test_big_filtro_por_data_e_uf(self):
+        for data,uf,esperado in [("05/11/26","SC",1),("04/11/26","SC",0),
+                                 ("06/11/26","SC",0),("","SC",0),("05/11/26","PR",0)]:
+            with self.subTest(data=data,uf=uf):
+                item=registro(data,codigo="64");item["UF do Expedidor"]=uf
+                itens=filtrar_registros([item],fluxo="BIG",data_inicial_ocorrencia=D,data_final_ocorrencia=D)
+                self.assertEqual(len(itens),esperado)
+
+    def test_big_preparacao_consulta_d3_e_valida_oc64_de_d(self):
+        with tempfile.TemporaryDirectory() as pasta:
+            service=servico.Ocorrencia73Service(repository=Mock())
+            report=Mock();report.gerar_e_baixar_ocorrencia_73.return_value=Path(pasta)/"r.sswweb"
+            with patch.object(servico,"carregar_relatorio",return_value=[registro(codigo="64"),registro("04/11/26",codigo="64")]),redirect_stdout(io.StringIO()):
+                r=service.preparar_lotes_oc73(report,D,Path(pasta),fluxo="BIG")
+            self.assertEqual(report.gerar_e_baixar_ocorrencia_73.call_args.kwargs["data_inicial"],"021126")
+            self.assertEqual(r["total_filtrado"],1)
+            self.assertEqual(len(r["lotes"][0]["rejeitados_data_oc64"]),1)
+            self.assertEqual(r["filtrados"][0]["data_inicial_pesquisa"],"2026-11-02")
+
+    def test_big_op101_data_hoje_libera_e_antiga_bloqueia(self):
+        for data,esperado in [("05/11/26 19:33",1),("04/11/26 19:33",0),("06/11/26 00:01",0)]:
+            with self.subTest(data=data):
+                r,n,_=JanelasCWB().executar_com_historico(data,codigo="64",fluxo="BIG")
+                self.assertEqual(n,esperado)
+                if not esperado:
+                    self.assertEqual(r["itens"][0]["motivo_bloqueio_data_oc64"],"data_oc64_fora_da_janela")
+
+    def test_big_oc77_continua_espera_sem_liberar_oc64(self):
+        item=registro("04/11/26",codigo="77")
+        self.assertEqual(filtrar_registros([item],fluxo="BIG",data_inicial_ocorrencia=D,data_final_ocorrencia=D),[])
+        self.assertEqual(len(filtrar_registros([item],fluxo="BIG",incluir_espera_big=True,data_inicial_ocorrencia=D,data_final_ocorrencia=D)),1)
 
 
 if __name__ == "__main__":
