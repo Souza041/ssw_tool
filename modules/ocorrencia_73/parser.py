@@ -416,14 +416,14 @@ def filtrar_registros(
     if not registros:
         return []
 
-    validar_datas_cwb = fluxo == "CWB" and (
+    validar_datas_evento = fluxo in {"CWB", "BIG"} and (
         data_inicial_ocorrencia is not None or data_final_ocorrencia is not None
     )
-    if validar_datas_cwb and (
+    if validar_datas_evento and (
         data_inicial_ocorrencia is None or data_final_ocorrencia is None
         or data_inicial_ocorrencia > data_final_ocorrencia
     ):
-        raise ValueError("Informe uma janela completa e válida para a OC63.")
+        raise ValueError("Informe uma janela completa e válida para a ocorrência.")
 
     exemplo = registros[0]
 
@@ -506,7 +506,7 @@ def filtrar_registros(
             continue
 
         data_oc63_relatorio = ""
-        if validar_datas_cwb:
+        if validar_datas_evento and ocorrencia == ("63" if fluxo == "CWB" else "64"):
             # Data de inclusão não substitui a data efetiva da ocorrência.
             colunas_data = [
                 chave for chave in registro
@@ -515,13 +515,14 @@ def filtrar_registros(
             if len(colunas_data) == 1:
                 data_oc63_relatorio = str(registro.get(colunas_data[0]) or "").strip()
             motivo = motivo_bloqueio_data_oc63(
-                data_oc63_relatorio, data_inicial_ocorrencia, data_final_ocorrencia
+                data_oc63_relatorio, data_inicial_ocorrencia, data_final_ocorrencia,
+                codigo="63" if fluxo == "CWB" else "64",
             )
             if motivo:
                 if diagnostico_datas is not None:
                     diagnostico_datas.append({
                         "ctrc": ctrc, "motivo": motivo,
-                        "data_oc63_relatorio": data_oc63_relatorio,
+                        "data_oc63_relatorio" if fluxo == "CWB" else "data_oc64_relatorio": data_oc63_relatorio,
                     })
                 continue
 
@@ -541,7 +542,7 @@ def filtrar_registros(
                 return ""
 
         filtrados.append({
-            **({"data_oc63_relatorio": data_oc63_relatorio} if validar_datas_cwb else {}),
+            **({"data_oc63_relatorio" if fluxo == "CWB" else "data_oc64_relatorio": data_oc63_relatorio} if validar_datas_evento else {}),
             "ctrc_original": ctrc,
             "serie": dados_ctrc["serie"],
             "numero": dados_ctrc["numero"],

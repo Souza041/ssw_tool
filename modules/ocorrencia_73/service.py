@@ -506,6 +506,7 @@ class Ocorrencia73Service:
             "unidade_receptora",
             "ultima_ocorrencia",
             "data_oc63_relatorio",
+            "data_oc64_relatorio",
             "data_inicial_ocorrencia",
             "data_final_ocorrencia",
             "regra_filtro",
@@ -589,14 +590,14 @@ class Ocorrencia73Service:
 
             argumentos_filtro = {}
             rejeitados_datas = []
-            if fluxo_atual == "CWB":
+            if fluxo_atual in {"CWB", "BIG"}:
                 argumentos_filtro.update(
                     data_inicial_ocorrencia=janela.data_inicial,
                     data_final_ocorrencia=janela.data_final,
                     diagnostico_datas=rejeitados_datas,
                 )
                 print(
-                    f"[OC73][CWB] Janela OC63: {janela.data_inicial} até {janela.data_final}",
+                    f"[OC73][{fluxo_atual}] Janela OC{'63' if fluxo_atual == 'CWB' else '64'}: {janela.data_inicial} até {janela.data_final}",
                     flush=True,
                 )
             if fluxo_atual == "BIG" and rechecagem_big_habilitada():
@@ -608,7 +609,7 @@ class Ocorrencia73Service:
             )
 
             if rejeitados_datas:
-                print(f"[OC73][CWB] Bloqueados pela data da OC63: {len(rejeitados_datas)}", flush=True)
+                print(f"[OC73][{fluxo_atual}] Bloqueados pela data da ocorrência: {len(rejeitados_datas)}", flush=True)
 
             total_registros += len(registros)
 
@@ -624,7 +625,7 @@ class Ocorrencia73Service:
                         **({
                             "data_inicial_ocorrencia": janela.data_inicial.isoformat(),
                             "data_final_ocorrencia": janela.data_final.isoformat(),
-                        } if fluxo_atual == "CWB" else {}),
+                        } if fluxo_atual in {"CWB", "BIG"} else {}),
                         "data_inicial_pesquisa": (
                             janela.data_inicial_emissao.isoformat()
                         ),
@@ -643,7 +644,7 @@ class Ocorrencia73Service:
                 ),
                 "data_inicial_emissao": janela.data_inicial_emissao.isoformat(),
                 "data_final_emissao": janela.data_final.isoformat(),
-                "rejeitados_data_oc63": rejeitados_datas,
+                "rejeitados_data_oc63" if fluxo_atual == "CWB" else "rejeitados_data_oc64": rejeitados_datas,
                 "arquivo": str(arquivo),
                 "total_relatorio": len(registros),
                 "total_filtrado": len(filtrados),
@@ -996,13 +997,14 @@ class Ocorrencia73Service:
                     )
 
                     motivo_data_oc63 = None
-                    if fluxo_atual == "CWB" and ultima_ocorrencia_valida:
-                        janela_oc63 = calcular_janelas_oc73(data_referencia, fluxo="CWB")
+                    if fluxo_atual in {"CWB", "BIG"} and ultima_ocorrencia_valida:
+                        janela_oc63 = calcular_janelas_oc73(data_referencia, fluxo=fluxo_atual)
                         motivo_data_oc63 = (
                             motivo_bloqueio_data_oc63(
                                 ultima_ocorrencia_op101.data_hora,
                                 janela_oc63[0].data_inicial,
                                 janela_oc63[0].data_final,
+                                codigo=codigo_exigido,
                             ) if janela_oc63 else "data_oc63_fora_do_calendario"
                         )
 
@@ -1121,7 +1123,7 @@ class Ocorrencia73Service:
                             if ultima_ocorrencia_op101
                             else None
                         ),
-                        **({"motivo_bloqueio_data_oc63": motivo_data_oc63} if fluxo_atual == "CWB" else {}),
+                        **({"motivo_bloqueio_data_oc63" if fluxo_atual == "CWB" else "motivo_bloqueio_data_oc64": motivo_data_oc63} if fluxo_atual in {"CWB", "BIG"} else {}),
                         "codigo_ultima_ocorrencia_exigido": codigo_exigido,
                         "ocorrencia_73": (
                             ocorrencia_73.to_dict()
