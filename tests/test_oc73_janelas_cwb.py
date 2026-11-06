@@ -19,9 +19,9 @@ D = date(2026, 11, 5)
 def registro(data="05/11/26", codigo="63", emissora="GRU", cidade="CURITIBA"):
     return {
         "Serie/Numero CTRC": "CWB490132-1", "Unidade Emissora": emissora,
-        "Cidade do Destinatario": cidade, "Codigo Ultima Ocorrencia": codigo,
+        "Cidade do Destinatario": ("FLORIANOPOLIS" if codigo in {"64", "77"} else cidade), "Codigo Ultima Ocorrencia": codigo,
         "Data de Emissao": "02/11/26", "Data da Ultima Ocorrencia": data,
-        "UF do Expedidor": "SC",
+        "UF do Expedidor": "SP", "Unidade Receptora": "BIG",
     }
 
 
@@ -171,9 +171,9 @@ class JanelasCWB(unittest.TestCase):
 
 
 class JanelasBIG(unittest.TestCase):
-    def test_big_filtro_por_data_e_uf(self):
+    def test_big_filtro_por_data_independe_de_uf(self):
         for data,uf,esperado in [("05/11/26","SC",1),("04/11/26","SC",0),
-                                 ("06/11/26","SC",0),("","SC",0),("05/11/26","PR",0)]:
+                                 ("06/11/26","SC",0),("","SC",0),("05/11/26","PR",1)]:
             with self.subTest(data=data,uf=uf):
                 item=registro(data,codigo="64");item["UF do Expedidor"]=uf
                 itens=filtrar_registros([item],fluxo="BIG",data_inicial_ocorrencia=D,data_final_ocorrencia=D)

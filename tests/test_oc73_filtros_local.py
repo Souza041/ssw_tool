@@ -7,6 +7,7 @@ def registro(ctrc, emissora, cidade, uf, ocorrencia):
         "Unidade Emissora": emissora,
         "Cidade do Destinatario": cidade,
         "UF do Expedidor": uf,
+        "Unidade Receptora": "BIG",
         "Codigo da Ultima Ocorrencia": ocorrencia,
     }
 

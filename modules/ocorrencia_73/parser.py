@@ -354,14 +354,13 @@ def encontrar_coluna(
 
     aliases = aliases_normalizados(nome_esperado)
 
-    colunas_encontradas = {
-        normalizar_sem_acento(coluna): coluna
-        for coluna in registro
+    colunas_encontradas = [
+        coluna for coluna in registro
         if normalizar_sem_acento(coluna) in aliases
-    }
+    ]
 
     if len(colunas_encontradas) == 1:
-        return next(iter(colunas_encontradas.values()))
+        return colunas_encontradas[0]
 
     raise KeyError(
         "Coluna obrigatória não encontrada ou ambígua no relatório OP455."
@@ -387,6 +386,14 @@ def normalizar_codigo_ocorrencia(
         int(match.group(1))
     )
 
+def rota_big_permitida(cidade_destinatario, unidade_receptora) -> bool:
+    """Critérios de destino compartilhados pelo relatório e pela rechecagem."""
+    return (
+        normalizar_sem_acento(cidade_destinatario) == "FLORIANOPOLIS"
+        and normalizar_sem_acento(unidade_receptora) == "BIG"
+    )
+
+
 def filtrar_registros(
     registros: list[dict],
     clientes_permitidos: set[str] | None = None,
@@ -405,7 +412,7 @@ def filtrar_registros(
     if regra_big_experimental:
         raise ValueError(
             "Regra BIG experimental desativada. "
-            "A regra autorizada exige UF do Expedidor = SC e OC64."
+            "A regra autorizada exige destinatário em Florianópolis, receptora BIG e OC64."
         )
 
     if fluxo not in {"CWB", "BIG"}:
@@ -444,10 +451,8 @@ def filtrar_registros(
             exemplo, CIDADE_COLUNA
         )
     else:
-        coluna_uf = encontrar_coluna(
-            exemplo,
-            UF_EXPEDIDOR_COLUNA,
-        )
+        coluna_cidade = encontrar_coluna(exemplo, CIDADE_COLUNA)
+        coluna_receptora = encontrar_coluna(exemplo, UNIDADE_RECEPTORA_COLUNA)
 
     emissoras_permitidas = {
         "BHZ", "CWB", "GRU", "JOI"
@@ -486,12 +491,10 @@ def filtrar_registros(
             )
 
         else:
-            uf_expedidor = normalizar_sem_acento(
-                registro.get(coluna_uf)
-            )
-
             elegivel = (
-                uf_expedidor == "SC"
+                rota_big_permitida(
+                    registro.get(coluna_cidade), registro.get(coluna_receptora)
+                )
                 and (ocorrencia == "64" or (incluir_espera_big and ocorrencia == "77"))
             )
 
@@ -569,7 +572,7 @@ def filtrar_registros(
             "regra_filtro": (
                 "cwb_oc63"
                 if fluxo == "CWB"
-                else ("big_sc_aguardando_oc64" if ocorrencia == "77" else "big_sc_oc64")
+                else ("big_florianopolis_aguardando_oc64" if ocorrencia == "77" else "big_florianopolis_oc64")
             ),
             "fluxo": fluxo,
         })

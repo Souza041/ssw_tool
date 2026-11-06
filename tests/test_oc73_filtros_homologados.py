@@ -9,7 +9,7 @@ def registro(ctrc, emissora, cidade, ocorrencia, uf_expedidor):
         "Cidade do Destinatario": cidade,
         "Cidade de Entrega": cidade,
         "Unidade Emissora": emissora,
-        "Unidade Receptora": "CWB",
+        "Unidade Receptora": "BIG",
         "Serie/Numero CTRC": ctrc,
         "Codigo Ultima Ocorrencia": ocorrencia,
         "UF do Expedidor": uf_expedidor,
@@ -25,7 +25,7 @@ def registro(ctrc, emissora, cidade, ocorrencia, uf_expedidor):
         ("CWB", registro("CWB100003-1", "CWB", "CURITIBA", "64", "PR"), False),
         ("CWB", registro("CWB100004-1", "CWB", "SAO PAULO", "63", "SP"), False),
         ("CWB", registro("CWB100005-1", "XXX", "CURITIBA", "63", "PR"), False),
-        ("BIG", registro("BIG200001-1", "BIG", "BIGUACU", "64", "SC"), True),
+        ("BIG", registro("BIG200001-1", "BIG", "FLORIANOPOLIS", "64", "SP"), True),
         ("BIG", registro("BIG200002-1", "JOI", "FLORIANOPOLIS", "64", "SC"), True),
         ("BIG", registro("BIG200003-1", "BIG", "BIGUACU", "64", "PR"), False),
         ("BIG", registro("BIG200004-1", "BIG", "BIGUACU", "63", "SC"), False),
@@ -67,14 +67,14 @@ def test_cwb_utiliza_cidade_do_destinatario(
     "expedidor,remetente,esperado",
     [
         ("SC", "PR", True),
-        ("PR", "SC", False),
+        ("PR", "SC", True),
     ],
 )
-def test_big_utiliza_uf_do_expedidor(
+def test_big_independe_das_ufs(
     expedidor, remetente, esperado
 ):
     item = registro(
-        "BIG999999-1", "BIG", "BIGUACU", "64", expedidor
+        "BIG999999-1", "BIG", "FLORIANOPOLIS", "64", expedidor
     )
     item["UF do Remetente"] = remetente
 
@@ -91,7 +91,8 @@ def test_big_utiliza_uf_do_expedidor(
     "fluxo,coluna",
     [
         ("CWB", "Cidade do Destinatario"),
-        ("BIG", "UF do Expedidor"),
+        ("BIG", "Cidade do Destinatario"),
+        ("BIG", "Unidade Receptora"),
     ],
 )
 def test_ausencia_da_coluna_obrigatoria_bloqueia(fluxo, coluna):
@@ -104,7 +105,7 @@ def test_ausencia_da_coluna_obrigatoria_bloqueia(fluxo, coluna):
     )
 
     # Os campos antigos continuam presentes, mas não podem
-    # substituir destinatário ou expedidor.
+    # substituir destinatário ou receptora.
     del item[coluna]
 
     with pytest.raises(KeyError):
