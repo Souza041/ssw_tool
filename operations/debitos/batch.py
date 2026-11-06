@@ -11,8 +11,10 @@ from .common import competencia_ssw, data_ssw, somente_digitos, valor_ssw
 from .op475 import OP475Despesas
 from .op506 import OP506Indenizacao
 
-
-CNPJ_HISTORICO_CONCATENADO = {"05117268000806"}
+CNPJS_HISTORICO_CONCATENADO = {
+    "05117268000806",
+    "13986197000121",
+}
 
 COLUNAS = {
     "VALOR": "Valor",
@@ -64,7 +66,6 @@ def _resolver_colunas(
 
     obrigatorias_475 = {
         "VALOR",
-        "MOTIVO",
         "NF",
         "UNIDADE",
         "VENCIMENTO",
@@ -411,48 +412,28 @@ def processar_planilha_debitos(
                     vencimento,
                 )
 
-                motivo = str(
-                    _valor_coluna(
-                        row,
-                        col,
-                        "MOTIVO",
-                    )
-                    or ""
-                ).strip()
+                # Regra de histórico OP475 por CNPJ.
+                historico = ""
 
-                historico_concat = str(
-                    _valor_coluna(
+                if cnpj in CNPJS_HISTORICO_CONCATENADO:
+                    historico_raw = _valor_coluna(
                         row,
                         col,
                         "HISTORICO_CONCATENADO",
                     )
-                    or ""
-                ).strip()
 
-                if (
-                    cnpj in CNPJ_HISTORICO_CONCATENADO
-                    and not historico_concat
-                ):
-                    raise ValueError(
-                        "Coluna/campo de histórico concatenado "
-                        "é obrigatório para CNPJ Whirlpool."
-                    )
+                    if pd.isna(historico_raw):
+                        historico_raw = ""
 
-                historico = (
-                    historico_concat
-                    if cnpj in CNPJ_HISTORICO_CONCATENADO
-                    else motivo
-                )
+                    historico = str(historico_raw).strip()
 
-                if not motivo:
-                    raise ValueError(
-                        "MOTIVO vazio."
-                    )
-
-                if not historico:
-                    raise ValueError(
-                        "Histórico da OP475 vazio."
-                    )
+                    if not historico or historico.lower() in {"nan", "none"}:
+                        raise ValueError(
+                            f"NF={nf} | CNPJ={cnpj} | "
+                            "Histórico concatenado obrigatório para este cliente. "
+                            "Verifique a coluna "
+                            "'Concatenado Campo Histórico SSW475'."
+                        )
 
                 if job:
                     add_log(
@@ -465,17 +446,6 @@ def processar_planilha_debitos(
                     )
 
                 op475.open()
-
-                print(
-                    "\n[DEBUG HISTORICO BATCH]"
-                    f"\nNF={nf}"
-                    f"\nCNPJ={cnpj}"
-                    f"\nCNPJ ESPECIAL={cnpj in CNPJ_HISTORICO_CONCATENADO}"
-                    f"\nMOTIVO={motivo!r}"
-                    f"\nCONCATENADO={historico_concat!r}"
-                    f"\nHISTORICO ESCOLHIDO={historico!r}"
-                    "\n"
-                )
 
                 resultado_475 = op475.lancar(
                     cnpj=cnpj,
