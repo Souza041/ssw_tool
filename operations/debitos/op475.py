@@ -52,6 +52,19 @@ class OP475Despesas:
         )
 
     @staticmethod
+    def _historico_compativel_ssw(texto: str) -> str:
+        valor = unicodedata.normalize(
+            "NFKD",
+            str(texto or ""),
+        )
+
+        return "".join(
+            caractere
+            for caractere in valor
+            if not unicodedata.combining(caractere)
+        )
+
+    @staticmethod
     def _valor_tela(valor: str) -> str:
         """
         Converte:
@@ -1089,6 +1102,8 @@ class OP475Despesas:
             self._valor_tela(valor)
         )
 
+        historico = self._historico_compativel_ssw(historico)
+        
         #
         # Ordem exatamente igual ao browser:
         #
