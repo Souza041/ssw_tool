@@ -1,12 +1,20 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="topbar">
-    <h1>Dashboard</h1>
+<div class="topbar nexus-dashboard-title">
+    <div class="auth-eyebrow">NEXUS AUTOMATION HUB</div><h1>Central de automações</h1>
     <p>Escolha uma automação para executar relatórios, coletas ou consultas no SSW.</p>
 </div>
 
-<div class="grid">
+{% if is_admin %}
+<div class="nexus-admin-entry"><div><strong>Observabilidade administrativa</strong><p>Indicadores, histórico e filtros de execução disponíveis para administradores.</p></div><a href="/admin/observabilidade">Abrir monitoramento →</a></div>
+{% endif %}
+
+<div class="nexus-section nexus-catalog-heading"><div><h2>Catálogo de automações</h2><p>Encontre a rotina que você precisa executar.</p></div><div class="nexus-catalog-tools"><label class="nexus-search-label" for="nexus-catalog-search">Buscar automação</label><input type="search" id="nexus-catalog-search" placeholder="Buscar por código ou nome..." autocomplete="off" aria-controls="nexus-catalog"/><span id="nexus-catalog-count" aria-live="polite"></span></div></div>
+<div id="nexus-catalog-empty" class="nexus-catalog-empty" hidden>Nenhuma automação corresponde à busca.</div>
+<div class="grid nexus-module-grid" id="nexus-catalog">
+    
+    
     <a class="module-card" href="/op001">
         <strong>OP001 - Coletas NFD</strong>
         <span>Processa planilha simples com NFD e CNPJ.</span>

@@ -252,42 +252,61 @@
             }
         }
     </style>
+    <link rel="stylesheet" href="/static/nexus.css">
+    <link rel="stylesheet" href="/static/nexus-sprint02.css">
+    <link rel="stylesheet" href="/static/nexus-sprint03.css">
+    <link rel="stylesheet" href="/static/nexus-sprint04.css">
+    <script defer src="/static/nexus-sprint02.js"></script>
 </head>
-<body>
+<body class="{% if request.url.path == '/login' %}nexus-login-page{% endif %}">
 <div class="layout">
-    <aside>
-        <div class="brand">SSW Tool</div>
-        <div class="subtitle">Automações HTTP Rodobras</div>
-
-        <!-- Sempre visível -->
-        <nav>
-            <a href="/renomeador">📄 Renomeador de Notas</a>
-        </nav>
-
+    <div class="nexus-mobile-bar"><button type="button" id="nexus-menu-toggle" aria-label="Abrir menu" aria-expanded="false">☰</button><span>NEXUS / AUTOMATION</span></div>
+    <div class="nexus-sidebar-backdrop" id="nexus-sidebar-backdrop"></div>
+    <aside class="nexus-sidebar" id="nexus-sidebar" aria-label="Navegação principal">
+      <a href="/" class="nexus-logo"><span class="brand-mark">N</span><span><b>Nexus</b><small>Automation Hub</small></span></a>
+      <div class="nexus-workspace">RODOBRAS <span>·</span> WORKSPACE</div>
+      <nav class="nexus-nav" aria-label="Módulos">
+        <div class="nexus-nav-group"><div class="nexus-nav-label">PRINCIPAL</div>
+          {% if request.session.get("ssw_session_id") %}<a href="/" data-nexus-path="/">◫ <span>Visão geral</span></a>{% endif %}
+          <a href="/renomeador" data-nexus-path="/renomeador">▤ <span>Renomeador de Notas</span></a>
+        </div>
         {% if request.session.get("ssw_session_id") %}
-        <nav>
-            <a href="/">Dashboard</a>
-            <a href="/op001">OP001 - Coletas NFD</a>
-            <a href="/op001-transporte">OP001 - Coletas Transporte</a>
-            <a href="/op103">OP103 - Devolução/Reversa</a>
-            <a href="/op150">OP150 - Relatório</a>
-            <a href="/op455">OP455 - CTRCs</a>
-            <a href="/op488">OP488 - Despesas</a>
-            <a href="/op535">OP535 - Regime Tributário</a>
-            <a href="/debitos">OP475 + OP506 - Débitos</a>
-            <a href="/op101-comprovantes">OP101 - Validar Comprovantes</a>
-            <a href="/incidentes-op930">OP930 - Incidentes</a>
-            <a href="/documentos">Documentos GCE</a>
-            {% if request.session.get("oc73_observabilidade") %}
-            <a href="/oc73/observabilidade">OC73 - Observabilidade</a>
-            {% endif %}
-            <a href="/logout" class="menu-item logout">🚪 Sair</a>
-        </nav>
+        <div class="nexus-nav-group"><div class="nexus-nav-label">COLETAS E RELATÓRIOS</div>
+          <a href="/op001" data-nexus-path="/op001">↗ <span>OP001 · Coletas NFD</span></a>
+          <a href="/op001-transporte" data-nexus-path="/op001-transporte">↗ <span>OP001 · Transporte</span></a>
+          <a href="/op103" data-nexus-path="/op103">↗ <span>OP103 · Devolução</span></a>
+          <a href="/op150" data-nexus-path="/op150">▤ <span>OP150 · Relatório</span></a>
+          <a href="/op455" data-nexus-path="/op455">▤ <span>OP455 · CTRCs</span></a>
+          <a href="/op488" data-nexus-path="/op488">▤ <span>OP488 · Despesas</span></a>
+          <a href="/op535" data-nexus-path="/op535">▤ <span>OP535 · Tributário</span></a>
+          <a href="/debitos" data-nexus-path="/debitos">▤ <span>OP475 + OP506 · Débitos</span></a>
+        </div>
+        <div class="nexus-nav-group"><div class="nexus-nav-label">DOCUMENTOS E OPERAÇÃO</div>
+          <a href="/op101-comprovantes" data-nexus-path="/op101-comprovantes">✓ <span>OP101 · Comprovantes</span></a>
+          <a href="/incidentes-op930" data-nexus-path="/incidentes-op930">◈ <span>OP930 · Incidentes</span></a>
+          <a href="/documentos" data-nexus-path="/documentos">▣ <span>Documentos GCE</span></a>
+          
+          
+          
+        </div>
+        {% if request.session.get("ssw_session_id") %}
+        <div class="nexus-nav-group"><div class="nexus-nav-label">MONITORAMENTO</div>
+          {% if is_admin|default(false) %}<a href="/admin/observabilidade" data-nexus-path="/admin/observabilidade">◉ <span>Observabilidade geral</span></a>{% endif %}
+          {% if request.session.get("oc73_observabilidade") %}
+          <a href="/oc73/observabilidade" data-nexus-path="/oc73/observabilidade">◉ <span>OC73 · Observabilidade</span></a>{% endif %}
+        </div>{% endif %}
         {% endif %}
+      </nav>
+      <div class="nexus-sidebar-footer">
+        <button type="button" id="nexus-theme-toggle" class="nexus-theme-button" aria-label="Alternar tema">◐ <span>Alternar tema</span></button>
+        {% if request.session.get("ssw_session_id") %}<a href="/logout" class="nexus-signout">⇥ <span>Sair da sessão</span></a>{% endif %}
+      </div>
     </aside>
 
     <main>
+        <div class="nexus-header"><span class="nexus-breadcrumb">Workspace <span>/</span> <strong id="nexus-current-page">Automações</strong></span><span class="nexus-header-right"><span class="nexus-header-status">NEXUS AUTOMATION</span><button type="button" id="nexus-theme-top" class="nexus-theme-top" aria-label="Alternar tema">◐</button></span></div>
         {% block content %}{% endblock %}
+        <link rel="stylesheet" href="/static/nexus-dark-contrast.css?v=1">
     </main>
 </div>
 </body>
