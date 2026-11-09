@@ -72,3 +72,8 @@ temp/
 
 temp/
 outputs/metricas_snapshots/
+
+# Nexus Automation - banco local
+data/nexus_automation_metrics.sqlite3
+data/nexus_automation_metrics.sqlite3-shm
+data/nexus_automation_metrics.sqlite3-wal

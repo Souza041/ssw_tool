@@ -25,6 +25,9 @@ from ssw.client import SSWClient
 from operations.op001.batch_transporte import processar_planilha_transporte
 
 from web.jobs import JOBS, add_log, criar_job, executar_job, set_progress
+from web.automation_metrics import snapshot
+from web.admin_access import is_admin
+from fastapi import HTTPException, Query
 
 from web.session_store import criar_sessao, exigir_client, remover_sessao, obter_client
 
@@ -37,6 +40,7 @@ from modules.ocorrencia_73.observabilidade import usuario_pode_observar
 
 router = APIRouter()
 templates = Jinja2Templates(directory="web/templates")
+templates.context_processors.append(lambda request: {"is_admin": is_admin(request)})
 
 def validar_login(request: Request):
     if not request.session.get("ssw_session_id"):
@@ -176,6 +180,10 @@ def login_run(
     unidade: str = Form(...),
 ):
     try:
+        cpf = "".join(ch for ch in cpf if ch.isdigit())
+        if len(cpf) != 11:
+            raise ValueError("Informe um CPF com 11 dígitos.")
+
         client = SSWClient(
             dominio=dominio,
             cpf=cpf,
@@ -217,8 +225,19 @@ def index(request: Request):
     if redirect:
         return redirect
 
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse("index.html", {"request": request, "is_admin": is_admin(request)})
 
+
+@router.get("/admin/observabilidade", response_class=HTMLResponse)
+def nexus_observabilidade(request: Request, dias: int = Query(7, ge=1, le=90), modulo: str = Query("", max_length=100), status: str = Query("", pattern="^(|done|error|running)$")):
+    if not obter_client(request):
+        return RedirectResponse("/login", status_code=303)
+    if not is_admin(request):
+        raise HTTPException(status_code=403, detail="Acesso restrito a administradores.")
+    return templates.TemplateResponse("admin_observabilidade.html", {
+        "request": request, "is_admin": True, "metrics": snapshot(days=dias, module=modulo, status=status),
+        "dias": dias, "modulo": modulo, "status": status,
+    })
 
 @router.get("/op455", response_class=HTMLResponse)
 def op455_form(request: Request):
@@ -241,7 +260,7 @@ def op455_run(
     except RuntimeError:
         return RedirectResponse("/login", status_code=303)
     
-    job = criar_job()
+    job = criar_job('OP455')
     add_log(job, "Job criado.")
 
     executar_job(
@@ -280,7 +299,7 @@ def op150_run(
     except RuntimeError:
             return RedirectResponse("/login", status_code=303)
 
-    job = criar_job()
+    job = criar_job('OP150')
     add_log(job, "Job criado.")
 
     executar_job(
@@ -367,7 +386,7 @@ def op488_run(
     except RuntimeError:
         return RedirectResponse("/login", status_code=303)
 
-    job = criar_job()
+    job = criar_job('OP488')
     add_log(job, "Job criado.")
 
     executar_job(
@@ -417,7 +436,7 @@ def op535_run(
             status_code=303,
         )
 
-    job = criar_job()
+    job = criar_job('OP535')
 
     add_log(
         job,
@@ -544,7 +563,7 @@ async def debitos_run(
         )
     )
 
-    job = criar_job()
+    job = criar_job('Débitos')
 
     nomes_modo = {
         "completo": "OP475 + OP506",
@@ -671,7 +690,7 @@ async def op001_run(
 
     output_file = Path("downloads") / f"processado_{arquivo_excel.filename}"
 
-    job = criar_job()
+    job = criar_job('OP001 NFD')
     add_log(job, "Job criado.")
 
     executar_job(
@@ -720,7 +739,7 @@ async def op001_transporte_run(
 
     output_file = Path("downloads") / f"transporte_processado_{arquivo_excel.filename}"
 
-    job = criar_job()
+    job = criar_job('OP001 Transporte')
     add_log(job, "Job criado.")
 
     executar_job(
@@ -928,7 +947,7 @@ async def op101_comprovantes_run(
 
     output_file = Path("downloads") / f"comprovantes_processado_{arquivo_excel.filename}"
 
-    job = criar_job()
+    job = criar_job('OP101')
     add_log(job, "Job criado.")
 
     executar_job(
@@ -1035,7 +1054,7 @@ async def renomeador_run(
     email: str = Form("gce4@rodobrastransp.com.br"),
     observacao: str = Form(""),
 ):
-    job = criar_job()
+    job = criar_job('Renomeador')
     add_log(job, "Job criado.")
     add_log(job, "Iniciando Carrier LG.")
 
@@ -1160,7 +1179,7 @@ def incidentes_op930_run(
     except RuntimeError:
         return RedirectResponse("/login", status_code=303)
 
-    job = criar_job()
+    job = criar_job('OP930')
     add_log(job, "Job criado.")
 
     executar_job(

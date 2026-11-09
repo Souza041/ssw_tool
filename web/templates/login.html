@@ -1,35 +1,22 @@
 {% extends "base.html" %}
-
 {% block content %}
-<div class="topbar">
-    <h1>Login SSW</h1>
-    <p>Informe suas credenciais para iniciar uma sessão no SSW.</p>
-</div>
-
-<div class="card">
-    {% if error %}
-    <div class="success" style="background:#fee2e2;color:#991b1b;">
-        {{ error }}
-    </div>
-    {% endif %}
-
-    <form method="post">
-        <label>Domínio</label>
-        <input name="dominio" value="ROD" required>
-
-        <label>CPF</label>
-        <input name="cpf" required>
-
-        <label>Usuário</label>
-        <input name="usuario" required>
-
-        <label>Senha</label>
-        <input name="senha" type="password" required>
-
-        <label>Unidade</label>
-        <input name="unidade" value="CWB" required>
-
-        <button type="submit">Entrar</button>
-    </form>
-</div>
+<section class="nexus-auth">
+  <div class="auth-story"><div class="story-pill">NEXUS / AUTOMATION HUB</div><h1>Automações mais inteligentes.<br><em>Operações mais simples.</em></h1><p>Uma central para executar, acompanhar e gerenciar suas rotinas SSW.</p><div class="story-footer">RODOBRAS · TECNOLOGIA & AUTOMAÇÃO</div></div>
+  <div class="auth-panel"><div class="auth-eyebrow">ACESSO CORPORATIVO</div><h2>Bem-vindo de volta</h2><p>Entre com suas credenciais do SSW para continuar.</p>
+  {% if error %}<div class="nexus-error" role="alert">{{ error }}</div>{% endif %}
+  <form method="post" id="ssw-login-form" autocomplete="on">
+  <div class="auth-fields"><div><label for="dominio">Domínio</label><input id="dominio" name="dominio" value="ROD" required></div><div><label for="unidade">Unidade</label><input id="unidade" name="unidade" value="CWB" required></div></div>
+  <label for="cpf">CPF</label><input id="cpf" name="cpf" inputmode="numeric" maxlength="14" placeholder="000.000.000-00" autocomplete="off" required>
+  <label for="usuario">Usuário</label><input id="usuario" name="usuario" autocomplete="username" required placeholder="Seu usuário SSW">
+  <label for="senha">Senha</label><div class="password-wrap"><input id="senha" name="senha" type="password" autocomplete="current-password" required placeholder="Sua senha"><button class="show-password" type="button" id="show-password" aria-label="Mostrar senha">Mostrar</button></div>
+  <button class="auth-submit" type="submit" id="submit-login">Entrar no ambiente <span>→</span></button>
+  </form><div class="auth-footnote">Acesso restrito a usuários autorizados.</div></div>
+</section>
+<script>
+(function(){const cpf=document.getElementById('cpf'),form=document.getElementById('ssw-login-form'),btn=document.getElementById('submit-login'),show=document.getElementById('show-password'),senha=document.getElementById('senha');
+function mask(v){const d=v.replace(/\D/g,'').slice(0,11);return d.replace(/^(\d{3})(\d)/,'$1.$2').replace(/^(\d{3})\.(\d{3})(\d)/,'$1.$2.$3').replace(/\.(\d{3})(\d)/,'.$1-$2')}
+cpf.addEventListener('input',()=>cpf.value=mask(cpf.value));show.addEventListener('click',()=>{senha.type=senha.type==='password'?'text':'password';show.textContent=senha.type==='password'?'Mostrar':'Ocultar'});
+form.addEventListener('submit',e=>{const digits=cpf.value.replace(/\D/g,'');if(digits.length!==11){e.preventDefault();cpf.setCustomValidity('Informe um CPF com 11 dígitos.');cpf.reportValidity();return}cpf.setCustomValidity('');cpf.value=digits;btn.disabled=true;btn.textContent='Conectando ao SSW...'});cpf.addEventListener('input',()=>cpf.setCustomValidity(''));
+})();
+</script>
 {% endblock %}
