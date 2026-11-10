@@ -650,16 +650,20 @@ class OP101Ocorrencias:
 
                     # Formatos administrativos observados na OP101. Não aceitar
                     # qualquer texto com f5 vazio como uma instrução válida.
-                    formatos_manifesto = (
+                    formatos_administrativos = (
                         r"DACTE CONFERIDO NA SAIDA DO MANIFESTO [A-Z]{3}[0-9]{1,20}-[0-9]",
                         r"MANIFESTO [A-Z]{3}[0-9]{1,20}-[0-9] CANCELADO\.",
                         r"- OPC 034 MANIFESTO [A-Z]{3}[0-9]{1,20}-[0-9] - DACTE CAPTURADO\.",
+                        r"SSWBAR - VOLUME NR [0-9]{12} \([0-9]{2}/[0-9]{2}\) "
+                        r"CAPTURADO EM CARREGAMENTO DE MANIFESTO PLACA PROV "
+                        r"[A-Z]{3}[0-9][A-Z0-9][0-9]{2}",
+                        r"ETIQUETAS DE IDENTIFICACAO DE VOLUMES FORAM REIMPRESSAS",
                     )
-                    evento_manifesto = any(
+                    evento_administrativo = any(
                         re.fullmatch(formato, texto_complementar) is not None
-                        for formato in formatos_manifesto
+                        for formato in formatos_administrativos
                     )
-                    if evento_manifesto:
+                    if evento_administrativo:
                         # Tags ausentes, duplicadas ou truncadas não podem ser
                         # confundidas com campos explicitamente vazios.
                         for indice in (0, 3, 5, 6, 10):
@@ -680,7 +684,7 @@ class OP101Ocorrencias:
                             for prefixo in eventos_informativos
                         )
                         or evento_rastreamento_sacflow
-                        or evento_manifesto
+                        or evento_administrativo
                     )
 
                     linha_informativa = (
