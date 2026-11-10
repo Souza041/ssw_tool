@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="topbar"><div class="auth-eyebrow">NEXUS / ADMIN</div><h1>Observabilidade</h1><p>Dados operacionais restritos a administradores autorizados.</p></div>
+<form class="n4-filters" method="get" action="/admin/observabilidade">
+<label>Período<select name="dias"><option value="7" {% if dias == 7 %}selected{% endif %}>7 dias</option><option value="14" {% if dias == 14 %}selected{% endif %}>14 dias</option><option value="30" {% if dias == 30 %}selected{% endif %}>30 dias</option><option value="90" {% if dias == 90 %}selected{% endif %}>90 dias</option></select></label>
+<label>Módulo<input name="modulo" maxlength="100" value="{{ modulo }}" placeholder="Filtrar pelo nome"></label>
+<label>Situação<select name="status"><option value="">Todas</option><option value="done" {% if status == 'done' %}selected{% endif %}>Concluídas</option><option value="error" {% if status == 'error' %}selected{% endif %}>Falhas</option><option value="running" {% if status == 'running' %}selected{% endif %}>Em andamento</option></select></label>
+<button type="submit">Aplicar filtros</button>
+</form>
+<section class="n3-dashboard" aria-label="Indicadores operacionais">
+ <div class="n3-overview"><div><div class="auth-eyebrow">OBSERVABILIDADE · ADMIN</div><h2>Indicadores de execução</h2><p>{{ metrics.scope }}</p></div><span class="n3-pill">● Dados registrados</span></div>
+ <div class="n3-kpis">
+  <article class="n3-kpi"><span>Execuções · 7 dias</span><strong>{{ metrics.total }}</strong><small>Iniciadas neste servidor</small></article>
+  <article class="n3-kpi"><span>Taxa de sucesso</span><strong>{% if metrics.rate is not none %}{{ metrics.rate }}%{% else %}—{% endif %}</strong><small>Entre execuções finalizadas</small></article>
+  <article class="n3-kpi"><span>Em andamento</span><strong>{{ metrics.running }}</strong><small>Registros sem finalização</small></article>
+  <article class="n3-kpi"><span>Falhas · 7 dias</span><strong>{{ metrics.errors }}</strong><small>Jobs encerrados com erro</small></article>
+ </div>
+ <div class="n3-panels"><article class="n3-panel"><div class="n3-panel-heading"><div><h3>Atividade por dia</h3><p>Sucessos e falhas dos jobs monitorados</p></div><span>Últimos 7 dias</span></div>
+ <div class="n3-legend"><span><i class="n3-dot n3-ok"></i>Sucesso</span><span><i class="n3-dot n3-fail"></i>Falha</span></div>
+ {% set ns = namespace(maximum=1) %}{% for d in metrics.daily %}{% if d.done + d.error > ns.maximum %}{% set ns.maximum = d.done + d.error %}{% endif %}{% endfor %}
+ <div class="n3-bars" role="img" aria-label="Execuções diárias por status">
+ {% for d in metrics.daily %}<div class="n3-bar-col" title="{{ d.date }}: {{ d.done }} sucesso(s), {{ d.error }} falha(s)"><div class="n3-bar-track"><div class="n3-bar-stack" style="height:{{ ((d.done + d.error) / ns.maximum * 100)|round(1) }}%"><div class="n3-bar-error" style="flex:{{ d.error }}"></div><div class="n3-bar-success" style="flex:{{ d.done }}"></div></div></div><small>{{ d.date[5:] }}</small></div>{% endfor %}
+ </div><p class="n3-panel-foot">*Dados locais persistidos; execuções anteriores à instalação não são recuperadas.</p></article>
+ <article class="n3-panel"><div class="n3-panel-heading"><div><h3>Execuções recentes</h3><p>Últimos registros do monitoramento</p></div></div>
+ {% if metrics.recent %}<div class="n3-recent">{% for run in metrics.recent %}<div class="n3-run"><div><strong>{{ run.module }}</strong><small>{{ run.started }}</small></div><span class="n3-status n3-{{ run.status }}">{% if run.status == 'done' %}Concluído{% elif run.status == 'error' %}Falha{% else %}Em andamento{% endif %}</span></div>{% endfor %}</div>{% else %}<div class="n3-empty">Nenhuma execução registrada ainda. Os indicadores serão preenchidos após os próximos jobs.</div>{% endif %}
+ <p class="n3-panel-foot">Duração média: {% if metrics.avg_seconds is not none %}{{ metrics.avg_seconds }} s{% else %}sem dados{% endif %} · Não inclui rotinas externas.</p></article></div>
+</section>
+
+<p class="n4-disclaimer">Os indicadores representam somente os jobs registrados em web/jobs.py. Integrações LG POD e OC73 exigem adaptadores próprios e ainda não fazem parte deste consolidado. Registros em andamento podem incluir execuções interrompidas.</p>
+{% endblock %}

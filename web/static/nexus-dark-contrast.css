@@ -1,0 +1,80 @@
+/* Nexus Automation: dark contrast hotfix. Loaded after template inline styles. */
+body.nexus-dark:not(.nexus-login-page) {
+  --nexus-surface: #172239;
+  --nexus-surface-raised: #1d2b46;
+  --nexus-text: #edf3ff;
+  --nexus-muted: #b3c1da;
+  --nexus-line: #344765;
+}
+/* Legacy code tags have a light background and must not inherit light text. */
+body.nexus-dark:not(.nexus-login-page) main code {
+  background: #263b60;
+  color: #eaf1ff;
+  border: 1px solid #3a5279;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+/* Native upload controls */
+body.nexus-dark:not(.nexus-login-page) main input[type="file"] {
+  color: #eaf1ff;
+  background: #1d2b46;
+  border-color: #344765;
+  max-width: 100%;
+}
+body.nexus-dark:not(.nexus-login-page) main input[type="file"]::file-selector-button {
+  background: #30466c;
+  color: #fff;
+  border: 1px solid #51658b;
+  border-radius: 7px;
+  padding: 7px 11px;
+  margin-right: 12px;
+  cursor: pointer;
+}
+/* OP475/OP506: original inline styles use white/blue surfaces with var(--text).
+   Override both surface and typography rather than recoloring every descendant. */
+body.nexus-dark:not(.nexus-login-page) .debitos-mode-card {
+  background: #1d2b46;
+  border-color: #3b4d6d;
+  color: #edf3ff;
+}
+body.nexus-dark:not(.nexus-login-page) .debitos-mode-card.active {
+  background: #203765;
+  border-color: #688bff;
+  box-shadow: 0 0 0 3px rgba(90,125,255,.15);
+}
+body.nexus-dark:not(.nexus-login-page) .debitos-mode-title,
+body.nexus-dark:not(.nexus-login-page) .debitos-rules strong {
+  color: #f4f7ff;
+}
+body.nexus-dark:not(.nexus-login-page) .debitos-mode-description,
+body.nexus-dark:not(.nexus-login-page) .debitos-rules p {
+  color: #b9c9e2;
+}
+body.nexus-dark:not(.nexus-login-page) .debitos-mode-flow {
+  background: #304b80;
+  color: #e1ebff;
+}
+body.nexus-dark:not(.nexus-login-page) .debitos-info {
+  background: #1d3559;
+  border-color: #3f679b;
+  color: #e3efff;
+}
+body.nexus-dark:not(.nexus-login-page) .debitos-info strong { color: #fff; }
+body.nexus-dark:not(.nexus-login-page) .debitos-rules {
+  background: #1b2942;
+  border-color: #344765;
+  color: #b9c9e2;
+}
+/* Common legacy feedback panels retain sufficient contrast. */
+body.nexus-dark:not(.nexus-login-page) main .success {
+  background: #153c35;
+  color: #baf4dc;
+}
+body.nexus-dark:not(.nexus-login-page) main .success a { color: #d7fff0; }
+body.nexus-dark:not(.nexus-login-page) main input::placeholder,
+body.nexus-dark:not(.nexus-login-page) main textarea::placeholder { color: #a9b8d1; opacity: 1; }
+body.nexus-dark:not(.nexus-login-page) main textarea {
+  background: #1d2b46;
+  color: #edf3ff;
+  border-color: #344765;
+}

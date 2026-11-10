@@ -5,6 +5,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
+import logging
+from web import automation_metrics
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -22,9 +25,13 @@ class Job:
 JOBS: dict[str, Job] = {}
 
 
-def criar_job() -> Job:
+def criar_job(module: str = "SSW Tool") -> Job:
     job = Job(id=str(uuid.uuid4()))
     JOBS[job.id] = job
+    try:
+        automation_metrics.started(job.id, module)
+    except Exception:
+        logger.exception("Falha ao registrar inicio de job em metricas")
     return job
 
 
@@ -55,6 +62,11 @@ def executar_job(job: Job, func: Callable, *args, **kwargs) -> None:
             job.error = str(exc)
 
             add_log(job, f"Erro: {exc}")
+        finally:
+            try:
+                automation_metrics.finished(job.id, job.status)
+            except Exception:
+                logger.exception("Falha ao registrar termino de job em metricas")
 
     thread = threading.Thread(target=runner, daemon=True)
     thread.start()
