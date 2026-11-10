@@ -26,6 +26,7 @@ from operations.op001.batch_transporte import processar_planilha_transporte
 
 from web.jobs import JOBS, add_log, criar_job, executar_job, set_progress
 from web.automation_metrics import snapshot
+from modules.health_center.routes import dashboard_context
 from web.admin_access import is_admin
 from fastapi import HTTPException, Query
 
@@ -229,7 +230,16 @@ def index(request: Request):
 
 
 @router.get("/admin/observabilidade", response_class=HTMLResponse)
-def nexus_observabilidade(request: Request, dias: int = Query(7, ge=1, le=90), modulo: str = Query("", max_length=100), status: str = Query("", pattern="^(|done|error|running)$")):
+def nexus_observabilidade(
+    request: Request,
+    dias: int = Query(7, ge=1, le=90),
+    modulo: str = Query("", max_length=100),
+    status: str = Query("", pattern="^(|done|error|running)$"),
+    health_bot: str = Query("", pattern=r"^$|^[a-z][a-z0-9_]{0,99}$"),
+    health_status: str = Query("", pattern=r"^$|^(PENDING|RUNNING|SUCCESS|PARTIAL|FAILED|CANCELLED|SKIPPED)$"),
+    health_days: int = Query(7, ge=1, le=90),
+    health_page: int = Query(1, ge=1, le=1000),
+):
     if not obter_client(request):
         return RedirectResponse("/login", status_code=303)
     if not is_admin(request):
@@ -237,6 +247,12 @@ def nexus_observabilidade(request: Request, dias: int = Query(7, ge=1, le=90), m
     return templates.TemplateResponse("admin_observabilidade.html", {
         "request": request, "is_admin": True, "metrics": snapshot(days=dias, module=modulo, status=status),
         "dias": dias, "modulo": modulo, "status": status,
+        "health": dashboard_context(
+            request, bot_id=health_bot or None, status=health_status or None,
+            days=health_days, page=health_page,
+        ),
+        "health_bot": health_bot, "health_status": health_status,
+        "health_days": health_days, "health_page": health_page,
     })
 
 @router.get("/op455", response_class=HTMLResponse)

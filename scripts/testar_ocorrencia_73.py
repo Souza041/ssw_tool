@@ -14,10 +14,17 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+# A configuração operacional mantém o override histórico; somente o flag de
+# observabilidade preserva a prioridade do ambiente externo ao processo.
+_health_enabled_from_process = os.environ.get("HEALTH_CENTER_ENABLED")
 load_dotenv(
     PROJECT_ROOT / ".env",
     override=True,
 )
+if _health_enabled_from_process is None:
+    os.environ.pop("HEALTH_CENTER_ENABLED", None)
+else:
+    os.environ["HEALTH_CENTER_ENABLED"] = _health_enabled_from_process
 
 PADRAO_CTRC = re.compile(r"[A-Z]{2,4}[0-9]{1,20}\Z")
 VAR_AUTORIZACAO_MANUAL = "OC73_HOMOLOGACAO_MANUAL_AUTORIZADA"

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="topbar"><div class="auth-eyebrow">NEXUS / HEALTH CENTER</div><h1>{{ detail.bot.name or detail.bot.identifier }}</h1><p>Detalhe administrativo de uma automação cadastrada.</p></div>
+<p><a href="/admin/observabilidade#health-center">← Voltar à observabilidade</a></p>
+<section class="card" style="max-width:1050px">
+  <p><strong>Identificador:</strong> {{ detail.bot.identifier }} · <strong>Origem observada:</strong> {{ detail.bot.origin or '—' }}</p>
+  <p><strong>Estado:</strong> {{ detail.bot.operational_state }} · <strong>Instrumentação:</strong> {% if detail.bot.instrumented %}identificada no código{% else %}não verificada{% endif %} · <strong>Agendamento:</strong> {% if detail.bot.schedule_verified %}verificado{% else %}não verificado{% endif %}</p>
+  <p><strong>Última execução:</strong> {% if detail.bot.last_execution_at_utc %}{{ detail.bot.last_execution_at_utc }} UTC{% else %}nenhuma observada{% endif %} · <strong>Duração:</strong> {% if detail.bot.last_duration_seconds is not none %}{{ detail.bot.last_duration_seconds|round(1) }} s{% else %}—{% endif %}</p>
+  <h2>Indicadores · últimos {{ detail.days }} dias</h2>
+  <p>{{ detail.activity.executions }} execução(ões) registrada(s) · {{ detail.activity.successes }} sucesso(s) · {{ detail.activity.partials }} parcial(is) · {{ detail.activity.failures }} falha(s).</p>
+  <p>Duração média: {% if detail.activity.avg_duration_seconds is not none %}{{ detail.activity.avg_duration_seconds|round(1) }} s{% else %}sem dados{% endif %}.</p>
+  <h2>Histórico</h2>
+  {% if detail.history['items'] %}<div style="overflow-x:auto"><table style="width:100%;min-width:650px;text-align:left"><thead><tr><th>Início UTC</th><th>Resultado</th><th>Duração</th><th>Diagnóstico sanitizado</th><th>Detalhe</th></tr></thead><tbody>
+  {% for run in detail.history['items'] %}<tr><td>{{ run.started_at_utc }}</td><td>{{ run.status }}</td><td>{% if run.duration_seconds is not none %}{{ run.duration_seconds|round(1) }} s{% else %}—{% endif %}</td><td>{{ run.error_message or run.summary or '—' }}</td><td><a href="/admin/health-center/executions/{{ run.id }}/view">Ver</a></td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<p>Sem execuções registradas neste período.</p>{% endif %}
+  <p>{{ detail.history.total }} registro(s) · página {{ detail.history.page }}.
+    {% if detail.history.page > 1 %}<a href="?days={{ detail.days }}&amp;page={{ detail.history.page - 1 }}">Anterior</a>{% endif %}
+    {% if detail.history.page * detail.history.per_page < detail.history.total %}<a href="?days={{ detail.days }}&amp;page={{ detail.history.page + 1 }}">Próxima</a>{% endif %}
+  </p>
+  <p>Execuções ausentes ou estados sem confirmação não são classificados como sucesso.</p>
+</section>
+{% endblock %}

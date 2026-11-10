@@ -16,6 +16,8 @@ from modules.ocorrencia_73.config import DRY_RUN
 from modules.ocorrencia_73.rechecagem_politica import rechecagem_big_habilitada
 from modules.ocorrencia_73.repository import Ocorrencia73Repository
 from modules.ocorrencia_73.service import Ocorrencia73Service
+from modules.health_center.monitor import run_monitored
+from modules.health_center.ocorrencia_73 import BOT, classify_result
 
 
 logger = logging.getLogger(__name__)
@@ -132,11 +134,16 @@ def _executar_ocorrencia_73_agendada_serializada(
             return None
 
         service = Ocorrencia73Service(repository=repository)
-        resultado = service.executar(
-            data_referencia=data_referencia,
-            triggered_by=reserva["triggered_by"],
-            fluxo=fluxo,
-            execucao_id_reservada=reserva["execucao_id"],
+        resultado = run_monitored(
+            bot=BOT,
+            origin=reserva["triggered_by"],
+            operation=lambda: service.executar(
+                data_referencia=data_referencia,
+                triggered_by=reserva["triggered_by"],
+                fluxo=fluxo,
+                execucao_id_reservada=reserva["execucao_id"],
+            ),
+            classify=classify_result,
         )
 
         logger.info(
