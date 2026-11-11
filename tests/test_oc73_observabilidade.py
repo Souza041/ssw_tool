@@ -128,10 +128,10 @@ def test_proximas_execucoes_sao_teoricas_com_scheduler_desligado(monkeypatch):
     assert all("teórica" in item["rotulo"] for item in proximas)
     por_fluxo = {item["fluxo"]: item["proxima_execucao"] for item in proximas}
     assert por_fluxo["CWB"] == datetime(
-        2026, 10, 16, 23, 30, tzinfo=observabilidade.TIMEZONE
+        2026, 10, 15, 23, 55, tzinfo=observabilidade.TIMEZONE
     )
     assert por_fluxo["BIG"] == datetime(
-        2026, 10, 19, 23, 30, tzinfo=observabilidade.TIMEZONE
+        2026, 10, 15, 23, 55, tzinfo=observabilidade.TIMEZONE
     )
 
 

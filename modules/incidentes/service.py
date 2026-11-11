@@ -39,6 +39,23 @@ from modules.incidentes.serializers import (
 )
 
 
+REGISTRO_REGRA_CAMPOS = (
+    "ctrc",
+    "numero_nota",
+    "data_inclusao_ctrc",
+    "data_ocorrencia",
+    "grupo_cliente",
+    "cliente",
+    "unidade",
+    "tipo_operacao",
+    "codigo_ocorrencia",
+    "status_debito",
+    "regra_debito",
+    "produto",
+    "valor_carga",
+)
+
+
 class IncidentesService:
     def __init__(
         self,
@@ -863,6 +880,161 @@ class IncidentesService:
             ],
             rows=rows,
         )
+
+
+    def consultar_registros_regra(
+        self,
+        regra: str,
+        filtros: DashboardFilters,
+        pagina: int = 1,
+        limite: int = 25,
+        busca: str = "",
+    ) -> dict:
+        if not regra.strip():
+            raise ValueError("Informe a regra.")
+
+        if pagina < 1 or not 1 <= limite <= 100:
+            raise ValueError("Paginação inválida.")
+
+        base = aplicar_filtros_dashboard(
+            self.repository.auditoria(),
+            filtros,
+        )
+
+        base = normalizar_colunas(base)
+
+        coluna_regra = encontrar_coluna_logica(
+            base, "regra_debito"
+        )
+
+        if coluna_regra is None:
+            raise ValueError(
+                "Coluna de regra não encontrada."
+            )
+
+        base = base.loc[
+            serie_texto(base, coluna_regra).eq(regra)
+        ].copy()
+
+        # Pesquisa apenas em campos de identificação.
+        if busca.strip():
+            termos = ["CTRC", "NOTA_FISCAL", "NF"]
+            colunas = [
+                coluna for coluna in base.columns
+                if coluna.upper() in termos
+            ]
+
+            if colunas:
+                mascara = pd.Series(
+                    False, index=base.index
+                )
+
+                for coluna in colunas:
+                    mascara |= (
+                        base[coluna]
+                        .fillna("")
+                        .astype(str)
+                        .str.contains(
+                            busca.strip(),
+                            case=False,
+                            regex=False,
+                        )
+                    )
+
+                base = base.loc[mascara]
+
+        total = len(base)
+        inicio = (pagina - 1) * limite
+        fim = inicio + limite
+
+        registros = [
+            self._registro_regra_publico(linha)
+            for _, linha in base.iloc[inicio:fim].iterrows()
+        ]
+
+        return {
+            "regra": regra,
+            "total": total,
+            "pagina": pagina,
+            "limite": limite,
+            "total_paginas": (
+                (total + limite - 1) // limite
+            ),
+            "registros": registros,
+        }
+
+    def _registro_regra_publico(
+        self,
+        linha: pd.Series,
+    ) -> Dict[str, Any]:
+        """Projeção fechada usada pelo detalhamento administrativo."""
+        return {
+            "ctrc": self._valor_linha(
+                linha,
+                ["CTRC", "NUMERO_CTRC", "NUM_CTRC"],
+            ),
+            "numero_nota": self._valor_linha(
+                linha,
+                [
+                    "NRO_NOTA_FISCAL",
+                    "NUMERO_NOTA_FISCAL",
+                    "NUMERO_NOTA",
+                    "NOTA_FISCAL",
+                    "NF",
+                ],
+            ),
+            "data_inclusao_ctrc": self._data_linha(
+                linha,
+                [
+                    "EMISSAO_CTRC",
+                    "DATA_EMISSAO_CTRC",
+                    "DATA_INCLUSAO_CTRC",
+                    "DATA_CTRC",
+                ],
+            ),
+            "data_ocorrencia": self._data_linha(
+                linha,
+                [
+                    "DATA_OCOR",
+                    "DATA_OCORRENCIA",
+                    "DIA_INCLUSAO_OCOR",
+                    "DATA",
+                ],
+            ),
+            "grupo_cliente": self._valor_logico_linha(
+                linha, "grupo_cliente"
+            ),
+            "cliente": self._valor_logico_linha(
+                linha, "cliente"
+            ),
+            "unidade": self._valor_logico_linha(
+                linha, "unidade"
+            ),
+            "tipo_operacao": self._valor_logico_linha(
+                linha, "tipo_operacao"
+            ),
+            "codigo_ocorrencia": self._valor_logico_linha(
+                linha, "codigo_ocorrencia"
+            ),
+            "status_debito": self._valor_logico_linha(
+                linha, "status_debito"
+            ),
+            "regra_debito": self._valor_logico_linha(
+                linha, "regra_debito"
+            ),
+            "produto": self._valor_logico_linha(
+                linha, "produto"
+            ),
+            "valor_carga": self._numero_linha(
+                linha,
+                [
+                    "VALOR_CARGA_CTE",
+                    "VALOR_CARGA",
+                    "VALOR_TOTAL_CARGA",
+                ],
+            ),
+        }
+
 
     # --------------------------------------------------
     # Regras

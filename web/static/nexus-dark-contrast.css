@@ -6,6 +6,10 @@ body.nexus-dark:not(.nexus-login-page) {
   --nexus-muted: #b3c1da;
   --nexus-line: #344765;
 }
+body.nexus-dark:not(.nexus-login-page) .hc-detail a,
+body.nexus-dark:not(.nexus-login-page) main > p > a[href^="/admin/observabilidade"] {
+  color: #b3c8ff;
+}
 /* Legacy code tags have a light background and must not inherit light text. */
 body.nexus-dark:not(.nexus-login-page) main code {
   background: #263b60;

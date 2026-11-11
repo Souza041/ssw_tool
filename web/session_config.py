@@ -98,7 +98,12 @@ def carregar_configuracao_sessao(
 ) -> SessionSecurityConfig:
     if environ is None:
         definida_no_processo = SECRET_ENV_NAME in os.environ
+        health_flag_from_process = os.environ.get("HEALTH_CENTER_ENABLED")
         load_dotenv(env_file, override=False)
+        if health_flag_from_process is None:
+            os.environ.pop("HEALTH_CENTER_ENABLED", None)
+        else:
+            os.environ["HEALTH_CENTER_ENABLED"] = health_flag_from_process
         valores = os.environ
         source = (
             "ambiente do processo"

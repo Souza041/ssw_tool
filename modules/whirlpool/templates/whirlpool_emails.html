@@ -1,0 +1,240 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+    .whp-card { max-width: none; }
+    .whp-run-head { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; flex-wrap:wrap; }
+    .whp-run-head h3 { margin-bottom:6px; }
+    .whp-run-meta { margin:0; color:var(--muted); font-size:14px; }
+    .whp-download { display:inline-flex; align-items:center; justify-content:center; width:auto; min-height:42px; padding:10px 16px; border-radius:11px; background:var(--primary); color:#fff; font-weight:700; text-decoration:none; }
+    .whp-download:hover { background:var(--primary-dark); }
+    .whp-summary { display:grid; grid-template-columns:repeat(4,minmax(145px,1fr)); gap:12px; margin:22px 0; }
+    .whp-stat { border:1px solid var(--border); border-radius:14px; padding:16px; background:#fff; }
+    .whp-stat span { display:block; color:var(--muted); font-size:13px; margin-bottom:7px; }
+    .whp-stat strong { font-size:26px; line-height:1; }
+    .whp-table-wrap { overflow-x:auto; border:1px solid var(--border); border-radius:14px; background:#fff; }
+    .whp-table { width:100%; border-collapse:collapse; font-size:13px; }
+    .whp-table th,.whp-table td { padding:12px 14px; text-align:left; border-bottom:1px solid #f1f5f9; vertical-align:top; }
+    .whp-table th { color:var(--muted); font-weight:600; background:#f8fafc; white-space:nowrap; }
+    .whp-table tbody tr:last-child td { border-bottom:0; }
+    .whp-number { text-align:right !important; font-variant-numeric:tabular-nums; }
+    .whp-recipients { min-width:170px; }
+    .whp-recipients summary { width:max-content; max-width:100%; cursor:pointer; color:var(--primary); font-weight:700; }
+    .whp-recipients summary:focus-visible { outline:3px solid rgba(37,99,235,.25); outline-offset:3px; border-radius:4px; }
+    .whp-email-list { margin:9px 0 0; padding:10px 12px 10px 28px; border-radius:9px; background:#f8fafc; color:#334155; overflow-wrap:anywhere; }
+    .whp-email-list li + li { margin-top:5px; }
+    .whp-muted { color:var(--muted); }
+    .whp-badge { display:inline-flex; align-items:center; width:max-content; padding:5px 9px; border-radius:999px; font-size:11px; line-height:1.2; font-weight:700; white-space:nowrap; }
+    .whp-badge-simulation { background:#dbeafe; color:#1e40af; }
+    .whp-badge-pending { background:#e0f2fe; color:#075985; }
+    .whp-badge-sent { background:#dcfce7; color:#166534; }
+    .whp-badge-warning { background:#fef3c7; color:#92400e; }
+    .whp-badge-error { background:#fee2e2; color:#991b1b; }
+    .whp-badge-empty { background:#e2e8f0; color:#475569; }
+    .whp-pagination { display:flex; align-items:center; justify-content:space-between; gap:14px; margin-top:14px; flex-wrap:wrap; }
+    .whp-pagination-controls { display:flex; align-items:center; gap:8px; }
+    .whp-pagination button { width:auto; padding:8px 12px; border-radius:9px; font-size:13px; }
+    .whp-pagination button:disabled { opacity:.45; cursor:not-allowed; }
+    .whp-pagination label { display:flex; align-items:center; gap:8px; margin:0; color:var(--muted); }
+    .whp-pagination select { width:auto; margin:0; padding:8px 30px 8px 10px; }
+    .whp-page-info { color:var(--muted); font-size:13px; }
+    .whp-empty { padding:20px; color:var(--muted); text-align:center; }
+    @media (max-width:900px) { .whp-summary { grid-template-columns:repeat(2,minmax(130px,1fr)); } }
+    @media (max-width:600px) {
+        .whp-card { padding:18px; }
+        .whp-summary { grid-template-columns:1fr 1fr; }
+        .whp-stat { padding:13px; }
+        .whp-stat strong { font-size:22px; }
+        .whp-download { width:100%; }
+        .whp-pagination { flex-direction:column; align-items:stretch; }
+        .whp-pagination-controls { justify-content:space-between; }
+        .whp-pagination button { flex:1; }
+    }
+</style>
+
+<div class="topbar">
+    <h1>Whirlpool — E-mails</h1>
+    <p>Valide e simule a planilha antes da futura homologação de portal e SMTP.</p>
+</div>
+
+<div class="card whp-card">
+    <h3>Nova simulação</h3>
+    <form method="post" action="/whirlpool/emails/simular" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="arquivo">Planilha Whirlpool (.xlsx)</label>
+        <input id="arquivo" name="arquivo" type="file" accept=".xlsx" required>
+        <button type="submit">Simular — nenhum e-mail será enviado</button>
+    </form>
+    <p><small>O arquivo fica em armazenamento privado e não é publicado em <code>/downloads</code>.</small></p>
+</div>
+
+{% if execucao %}
+<div class="card whp-card" style="margin-top:20px;">
+    <div class="whp-run-head">
+        <div>
+            <h3>Execução {{ execucao.id[:8] }}</h3>
+            <p class="whp-run-meta">
+                <span class="whp-badge whp-badge-simulation">SIMULAÇÃO</span>
+                Status do processamento: <strong>{{ execucao.status }}</strong>
+            </p>
+        </div>
+        {% if execucao.result_path %}
+        <a class="whp-download" href="/whirlpool/emails/resultados/{{ execucao.id }}">Baixar planilha de resultado</a>
+        {% endif %}
+    </div>
+    <progress value="{{ execucao.progresso or 0 }}" max="{{ execucao.total or 1 }}" style="width:100%;margin-top:18px;"></progress>
+    {% if execucao.erro %}<p class="error" role="alert">{{ execucao.erro }}</p>{% endif %}
+
+    {% if portal_available and execucao.status == "SIMULADO" %}
+    <details style="margin-top:18px;border:1px solid var(--border);border-radius:12px;padding:14px;">
+        <summary style="cursor:pointer;font-weight:700;color:var(--primary);">Homologar consulta e downloads no portal</summary>
+        <p class="whp-muted">Executa Chromium headless em <strong>PORTAL_DRY_RUN</strong>. Não envia e-mails e não altera a coluna EMAIL ENVIADO.</p>
+        <form method="post" action="/whirlpool/emails/{{ execucao.id }}/portal-dry-run">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <label for="confirmacao-portal">Para autorizar este job, digite: HOMOLOGAR PORTAL SEM ENVIO</label>
+            <input id="confirmacao-portal" name="confirmacao" autocomplete="off" required>
+            <button type="submit">Iniciar homologação do portal</button>
+        </form>
+    </details>
+    {% endif %}
+
+    {% if execucao.resumo %}
+    {% set totais = namespace(pendentes=0, enviados=0, erros=0) %}
+    {% for item in execucao.resumo.resumo_transportes %}
+        {% set totais.pendentes = totais.pendentes + item.pendentes %}
+        {% set totais.enviados = totais.enviados + item.ja_enviados %}
+        {% set totais.erros = totais.erros + item.erros %}
+    {% endfor %}
+
+    <section aria-labelledby="whp-results-title">
+        <h3 id="whp-results-title" style="margin-top:24px;">Resultado da simulação</h3>
+        <div class="whp-summary" aria-label="Resumo da simulação">
+            <div class="whp-stat"><span>Total de transportes</span><strong>{{ execucao.resumo.total_transportes }}</strong></div>
+            <div class="whp-stat"><span>Linhas pendentes</span><strong>{{ totais.pendentes }}</strong></div>
+            <div class="whp-stat"><span>Já enviados</span><strong>{{ totais.enviados }}</strong></div>
+            <div class="whp-stat"><span>Erros</span><strong>{{ totais.erros }}</strong></div>
+        </div>
+
+        <div id="whirlpool-results" data-page-size="25">
+            <div class="whp-table-wrap">
+                <table class="whp-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Transporte</th>
+                            <th scope="col">Destinatários</th>
+                            <th scope="col" class="whp-number">Pendentes</th>
+                            <th scope="col" class="whp-number">Já enviados</th>
+                            <th scope="col" class="whp-number">Erros</th>
+                            <th scope="col">Situação na planilha</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for item in execucao.resumo.resumo_transportes %}
+                        <tr class="whp-result-row">
+                            <td><strong>{{ item.transporte }}</strong></td>
+                            <td class="whp-recipients">
+                            {% if item.destinatarios %}
+                                <details>
+                                    <summary>{{ item.destinatarios | length }} destinatário{% if item.destinatarios | length != 1 %}s{% endif %}</summary>
+                                    <ul class="whp-email-list">
+                                    {% for destinatario in item.destinatarios %}<li>{{ destinatario }}</li>{% endfor %}
+                                    </ul>
+                                </details>
+                            {% else %}
+                                <span class="whp-muted">Não encontrado</span>
+                            {% endif %}
+                            </td>
+                            <td class="whp-number">{{ item.pendentes }}</td>
+                            <td class="whp-number">{{ item.ja_enviados }}</td>
+                            <td class="whp-number">{{ item.erros }}</td>
+                            <td>
+                            {% if item.erros > 0 %}
+                                <span class="whp-badge whp-badge-error">Com erros</span>
+                            {% elif item.pendentes > 0 and item.ja_enviados > 0 %}
+                                <span class="whp-badge whp-badge-warning">Situação mista</span>
+                            {% elif item.pendentes > 0 %}
+                                <span class="whp-badge whp-badge-pending">Pendente na simulação</span>
+                            {% elif item.ja_enviados > 0 %}
+                                <span class="whp-badge whp-badge-sent">Já constava enviado</span>
+                            {% else %}
+                                <span class="whp-badge whp-badge-empty">Sem linhas classificadas</span>
+                            {% endif %}
+                            </td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="6" class="whp-empty">Nenhum transporte encontrado.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% if execucao.resumo.resumo_transportes %}
+            <nav class="whp-pagination" aria-label="Paginação dos transportes">
+                <label>Itens por página
+                    <select id="whp-page-size">
+                        <option value="10">10</option>
+                        <option value="25" selected>25</option>
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                    </select>
+                </label>
+                <span id="whp-page-info" class="whp-page-info" aria-live="polite"></span>
+                <div class="whp-pagination-controls">
+                    <button type="button" id="whp-page-previous">Anterior</button>
+                    <button type="button" id="whp-page-next">Próxima</button>
+                </div>
+            </nav>
+            {% endif %}
+        </div>
+    </section>
+    {% endif %}
+</div>
+{% endif %}
+
+<div class="card whp-card" style="margin-top:20px;">
+    <h3>Histórico</h3>
+    {% if historico %}
+    <ul>
+        {% for item in historico %}
+        <li><a href="/whirlpool/emails?execucao={{ item.id }}">{{ item.criado_em }} — {{ item.arquivo_original }} — {{ item.status }}</a></li>
+        {% endfor %}
+    </ul>
+    {% else %}<p>Nenhuma simulação registrada nesta sessão.</p>{% endif %}
+</div>
+
+<script>
+(function () {
+    const root = document.getElementById("whirlpool-results");
+    if (!root) return;
+    const rows = Array.from(root.querySelectorAll(".whp-result-row"));
+    const pageSizeSelect = document.getElementById("whp-page-size");
+    const previous = document.getElementById("whp-page-previous");
+    const next = document.getElementById("whp-page-next");
+    const info = document.getElementById("whp-page-info");
+    if (!rows.length || !pageSizeSelect || !previous || !next || !info) return;
+
+    let page = 1;
+    function renderPage() {
+        const pageSize = Number(pageSizeSelect.value) || 25;
+        const pages = Math.max(1, Math.ceil(rows.length / pageSize));
+        page = Math.min(page, pages);
+        const start = (page - 1) * pageSize;
+        const end = Math.min(start + pageSize, rows.length);
+        rows.forEach(function (row, index) {
+            row.hidden = index < start || index >= end;
+            if (row.hidden) {
+                row.querySelectorAll("details[open]").forEach(function (details) {
+                    details.open = false;
+                });
+            }
+        });
+        previous.disabled = page === 1;
+        next.disabled = page === pages;
+        info.textContent = "Exibindo " + (start + 1) + "–" + end + " de " + rows.length + " transportes · página " + page + " de " + pages;
+    }
+    previous.addEventListener("click", function () { if (page > 1) { page -= 1; renderPage(); } });
+    next.addEventListener("click", function () { page += 1; renderPage(); });
+    pageSizeSelect.addEventListener("change", function () { page = 1; renderPage(); });
+    renderPage();
+})();
+</script>
+{% endblock %}

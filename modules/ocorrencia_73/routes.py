@@ -16,6 +16,7 @@ from modules.ocorrencia_73.observabilidade import (
     usuario_pode_observar,
 )
 from web.session_store import obter_client
+from web.admin_access import is_admin
 
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,7 @@ def painel_observabilidade(
 
     contexto = {
         "request": request,
+        "is_admin": is_admin(request),
         "seguranca": estado_seguranca_oc73(),
         "proximas_execucoes": proximas_execucoes_teoricas(),
         "filtros": {
@@ -157,6 +159,7 @@ def detalhe_execucao(
         "oc73_execucao_detalhe.html",
         {
             "request": request,
+            "is_admin": is_admin(request),
             "execucao": execucao,
             "tentativas": tentativas,
         },

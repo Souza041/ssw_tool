@@ -15,7 +15,7 @@ COLUNAS_XML_CTE = [
 
     "CHAVE_CTE",
     "NUMERO_CTE",
-    "SERIE_CTE",
+    "SERIE_CTE_XML",
     "DATA_EMISSAO_CTE",
 
     "MUNICIPIO_ORIGEM_CTE",
@@ -58,7 +58,7 @@ MAPEAMENTO_XML_CTE = {
 
     "chave_cte": "CHAVE_CTE",
     "numero_cte": "NUMERO_CTE",
-    "serie_cte": "SERIE_CTE",
+    "serie_cte": "SERIE_CTE_XML",
     "data_emissao_cte": "DATA_EMISSAO_CTE",
 
     "municipio_origem": "MUNICIPIO_ORIGEM_CTE",

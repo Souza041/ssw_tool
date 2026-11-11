@@ -22,6 +22,8 @@ from modules.incidentes.schemas import (
 from modules.incidentes.service import (
     IncidentesService,
 )
+from web.admin_access import is_admin
+from web.session_store import obter_client
 
 
 router = APIRouter(
@@ -38,6 +40,25 @@ repository = IncidentesRepository()
 service = IncidentesService(
     repository=repository
 )
+
+
+def _exigir_admin_detalhes(
+    request: Request,
+) -> None:
+    """Protege leituras detalhadas antes de acessar o snapshot."""
+    if obter_client(request) is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Autenticação necessária.",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    if not is_admin(request):
+        raise HTTPException(
+            status_code=403,
+            detail="Acesso restrito a administradores.",
+            headers={"Cache-Control": "no-store"},
+        )
 
 
 # ======================================================
@@ -286,4 +307,52 @@ def recarregar_cache():
                 "Não foi possível recarregar "
                 "o cache de incidentes."
             ),
+        ) from exc
+
+
+@router.get("/api/regras/registros")
+def consultar_registros_regra(
+    request: Request,
+    regra: str = Query(..., min_length=1),
+    pagina: int = Query(1, ge=1),
+    limite: int = Query(25, ge=1, le=100),
+    busca: str = Query(""),
+    data_inicial: Optional[date] = None,
+    data_final: Optional[date] = None,
+    grupos_clientes: Optional[List[str]] = Query(None),
+    clientes: Optional[List[str]] = Query(None),
+    unidades: Optional[List[str]] = Query(None),
+    codigos_ocorrencia: Optional[List[str]] = Query(None),
+    status_debito: Optional[List[str]] = Query(None),
+    regras_debito: Optional[List[str]] = Query(None),
+    produtos: Optional[List[str]] = Query(None),
+    tipos_operacao: Optional[List[str]] = Query(None),
+):
+    _exigir_admin_detalhes(request)
+
+    filtros = DashboardFilters(
+        data_inicial=data_inicial,
+        data_final=data_final,
+        grupos_clientes=grupos_clientes or [],
+        clientes=clientes or [],
+        unidades=unidades or [],
+        codigos_ocorrencia=codigos_ocorrencia or [],
+        status_debito=status_debito or [],
+        regras_debito=regras_debito or [],
+        produtos=produtos or [],
+        tipos_operacao=tipos_operacao or [],
+    )
+
+    try:
+        return service.consultar_registros_regra(
+            regra=regra,
+            filtros=filtros,
+            pagina=pagina,
+            limite=limite,
+            busca=busca,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
         ) from exc

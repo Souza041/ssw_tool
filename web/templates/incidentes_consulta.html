@@ -1,0 +1,451 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Central de Consulta | SSW Tool</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0b1220;
+  --panel: #131e30;
+  --line: #29364a;
+  --text: #edf3fc;
+  --muted: #9baec7;
+  --accent: #35c58a;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.55 system-ui, sans-serif;
+}
+main {
+  max-width: 1180px;
+  margin: auto;
+  padding: 32px 20px;
+}
+header, .toolbar, .tabs, .metrics {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+header { justify-content: space-between; }
+h1 { font-size: 27px; margin: 0; }
+h2 { font-size: 17px; margin: 0 0 14px; }
+p { color: var(--muted); }
+a { color: var(--accent); text-decoration: none; }
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 22px;
+  margin-top: 20px;
+}
+input, select, button {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 12px;
+  font: inherit;
+}
+input, select {
+  background: #0d1727;
+  color: var(--text);
+}
+input { flex: 1; min-width: 190px; }
+button {
+  background: var(--accent);
+  color: #071b13;
+  font-weight: 700;
+  cursor: pointer;
+}
+button:disabled { opacity: .55; cursor: wait; }
+.tabs { margin-top: 20px; }
+.tabs button {
+  background: transparent;
+  color: var(--muted);
+}
+.tabs button.active {
+  background: var(--accent);
+  color: #071b13;
+}
+.metrics > div, .item {
+  background: #0d1727;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px;
+}
+.metrics > div { flex: 1; min-width: 140px; }
+strong { display: block; }
+small, .muted { color: var(--muted); }
+.item { margin: 10px 0; }
+.tag {
+  display: inline-block;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 2px 9px;
+  margin: 4px 5px 4px 0;
+}
+.error { color: #ff9292; }
+.warning { color: #ffd18a; }
+.hidden { display: none; }
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Sprint 2.4 — leitura operacional */
+.section-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.section-note { margin: 4px 0 16px; font-size: 12px; }
+.pill { display:inline-flex; align-items:center; padding:4px 10px; border-radius:999px; border:1px solid var(--line); font-size:12px; font-weight:650; }
+.pill-warn { color:#fcd28a; background:#3a2a1b; border-color:#76532e; }
+.pill-ok { color:#83e2b8; background:#16372d; border-color:#2a6850; }
+.pill-neutral { color:#bfd0e8; background:#1b2a40; }
+.detail-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; }
+.detail-grid .item { margin:0; }
+.detail-label { font-size:12px; color:var(--muted); }
+.detail-value { font-size:15px; font-weight:650; overflow-wrap:anywhere; }
+.timeline { border-left:2px solid #36536b; margin:18px 0 0 9px; padding-left:22px; }
+.timeline-entry { position:relative; margin:0 0 22px; padding:14px; background:#0d1727; border:1px solid var(--line); border-radius:10px; }
+.timeline-entry::before { content:""; position:absolute; left:-30px; top:19px; width:12px; height:12px; background:var(--accent); border:3px solid var(--bg); border-radius:50%; }
+.timeline-entry h3 { margin:5px 0; font-size:15px; }
+.timeline-entry p { margin:7px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.meta-line { display:flex; gap:9px; flex-wrap:wrap; color:var(--muted); font-size:12px; }
+.notice { border:1px solid #795b30; background:#2a241d; color:#f8dca5; padding:12px 14px; border-radius:10px; margin-top:12px; }
+.empty-state { padding:18px; border:1px dashed var(--line); border-radius:10px; color:var(--muted); }
+.compare-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:10px; margin-top:12px; }
+.compare-grid .item { margin:0; }
+@media (max-width:600px) { main{padding:16px 12px;} .panel{padding:16px;} h1{font-size:22px;} .tabs button{flex:1;} }
+
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Central de Consulta</h1>
+      <p>CTRC, nota fiscal, incidentes e histórico operacional.</p>
+    </div>
+    <a href="/">Voltar ao sistema</a>
+  </header>
+
+  <section class="panel">
+    <form id="form" class="toolbar">
+      <select id="tipo" aria-label="Tipo de pesquisa">
+        <option value="auto">Busca automática</option>
+        <option value="ctrc">CTRC</option>
+        <option value="nf">Nota fiscal</option>
+      </select>
+      <input id="termo" maxlength="80"
+             placeholder="Digite o CTRC ou a nota fiscal"
+             required>
+      <button id="buscar" type="submit">Consultar</button>
+    </form>
+    <p id="mensagem" role="status">
+      Informe um documento para começar.
+    </p>
+  </section>
+
+  <section id="resultado" class="hidden">
+    <div class="panel">
+      <h2>Visão geral</h2>
+      <div class="metrics" id="metricas"></div>
+      <p id="fonte"></p>
+    </div>
+
+    <nav class="tabs" aria-label="Seções da consulta">
+      <button type="button" data-tab="resumo"
+              class="active">Resumo</button>
+      <button type="button" data-tab="ocorrencias">
+        Ocorrências
+      </button>
+      <button type="button" data-tab="debitos">
+        Débitos
+      </button>
+      <button type="button" data-tab="historico">
+        Histórico
+      </button>
+    </nav>
+
+    <section class="panel" id="conteudo"></section>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+let atual = null;
+let historico = null;
+let aba = "resumo";
+const $ = id => document.getElementById(id);
+
+function el(tag, text, cls) {
+  const node = document.createElement(tag);
+  if (text !== undefined && text !== null) node.textContent = String(text);
+  if (cls) node.className = cls;
+  return node;
+}
+function add(parent, tag, text, cls) {
+  const node = el(tag, text, cls);
+  parent.appendChild(node);
+  return node;
+}
+function texto(value, fallback = "Não informado") {
+  return value === null || value === undefined || String(value).trim() === ""
+    ? fallback : String(value);
+}
+function dataExibicao(value) {
+  if (!value) return "Não informada";
+  const raw = String(value);
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})(?:T|\s)?(.*)$/);
+  return match ? `${match[3]}/${match[2]}/${match[1]} ${match[4].slice(0,8)}`.trim() : raw;
+}
+function dataOp(value) {
+  const match = String(value || "").match(/^(\d{2})\/(\d{2})\/(\d{2})\s+(\d{2}):(\d{2})/);
+  return match ? Date.UTC(2000 + Number(match[3]), Number(match[2])-1, Number(match[1]), Number(match[4]), Number(match[5])) : 0;
+}
+function secao(parent, title, note) {
+  add(parent, "h2", title);
+  if (note) add(parent, "p", note, "section-note");
+}
+function detalhe(parent, label, value) {
+  const box = add(parent, "div", null, "item");
+  add(box, "div", label, "detail-label");
+  add(box, "div", texto(value), "detail-value");
+  return box;
+}
+function aviso(parent, message) { add(parent, "div", message, "notice"); }
+function vazio(parent, message) { add(parent, "div", message, "empty-state"); }
+function pill(parent, value) {
+  const status = texto(value, "NÃO INFORMADO");
+  const up = status.toUpperCase();
+  const cls = /PENDENTE|ERRO|DIVERG|NÃO|NAO/.test(up) ? "pill-warn"
+    : /CONFIRMADO|VALIDADO|OK|PUBLICADA/.test(up) ? "pill-ok" : "pill-neutral";
+  add(parent, "span", status, "pill " + cls);
+}
+function statusDocumento(doc) {
+  const grupos = atual.ocorrencias.filter(g =>
+    String(g.evento.ctrc || "") === String(doc.ctrc || "") &&
+    String(g.evento.nota_fiscal || "") === String(doc.nota_fiscal || "")
+  );
+  return [...new Set(grupos.map(g => texto(g.status_debito, "SEM STATUS")))].sort();
+}
+function eventosOp101() {
+  return [...(atual.historico_op101 || [])].sort((a,b) =>
+    dataOp(b.data_hora) - dataOp(a.data_hora) || Number(a.posicao || 0) - Number(b.posicao || 0)
+  );
+}
+function dataOcorrenciaMaisRecente() {
+  const timestamps = (atual.ocorrencias || [])
+    .map(g => {
+      const e = g.evento || {};
+      const iso = e.data ? `${e.data}T${e.hora || "00:00"}:00` : "";
+      return iso && !Number.isNaN(Date.parse(iso)) ? Date.parse(iso) : null;
+    })
+    .filter(v => v !== null);
+  if (!timestamps.length) return null;
+  const latest = new Date(Math.max(...timestamps));
+  const pad = n => String(n).padStart(2,"0");
+  return `${pad(latest.getDate())}/${pad(latest.getMonth()+1)}/${latest.getFullYear()} ${pad(latest.getHours())}:${pad(latest.getMinutes())}`;
+}
+function renderResumo(area) {
+  secao(area, "Documentos encontrados", "Informações disponíveis no snapshot ativo, não em tempo real.");
+  if (!atual.documentos.length) {
+    vazio(area, "Nenhum documento na versão ativa. Consulte a aba Histórico para verificar versões anteriores.");
+    return;
+  }
+  for (const doc of atual.documentos) {
+    const panel = add(area, "div", null, "item");
+    const head = add(panel, "div", null, "section-heading");
+    add(head, "h2", texto(doc.ctrc, "CTRC não informado"));
+    const estados = statusDocumento(doc);
+    for (const status of estados) pill(head, status);
+    const grid = add(panel, "div", null, "detail-grid");
+    [
+      ["Nota fiscal", doc.nota_fiscal],
+      ["CT-e", doc.cte],
+      ["Cliente", doc.cliente],
+      ["Grupo", doc.grupo_cliente],
+      ["Unidade", doc.unidade],
+      ["Operação", doc.tipo_operacao],
+      ["Valor da carga (CT-e)", doc.valor_carga_cte == null ? null : Number(doc.valor_carga_cte).toLocaleString("pt-BR",{style:"currency",currency:"BRL"})],
+      ["Emissão do CT-e", dataExibicao(doc.data_emissao_cte)]
+    ].forEach(([label,value]) => detalhe(grid,label,value));
+  }
+  secao(area, "Últimos registros OP101 disponíveis", "Amostra de histórico capturada na importação, não o histórico integral do SSW.");
+  renderTimeline(area, eventosOp101().slice(0,5));
+}
+function renderTimeline(area, events) {
+  if (!events.length) { vazio(area,"Nenhum registro OP101 disponível neste snapshot."); return; }
+  const timeline = add(area, "div", null, "timeline");
+  for (const ev of events) {
+    const entry = add(timeline, "article", null, "timeline-entry");
+    const meta = add(entry, "div", null, "meta-line");
+    add(meta, "span", texto(ev.data_hora));
+    add(meta, "span", "Usuário: " + texto(ev.usuario));
+    add(meta, "span", "CTRC: " + texto(ev.ctrc));
+    add(entry, "h3", "OC" + texto(ev.codigo, "—") + " — " + texto(ev.descricao));
+    if (ev.complemento) add(entry, "p", ev.complemento);
+  }
+}
+function renderOcorrencias(area) {
+  secao(area, "Linha do tempo OP101", "Registros disponíveis no snapshot. Lançamentos com complementos diferentes permanecem visíveis.");
+  renderTimeline(area, eventosOp101());
+  secao(area, "Agrupamentos do relatório", "Agrupamento visual provisório; não representa quantidade oficial de eventos.");
+  if (!atual.ocorrencias.length) vazio(area,"Nenhum agrupamento na versão ativa.");
+  for (const grupo of atual.ocorrencias) {
+    const e = grupo.evento;
+    const panel = add(area,"div",null,"item");
+    add(panel,"strong",`OC${texto(e.codigo,"—")} — ${texto(e.descricao)}`);
+    add(panel,"div",`${dataExibicao(e.data)} ${texto(e.hora,"")} · ${texto(e.usuario)}`,"muted");
+    add(panel,"div",`CTRC ${texto(e.ctrc)} · NF ${texto(e.nota_fiscal)}`,"muted");
+    add(panel,"div",`Linhas da importação: ${(grupo.linhas_origem || []).join(", ")} · Total agrupado: ${grupo.quantidade_linhas}`,"muted");
+    if (e.complemento) add(panel,"p",e.complemento);
+  }
+}
+function renderDebitos(area) {
+  secao(area, "Situação dos débitos por documento", "Agrupamento de situações e regras encontradas; não é contagem de débitos financeiros.");
+  const docs = new Map();
+  for (const grupo of atual.ocorrencias) {
+    const e = grupo.evento;
+    const key = JSON.stringify([e.ctrc || "", e.nota_fiscal || ""]);
+    if (!docs.has(key)) docs.set(key, {ctrc:e.ctrc,nf:e.nota_fiscal,variantes:new Map()});
+    const d = docs.get(key);
+    const status = texto(grupo.status_debito,"SEM STATUS");
+    const regra = texto(grupo.regra_debito,"SEM REGRA");
+    const motivo = texto(grupo.motivo_debito,"Sem justificativa");
+    const varianteKey = JSON.stringify([status,regra,motivo]);
+    if (!d.variantes.has(varianteKey)) d.variantes.set(varianteKey,{status,regra,motivo,grupos:0,linhas:0});
+    const v = d.variantes.get(varianteKey);
+    v.grupos += 1;
+    v.linhas += Number(grupo.quantidade_linhas || 0);
+  }
+  if (!docs.size) vazio(area,"Nenhuma validação de débito na versão ativa.");
+  for (const doc of docs.values()) {
+    const panel = add(area,"div",null,"item");
+    add(panel,"strong",`CTRC ${texto(doc.ctrc)} · NF ${texto(doc.nf)}`);
+    for (const v of doc.variantes.values()) {
+      const line = add(panel,"div",null,"item");
+      pill(line,v.status);
+      add(line,"div","Regra: "+v.regra);
+      add(line,"p",v.motivo);
+      add(line,"small",`${v.grupos} agrupamento(s) operacionais, ${v.linhas} linha(s) de origem`);
+    }
+  }
+  aviso(area,"PENDENTE não significa débito confirmado. A tela não calcula valores nem determina responsabilidade financeira.");
+}
+function renderHistorico(area) {
+  secao(area,"Histórico entre importações","Exibe somente snapshots publicados nos quais o documento pesquisado apareceu.");
+  if (!historico) { vazio(area,"Histórico indisponível."); return; }
+  if (!historico.versoes.length) vazio(area,"Documento não encontrado nas importações publicadas.");
+  const timeline = add(area,"div",null,"timeline");
+  for (const v of historico.versoes) {
+    const panel = add(timeline,"article",null,"timeline-entry");
+    const head = add(panel,"div",null,"section-heading");
+    add(head,"h3",`Importação #${v.importacao_id}`);
+    pill(head,v.ativa ? "PUBLICADA · ATIVA" : "PUBLICADA · ANTERIOR");
+    add(panel,"div",`Publicada em ${dataExibicao(v.publicada_em)} · ${texto(v.arquivo)}`,"muted");
+    const grid = add(panel,"div",null,"compare-grid");
+    detalhe(grid,"Linhas encontradas",v.linhas);
+    detalhe(grid,"Grupos operacionais",v.grupos_operacionais);
+    detalhe(grid,"Códigos", (v.codigos_ocorrencia || []).join(", ") || "Não informados");
+    detalhe(grid,"Status", (v.status_debito || []).join(", ") || "Não informado");
+    detalhe(grid,"Regras", (v.regras_debito || []).join(", ") || "Não informadas");
+  }
+  if (historico.comparacoes.length) {
+    secao(area,"Comparações de snapshots","Diferenças observadas entre versões com registros; não comprovam alteração no SSW.");
+    for (const c of historico.comparacoes) {
+      const panel = add(area,"div",null,"item");
+      add(panel,"strong",`#${c.importacao_anterior_id} → #${c.importacao_atual_id}`);
+      if (!c.houve_alteracao) {
+        add(panel,"p","Nenhuma alteração nos campos comparados.");
+      } else {
+        for (const [campo,diff] of Object.entries(c.alteracoes || {})) {
+          const row = add(panel,"div",null,"item");
+          add(row,"strong",campo.replaceAll("_"," "));
+          add(row,"div","Antes: "+JSON.stringify(diff.anterior),"muted");
+          add(row,"div","Depois: "+JSON.stringify(diff.atual),"muted");
+        }
+      }
+    }
+  } else if (historico.versoes.length === 1) {
+    add(area,"p","Existe apenas uma versão publicada com este documento; ainda não há comparação possível.","muted");
+  }
+  if (historico.consulta.truncado) aviso(area,"Histórico limitado: comparações podem estar incompletas.");
+  aviso(area,"Um documento ausente em outra importação não deve ser considerado resolvido automaticamente.");
+}
+function renderizar() {
+  const area = $("conteudo");
+  area.replaceChildren();
+  document.querySelectorAll("[data-tab]").forEach(b => b.classList.toggle("active",b.dataset.tab===aba));
+  if (!atual) return;
+  if (aba==="resumo") renderResumo(area);
+  else if (aba==="ocorrencias") renderOcorrencias(area);
+  else if (aba==="debitos") renderDebitos(area);
+  else renderHistorico(area);
+}
+async function carregar(url) {
+  const response = await fetch(url,{credentials:"same-origin",headers:{"Accept":"application/json"},cache:"no-store"});
+  if (response.status===401) throw new Error("Sessão expirada. Faça login novamente.");
+  if (!response.ok) {
+    let detail="Falha na consulta.";
+    try { const body=await response.json(); detail=body.detail || detail; } catch (_) {}
+    throw new Error(detail);
+  }
+  return response.json();
+}
+$("form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const termo=$("termo").value.trim();
+  const tipo=$("tipo").value;
+  const botao=$("buscar");
+  if (!termo) return;
+  botao.disabled=true;
+  $("mensagem").textContent="Consultando o banco...";
+  $("resultado").classList.add("hidden");
+  atual=null; historico=null;
+  const params=new URLSearchParams({termo,tipo});
+  try {
+    const [respostaAtual,respostaHistorico]=await Promise.all([
+      carregar("/incidentes/api/consulta?"+params),
+      carregar("/incidentes/api/historico?"+params)
+    ]);
+    atual=respostaAtual; historico=respostaHistorico;
+    const metricas=$("metricas");
+    metricas.replaceChildren();
+    for (const [label,value] of [
+      ["Linhas",atual.resumo.linhas_encontradas],
+      ["Documentos",atual.resumo.documentos_encontrados],
+      ["Grupos operacionais",atual.resumo.grupos_operacionais],
+      ["Registros OP101",atual.resumo.registros_op101_exibidos]
+    ]) {
+      const box=add(metricas,"div");
+      add(box,"small",label);
+      add(box,"strong",value);
+    }
+    const latest=dataOcorrenciaMaisRecente();
+    $("fonte").textContent =
+      `Snapshot #${atual.importacao.id} · Arquivo: ${atual.importacao.arquivo} · `+
+      `Publicado em: ${dataExibicao(atual.importacao.publicada_em)} · `+
+      `Ocorrência mais recente encontrada: ${latest || "não informada"} · `+
+      "Não é consulta em tempo real ao SSW.";
+    const parcial=atual.consulta.truncado || historico.consulta.truncado;
+    $("mensagem").textContent=parcial
+      ? "Consulta concluída com limite de registros. Os totais e comparações podem ser parciais."
+      : "Consulta concluída. Dados históricos do banco.";
+    aba="resumo";
+    $("resultado").classList.remove("hidden");
+    renderizar();
+  } catch (err) {
+    $("mensagem").textContent=err.message;
+  } finally { botao.disabled=false; }
+});
+document.querySelectorAll("[data-tab]").forEach(btn =>
+  btn.addEventListener("click",()=>{aba=btn.dataset.tab;renderizar();})
+);
+</script>
+</body>
+</html>

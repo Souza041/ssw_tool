@@ -9,7 +9,6 @@ from operations.debitos.batch import normalizar_cnpj
 
 from operations.debitos.op475 import OP475Despesas
 
-
 def test_parse_ctrc_com_digito():
     assert OP506Indenizacao.parse_ctrc(
         "CWB193958-1"
@@ -32,7 +31,6 @@ def test_formatadores_base():
     assert data_ssw("31/07/2026") == "310726"
     assert competencia_ssw("", "310726") == "0726"
     assert competencia_ssw("0826", "310726") == "0826"
-
 
 def test_normalizar_cnpj_preserva_zero_inicial():
     assert normalizar_cnpj(

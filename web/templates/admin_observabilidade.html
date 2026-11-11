@@ -26,5 +26,54 @@
  <p class="n3-panel-foot">Duração média: {% if metrics.avg_seconds is not none %}{{ metrics.avg_seconds }} s{% else %}sem dados{% endif %} · Não inclui rotinas externas.</p></article></div>
 </section>
 
-<p class="n4-disclaimer">Os indicadores representam somente os jobs registrados em web/jobs.py. Integrações LG POD e OC73 exigem adaptadores próprios e ainda não fazem parte deste consolidado. Registros em andamento podem incluir execuções interrompidas.</p>
+<style>
+.hc-section{margin-top:32px;border:1px solid var(--border);border-radius:18px;background:var(--card);color:var(--text);padding:24px;box-shadow:0 10px 30px rgba(15,23,42,.05)}
+.hc-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}.hc-head h2{margin:4px 0}.hc-head p,.hc-muted{color:var(--muted)}.hc-badge{display:inline-block;border-radius:999px;padding:5px 10px;background:#e8eefb;color:#1e40af;font-size:12px;font-weight:700}
+.hc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:20px 0}.hc-card{padding:15px;border:1px solid var(--border);border-radius:12px}.hc-card strong{display:block;font-size:25px;margin:5px 0}.hc-card small{color:var(--muted)}
+.hc-table-wrap{overflow-x:auto}.hc-table{width:100%;border-collapse:collapse;min-width:680px}.hc-table th,.hc-table td{text-align:left;padding:10px;border-bottom:1px solid var(--border);vertical-align:top}.hc-table th{font-size:12px;color:var(--muted)}.hc-table td{font-size:13px}.hc-table a{color:#1d4ed8}.hc-block{margin-top:25px}.hc-block h3{margin-bottom:8px}.hc-state{font-weight:700}.hc-state-success{color:#166534}.hc-state-partial,.hc-state-suspected{color:#9a3412}.hc-state-failed{color:#b91c1c}.hc-state-running{color:#1d4ed8}.hc-state-unverified{color:#475569}
+.hc-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;align-items:end;margin:14px 0}.hc-filters label{margin:0}.hc-filters select,.hc-filters button{margin:5px 0 0}.hc-filters button{width:auto}.hc-pages{display:flex;gap:15px;margin-top:15px}.hc-notice{padding:18px;border-radius:12px;background:var(--bg);color:var(--text);margin:18px 0}
+.nexus-dark .hc-badge{background:#203765;color:#c9d8ff}.nexus-dark .hc-table a,.nexus-dark .hc-pages a{color:#b3c8ff}.nexus-dark .hc-state-success{color:#8ee5b5}.nexus-dark .hc-state-partial,.nexus-dark .hc-state-suspected{color:#ffd08a}.nexus-dark .hc-state-failed{color:#ff9ea8}.nexus-dark .hc-state-running{color:#a8bfff}.nexus-dark .hc-state-unverified{color:#b3c1da}
+@media(max-width:700px){.hc-section{padding:16px}.hc-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+<section class="hc-section" id="health-center" aria-labelledby="hc-title">
+  <div class="hc-head"><div><div class="auth-eyebrow">NEXUS / HEALTH CENTER</div><h2 id="hc-title">Saúde das automações</h2><p>Execuções persistidas pelo Health Center. Fonte separada dos jobs web acima.</p></div><span class="hc-badge">{% if health.state == 'disabled' %}Monitoramento desativado{% elif health.state == 'error' %}Erro na consulta{% else %}Leitura administrativa{% endif %}</span></div>
+  {% if health.state == 'disabled' %}
+    <div class="hc-notice">Monitoramento desativado. Nenhum estado operacional é inferido e o banco do Health Center não é consultado.</div>
+  {% elif health.state == 'error' %}
+    <div class="hc-notice">Não foi possível consultar os registros. O estado das automações é desconhecido até uma nova leitura.</div>
+  {% else %}
+    {% set h = health.overview %}
+    <div class="hc-grid" aria-label="Visão geral do Health Center">
+      <div class="hc-card"><span>Cadastradas</span><strong>{{ h.registered }}</strong><small>Catálogo, não agendamento</small></div>
+      <div class="hc-card"><span>Com execução observada</span><strong>{{ h.observed }}</strong><small>Registro persistido</small></div>
+      <div class="hc-card"><span>Último sucesso</span><strong>{{ h.healthy }}</strong><small>Último estado confirmado</small></div>
+      <div class="hc-card"><span>Falha ou parcial</span><strong>{{ h.issues }}</strong><small>Último estado registrado</small></div>
+      <div class="hc-card"><span>Suspeitas</span><strong>{{ h.suspicious }}</strong><small>RUNNING acima do limiar</small></div>
+      <div class="hc-card"><span>Não verificadas</span><strong>{{ h.unverified }}</strong><small>Sem execução observada</small></div>
+      <div class="hc-card"><span>Em execução</span><strong>{{ h.running }}</strong><small>RUNNING dentro do limiar</small></div>
+      <div class="hc-card"><span>Execuções · 24h</span><strong>{{ h.runs_24h }}</strong><small>Somente Health Center</small></div>
+      <div class="hc-card"><span>Taxa de sucesso · 24h</span><strong>{% if h.success_rate_24h is not none %}{{ h.success_rate_24h }}%{% else %}—{% endif %}</strong><small>Entre execuções finalizadas</small></div>
+      <div class="hc-card"><span>Duração média · 24h</span><strong>{% if h.avg_duration_seconds is not none %}{{ h.avg_duration_seconds|round(1) }} s{% else %}—{% endif %}</strong><small>Execuções finalizadas</small></div>
+    </div>
+    <p class="hc-muted">Última finalização confirmada: {% if h.last_confirmed_at_utc %}{{ h.last_confirmed_at_utc }} UTC{% else %}nenhuma{% endif %}. Uma ausência de registros não indica sucesso.</p>
+    <div class="hc-block"><h3>Catálogo de automações</h3><p class="hc-muted">Exibindo até 50 cadastros; o total consta na visão geral.</p>
+      {% if health.catalog %}<div class="hc-table-wrap"><table class="hc-table"><thead><tr><th>Automação</th><th>Origem</th><th>Cadastro / observação</th><th>Agendamento</th><th>Estado</th><th>Última execução</th><th>Duração</th></tr></thead><tbody>
+      {% for bot in health.catalog %}<tr><td><strong><a href="/admin/health-center/bots/{{ bot.identifier }}/view">{{ bot.name or bot.identifier }}</a></strong><br><small>{{ bot.identifier }}</small></td><td>{{ bot.origin or '—' }}</td><td>Cadastrada · {% if bot.instrumented %}instrumentada{% else %}instrumentação não verificada{% endif %} · {% if bot.observed %}observada{% else %}sem execução observada{% endif %}</td><td>{% if bot.schedule_verified %}verificado{% else %}não verificado{% endif %}</td><td class="hc-state hc-state-{{ bot.operational_state }}">{{ {'success':'Sucesso','partial':'Sucesso parcial','failed':'Falha','running':'Em execução','suspected':'Execução suspeita','unverified':'Não verificado'}.get(bot.operational_state,'Não verificado') }}</td><td>{% if bot.last_execution_at_utc %}{{ bot.last_execution_at_utc }} UTC{% else %}—{% endif %}</td><td>{% if bot.last_duration_seconds is not none %}{{ bot.last_duration_seconds|round(1) }} s{% else %}—{% endif %}</td></tr>{% endfor %}
+      </tbody></table></div>{% else %}<div class="hc-notice">Nenhuma automação cadastrada neste banco.</div>{% endif %}
+    </div>
+    <div class="hc-block"><h3>Histórico</h3>
+      <form class="hc-filters" method="get" action="/admin/observabilidade">
+        <label>Automação<select name="health_bot"><option value="">Todas</option>{% for bot in health.catalog %}<option value="{{ bot.identifier }}" {% if bot.identifier == health_bot %}selected{% endif %}>{{ bot.name or bot.identifier }}</option>{% endfor %}</select></label>
+        <label>Resultado<select name="health_status"><option value="">Todos</option>{% for value,label in [('RUNNING','Em execução'),('SUCCESS','Sucesso'),('PARTIAL','Parcial'),('FAILED','Falha'),('CANCELLED','Cancelada'),('SKIPPED','Ignorada')] %}<option value="{{ value }}" {% if value == health_status %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+        <label>Período<select name="health_days">{% for value in [1,7,30,90] %}<option value="{{ value }}" {% if value == health_days %}selected{% endif %}>{{ value }} dia(s)</option>{% endfor %}</select></label><button type="submit">Filtrar histórico</button>
+      </form>
+      {% if health.history['items'] %}<div class="hc-table-wrap"><table class="hc-table"><thead><tr><th>Automação</th><th>Origem</th><th>Início</th><th>Duração</th><th>Resultado</th><th>Mensagem técnica</th><th>Detalhe</th></tr></thead><tbody>
+      {% for run in health.history['items'] %}<tr><td>{{ run.bot_name or run.bot_id }}</td><td>{{ run.origin or '—' }}</td><td>{{ run.started_at_utc }} UTC</td><td>{% if run.duration_seconds is not none %}{{ run.duration_seconds|round(1) }} s{% else %}—{% endif %}</td><td>{{ run.status }}</td><td>{{ run.error_message or run.summary or '—' }}</td><td><a href="/admin/health-center/executions/{{ run.id }}/view">Ver diagnóstico</a></td></tr>{% endfor %}
+      </tbody></table></div>{% else %}<div class="hc-notice">Sem execuções no período e filtros selecionados.</div>{% endif %}
+      <div class="hc-pages"><span>{{ health.history.total }} registro(s) · página {{ health.history.page }}</span>{% if health.history.page > 1 %}<a href="/admin/observabilidade?health_bot={{ health_bot }}&amp;health_status={{ health_status }}&amp;health_days={{ health_days }}&amp;health_page={{ health.history.page - 1 }}#health-center">Anterior</a>{% endif %}{% if health.history.page * health.history.per_page < health.history.total %}<a href="/admin/observabilidade?health_bot={{ health_bot }}&amp;health_status={{ health_status }}&amp;health_days={{ health_days }}&amp;health_page={{ health.history.page + 1 }}#health-center">Próxima</a>{% endif %}</div>
+    </div>
+  {% endif %}
+</section>
+
+<p class="n4-disclaimer">O painel superior representa somente os jobs web registrados em web/jobs.py. O Health Center usa registros próprios e observa apenas automações instrumentadas; seus indicadores não são somados aos jobs web. Agendamentos e disponibilidade operacional exigem verificação independente.</p>
 {% endblock %}
