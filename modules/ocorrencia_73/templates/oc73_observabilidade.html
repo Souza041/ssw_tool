@@ -6,25 +6,36 @@
 
 {% block content %}
 <style>
-    .oc73-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:14px; margin-bottom:20px; }
-    .oc73-card { background:#fff; border:1px solid var(--border); border-radius:14px; padding:18px; box-shadow:0 6px 18px rgba(15,23,42,.04); }
+    .oc73-observabilidade { --oc73-ok:#166534; --oc73-warn:#9a3412; --oc73-danger:#991b1b; --oc73-alert-bg:#fff7ed; --oc73-alert-border:#fed7aa; --oc73-error-bg:#fef2f2; --oc73-error-border:#fecaca; --oc73-row-hover:#f1f5ff; }
+    body.nexus-dark .oc73-observabilidade { --oc73-ok:#86efac; --oc73-warn:#fdba74; --oc73-danger:#fca5a5; --oc73-alert-bg:#3a2b22; --oc73-alert-border:#80563b; --oc73-error-bg:#3c2530; --oc73-error-border:#864957; --oc73-row-hover:#243657; }
+    .oc73-observabilidade .oc73-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:14px; margin-bottom:20px; }
+    .oc73-observabilidade .oc73-card { background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:14px; padding:18px; box-shadow:0 6px 18px rgba(15,23,42,.04); }
     .oc73-card h3 { margin:0 0 8px; font-size:15px; }
     .oc73-value { font-size:21px; font-weight:700; }
     .oc73-muted { color:var(--muted); font-size:13px; }
-    .oc73-ok { color:#166534; } .oc73-warn { color:#9a3412; } .oc73-danger { color:#991b1b; }
-    .oc73-alert { background:#fff7ed; border:1px solid #fed7aa; padding:14px; border-radius:12px; margin-bottom:18px; }
-    .oc73-error { background:#fef2f2; color:#991b1b; border:1px solid #fecaca; padding:14px; border-radius:12px; margin-bottom:18px; }
+    .oc73-observabilidade .oc73-ok { color:var(--oc73-ok); } .oc73-observabilidade .oc73-warn { color:var(--oc73-warn); } .oc73-observabilidade .oc73-danger { color:var(--oc73-danger); }
+    .oc73-observabilidade .oc73-alert { background:var(--oc73-alert-bg); color:var(--text); border:1px solid var(--oc73-alert-border); padding:14px; border-radius:12px; margin-bottom:18px; }
+    .oc73-observabilidade .oc73-error { background:var(--oc73-error-bg); color:var(--oc73-danger); border:1px solid var(--oc73-error-border); padding:14px; border-radius:12px; margin-bottom:18px; }
     .oc73-filter { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; align-items:end; }
-    .oc73-filter input,.oc73-filter select { margin-bottom:0; }
-    .oc73-filter button { margin:0; }
-    .oc73-table-wrap { overflow-x:auto; background:#fff; border:1px solid var(--border); border-radius:14px; }
+    .oc73-observabilidade .oc73-filter input,.oc73-observabilidade .oc73-filter select { margin-bottom:0; background:var(--card); color:var(--text); border-color:var(--border); }
+    body.nexus-dark .oc73-observabilidade .oc73-filter input,body.nexus-dark .oc73-observabilidade .oc73-filter select { background:#1d2b46; color-scheme:dark; }
+    .oc73-observabilidade .oc73-filter :is(input,select,button):focus-visible,.oc73-observabilidade a:focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
+    .oc73-observabilidade .oc73-filter button { margin:0; }
+    .oc73-observabilidade .oc73-filter button:disabled { opacity:.55; cursor:not-allowed; }
+    .oc73-observabilidade .oc73-table-wrap { overflow-x:auto; background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:14px; }
     .oc73-table { width:100%; border-collapse:collapse; font-size:13px; }
     .oc73-table th,.oc73-table td { padding:11px 12px; text-align:left; border-bottom:1px solid var(--border); white-space:nowrap; }
-    .oc73-table th { background:#f8fafc; }
+    .oc73-observabilidade .oc73-table th { background:var(--bg); color:var(--text); }
+    .oc73-observabilidade .oc73-table tbody tr:hover { background:var(--oc73-row-hover); }
+    .oc73-observabilidade a { color:var(--primary); }
+    body.nexus-dark .oc73-observabilidade a { color:#b3c8ff; }
     .oc73-pagination { display:flex; justify-content:space-between; align-items:center; margin-top:14px; }
-    .oc73-pagination a { color:var(--primary); text-decoration:none; font-weight:600; }
+    .oc73-pagination a { text-decoration:none; font-weight:600; }
+    .oc73-observabilidade a:hover { text-decoration:underline; }
+    @media(max-width:600px) { .oc73-observabilidade .oc73-pagination { align-items:flex-start; flex-direction:column; gap:8px; } }
 </style>
 
+<div class="oc73-observabilidade">
 <div class="topbar">
     <h1>OC73 — Observabilidade</h1>
     <p>Painel somente leitura. Não inicia jobs, não reconcilia e não altera estados.</p>
@@ -124,5 +135,6 @@
     {% if historico.pagina > 1 %}<a href="?pagina={{ historico.pagina - 1 }}&por_pagina={{ historico.por_pagina }}&fluxo={{ filtros.fluxo }}&status={{ filtros.status }}&data_inicio={{ filtros.data_inicio or '' }}&data_fim={{ filtros.data_fim or '' }}">← Anterior</a>{% endif %}
     {% if historico.pagina < historico.total_paginas %}<a href="?pagina={{ historico.pagina + 1 }}&por_pagina={{ historico.por_pagina }}&fluxo={{ filtros.fluxo }}&status={{ filtros.status }}&data_inicio={{ filtros.data_inicio or '' }}&data_fim={{ filtros.data_fim or '' }}">Próxima →</a>{% endif %}
     </span>
+</div>
 </div>
 {% endblock %}

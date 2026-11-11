@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from starlette.middleware.sessions import SessionMiddleware
 
 from modules.health_center import routes as health_routes
+from modules.ocorrencia_73 import routes as oc73_routes
 from web import admin_access, routes as web_routes
 
 
@@ -66,6 +67,18 @@ class FakeHealthRepository:
         return []
 
 
+class FakeOC73Repository:
+    def listar_execucoes(self, **kwargs):
+        return {"itens": [], "total": 0, "pagina": 1,
+                "por_pagina": kwargs["por_pagina"], "total_paginas": 1}
+
+    def ultimas_execucoes_por_fluxo(self):
+        return {"CWB": None, "BIG": None}
+
+    def execucoes_anormais(self, minutos):
+        return []
+
+
 @pytest.fixture
 def isolated_app(monkeypatch):
     """Inclui só leituras administrativas; nunca importa web.main/startup."""
@@ -73,6 +86,7 @@ def isolated_app(monkeypatch):
     FakeHealthRepository.calls = []
     FakeHealthRepository.unavailable = False
     monkeypatch.setenv("NEXUS_ADMIN_USERS", "synthetic_admin")
+    monkeypatch.setenv("OC73_OBSERVABILIDADE_USUARIOS", "synthetic_admin,oc73_viewer")
     monkeypatch.setenv("HEALTH_CENTER_ENABLED", "false")
 
     def fake_client(request):
@@ -81,6 +95,8 @@ def isolated_app(monkeypatch):
 
     monkeypatch.setattr(web_routes, "obter_client", fake_client)
     monkeypatch.setattr(health_routes, "obter_client", fake_client)
+    monkeypatch.setattr(oc73_routes, "obter_client", fake_client)
+    monkeypatch.setattr(oc73_routes, "Ocorrencia73ObservabilidadeRepository", FakeOC73Repository)
     monkeypatch.setattr(admin_access, "obter_client", fake_client)
     monkeypatch.setattr(web_routes, "is_admin", admin_access.is_admin)
     monkeypatch.setattr(health_routes, "is_admin", admin_access.is_admin)
@@ -98,14 +114,41 @@ def isolated_app(monkeypatch):
         methods=["GET"], response_class=HTMLResponse,
     )
     app.include_router(health_routes.router)
+    app.include_router(oc73_routes.router)
 
     @app.get("/_synthetic_session/{username}")
     async def synthetic_session(request: Request, username: str):
         request.session["synthetic_user"] = username
+        request.session["ssw_session_id"] = "synthetic-session"
+        request.session["oc73_observabilidade"] = username in {"synthetic_admin", "oc73_viewer"}
         return {"synthetic": True}
 
     assert app.router.on_startup == []
     return app
+
+
+def test_monitoring_sidebar_and_permissions_on_both_pages(isolated_app):
+    with TestClient(isolated_app) as client:
+        assert client.get("/oc73/observabilidade", follow_redirects=False).status_code == 303
+        client.get("/_synthetic_session/viewer")
+        assert client.get("/oc73/observabilidade").status_code == 403
+        assert client.get("/admin/observabilidade").status_code == 403
+
+        client.get("/_synthetic_session/synthetic_admin")
+        for path in ("/admin/observabilidade", "/oc73/observabilidade"):
+            response = client.get(path)
+            assert response.status_code == 200
+            assert 'href="/admin/observabilidade" data-nexus-path="/admin/observabilidade"' in response.text
+            assert 'href="/oc73/observabilidade" data-nexus-path="/oc73/observabilidade"' in response.text
+            assert response.text.count('data-nexus-path="/admin/observabilidade"') == 1
+            assert response.text.count('data-nexus-path="/oc73/observabilidade"') == 1
+            assert 'id="nexus-menu-toggle"' in response.text
+
+        client.get("/_synthetic_session/oc73_viewer")
+        assert client.get("/admin/observabilidade").status_code == 403
+        oc73_page = client.get("/oc73/observabilidade")
+        assert oc73_page.status_code == 200
+        assert 'data-nexus-path="/admin/observabilidade"' not in oc73_page.text
 
 
 def test_http_authentication_admin_and_disabled_state(isolated_app):
