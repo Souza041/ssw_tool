@@ -2,7 +2,7 @@
 {% block content %}
 <div class="topbar"><div class="auth-eyebrow">NEXUS / HEALTH CENTER</div><h1>Detalhe da execução</h1><p>Registro persistido, acessível somente a administradores.</p></div>
 <p><a href="/admin/observabilidade#health-center">← Voltar à observabilidade</a></p>
-<section class="card" style="max-width:960px">
+<section class="card hc-detail" style="max-width:960px">
   <h2>{{ execution.bot_name or execution.bot_id }}</h2>
   <p><strong>Resultado:</strong> {{ execution.status }} · <strong>Origem:</strong> {{ execution.origin or '—' }}</p>
   <p><strong>Início:</strong> {{ execution.started_at_utc }} UTC · <strong>Fim:</strong> {{ execution.finished_at_utc or 'não confirmado' }}{% if execution.finished_at_utc %} UTC{% endif %}</p>

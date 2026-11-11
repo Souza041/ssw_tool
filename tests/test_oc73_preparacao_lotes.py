@@ -197,9 +197,11 @@ def test_segunda_gera_cwb_e_big():
     assert [c["unidade"] for c in chamadas] == ["CWB", "BIG"]
 
     for chamada in chamadas:
-        assert chamada["data_inicial"] == "121026"
+        assert chamada["data_inicial"] == "091026"
         assert chamada["data_final"] == "121026"
 
+    assert all(lote["data_inicial"] == "2026-10-12" for lote in resultado["lotes"])
+    assert all(lote["data_inicial_emissao"] == "2026-10-09" for lote in resultado["lotes"])
     assert resultado["total_filtrado"] == 0
 
 
@@ -233,8 +235,10 @@ def test_domingo_consulta_sabado_e_domingo():
 
     assert len(chamadas) == 1
     assert chamadas[0]["unidade"] == "CWB"
-    assert chamadas[0]["data_inicial"] == "101026"
+    assert chamadas[0]["data_inicial"] == "081026"
     assert chamadas[0]["data_final"] == "111026"
+    assert resultado["lotes"][0]["data_inicial"] == "2026-10-10"
+    assert resultado["lotes"][0]["data_inicial_emissao"] == "2026-10-08"
     assert resultado["total_filtrado"] == 0
 
 

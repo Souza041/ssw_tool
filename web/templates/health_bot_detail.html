@@ -2,7 +2,7 @@
 {% block content %}
 <div class="topbar"><div class="auth-eyebrow">NEXUS / HEALTH CENTER</div><h1>{{ detail.bot.name or detail.bot.identifier }}</h1><p>Detalhe administrativo de uma automação cadastrada.</p></div>
 <p><a href="/admin/observabilidade#health-center">← Voltar à observabilidade</a></p>
-<section class="card" style="max-width:1050px">
+<section class="card hc-detail" style="max-width:1050px">
   <p><strong>Identificador:</strong> {{ detail.bot.identifier }} · <strong>Origem observada:</strong> {{ detail.bot.origin or '—' }}</p>
   <p><strong>Estado:</strong> {{ detail.bot.operational_state }} · <strong>Instrumentação:</strong> {% if detail.bot.instrumented %}identificada no código{% else %}não verificada{% endif %} · <strong>Agendamento:</strong> {% if detail.bot.schedule_verified %}verificado{% else %}não verificado{% endif %}</p>
   <p><strong>Última execução:</strong> {% if detail.bot.last_execution_at_utc %}{{ detail.bot.last_execution_at_utc }} UTC{% else %}nenhuma observada{% endif %} · <strong>Duração:</strong> {% if detail.bot.last_duration_seconds is not none %}{{ detail.bot.last_duration_seconds|round(1) }} s{% else %}—{% endif %}</p>

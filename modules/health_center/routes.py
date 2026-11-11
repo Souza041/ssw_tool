@@ -29,7 +29,10 @@ def _repository(request: Request) -> HealthRepository:
     _authorize(request)
     if not enabled():
         raise HTTPException(status_code=503, detail="Health Center desativado.")
-    return HealthRepository()
+    try:
+        return HealthRepository()
+    except Exception:
+        raise HTTPException(status_code=503, detail="Observabilidade indisponível.") from None
 
 
 def _read(call):

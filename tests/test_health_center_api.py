@@ -12,6 +12,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from modules.health_center import routes
 from modules.health_center.repository import HealthRepository, public_execution
+from web import admin_access
 
 
 NOW = datetime(2026, 11, 10, 12, tzinfo=timezone.utc)
@@ -108,6 +109,26 @@ def test_disabled_never_constructs_repository(monkeypatch):
         assert disabled.value.status_code == 503
     assert routes.dashboard_context(request)['state'] == "disabled"
     forbidden.assert_not_called()
+
+
+def test_real_admin_policy_requires_active_session_and_allowlist(monkeypatch):
+    client = SimpleNamespace(usuario="AdminTeste")
+    state = {"client": client}
+    monkeypatch.setenv("HEALTH_CENTER_ENABLED", "false")
+    monkeypatch.setenv("NEXUS_ADMIN_USERS", "adminteste")
+    monkeypatch.setattr(routes, "obter_client", lambda request: state["client"])
+    monkeypatch.setattr(admin_access, "obter_client", lambda request: state["client"])
+    monkeypatch.setattr(routes, "is_admin", admin_access.is_admin)
+    request = SimpleNamespace()
+    assert routes.health_status(request)["enabled"] is False
+    state["client"] = SimpleNamespace(usuario="outra_pessoa")
+    with pytest.raises(HTTPException) as forbidden:
+        routes.health_status(request)
+    assert forbidden.value.status_code == 403
+    state["client"] = None
+    with pytest.raises(HTTPException) as unauthenticated:
+        routes.health_status(request)
+    assert unauthenticated.value.status_code == 401
 
 
 def test_overview_no_runs_has_no_success_rate_or_healthy_bots():
@@ -383,6 +404,17 @@ def test_public_execution_drops_arbitrary_server_fields():
                                "payload": "cpf 12345678901"})
     assert "secret" not in repr(result)
     assert "12345678901" not in repr(result)
+
+
+def test_health_center_theme_uses_nexus_colors_in_both_themes():
+    root = Path(__file__).resolve().parents[1]
+    template = (root / "web/templates/admin_observabilidade.html").read_text(encoding="utf-8")
+    dark = (root / "web/static/nexus-dark-contrast.css").read_text(encoding="utf-8")
+    assert ".hc-section{margin-top:32px;border:1px solid var(--border)" in template
+    assert "background:var(--card);color:var(--text)" in template
+    assert ".nexus-dark .hc-state-success" in template
+    assert ".nexus-dark .hc-state-failed" in template
+    assert ".hc-detail a" in dark
 
 
 def test_existing_nexus_page_receives_health_context(monkeypatch):
