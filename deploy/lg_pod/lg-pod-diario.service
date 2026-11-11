@@ -1,0 +1,19 @@
+[Unit]
+Description=LG POD diario - SC PR SP - dia anterior
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=automacao
+WorkingDirectory=/home/automacao/bots/ssw_tool
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=TZ=America/Sao_Paulo
+UMask=0077
+ExecStart=/home/automacao/venv/bin/python -u -m scripts.executar_lg_pod_diario --executar
+TimeoutStartSec=8h
+Restart=no
+SuccessExitStatus=2
+StandardOutput=journal
+StandardError=journal

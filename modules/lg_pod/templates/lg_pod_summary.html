@@ -1,0 +1,11 @@
+{% set r=report.run %}{% set c=report.counts %}
+<div class="lp-runhead"><div><span class="lp-eyebrow">EXECUÇÃO ATUAL</span><h2>{{ 'Consulta sem envio' if r.simulacao else 'Mapeamento e envio' }}</h2><p class="lp-muted">{{ r.data_inicial|lg_day }} a {{ r.data_final|lg_day }} <span aria-hidden="true">·</span> {{ r.solicitado_por }} · <strong>{{ r.transportador|default('') }}</strong></p></div><span class="lp-badge {{ r.status }}">{{ lg_labels.get(r.status,r.status) }}</span></div>
+<div class="lp-progresscopy"><p id="lp-current-message" role="status">{{ r.mensagem|lg_message }}</p><span class="lp-muted">Tempo decorrido <strong>{{ view.duration }}</strong></span></div>
+<div class="lp-progress" role="progressbar" aria-label="Comprovantes finalizados" aria-valuemin="0" aria-valuemax="100" {% if view.percent is not none %}aria-valuenow="{{ view.percent }}"{% endif %}><div class="{% if view.percent is none and view.active %}lp-indeterminate{% endif %}" style="width:{{ view.percent if view.percent is not none else (35 if view.active else 0) }}%"></div></div>
+<div class="lp-progressmeta"><span>{{ view.done }} finalizados{% if view.total is not none %} de {{ view.total }} registros{% elif view.active %} · aguardando o total da consulta{% endif %}{% if view.current_nf %} <span class="lp-current">NF {{ view.current_nf }}</span>{% endif %}</span><strong>{{ (view.percent|string + '%') if view.percent is not none else 'Em processamento' if view.active else 'Execução encerrada' }}</strong></div>
+<div class="lp-stats">
+{% for label,key,tone in [('Enviados para aprovação','ENVIADO','green'),('Consultados sem envio','SIMULADO','blue'),('Mapeados, falta envio','MAPEADO','amber'),('Conferir no portal','CONFERIR','rose'),('Erros na consulta','ERRO_CONSULTA','rose'),('Ignorados','IGNORADO','slate')] %}
+<button type="button" class="lp-stat {{ tone }}" data-lg-stage="{{ key }}" title="Filtrar {{ label|lower }}"><span>{{ label }}</span><strong>{{ c.get(key,0) }}</strong><small>Ver registros <span aria-hidden="true">↗</span></small></button>
+{% endfor %}
+</div>
+{% if c.get('MAPEAMENTO_SOLICITADO',0)+c.get('ENVIO_SOLICITADO',0) %}<p class="lp-muted">{{ c.get('MAPEAMENTO_SOLICITADO',0)+c.get('ENVIO_SOLICITADO',0) }} registro(s) {{ 'em mapeamento ou envio' if view.active else 'sem confirmação final; confira o portal antes de repetir' }}.</p>{% endif %}

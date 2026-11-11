@@ -1,49 +1,121 @@
 {% extends "base.html" %}
 {% block content %}
-<style>
-.lg{max-width:1400px}.lg .card{max-width:none;margin-bottom:22px}.lg h1{margin:0 0 8px}.lg .muted{color:#64748b}.lg .form-grid{display:grid;grid-template-columns:repeat(3,minmax(160px,1fr));gap:18px}.lg .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0}.lg .stat{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:18px}.lg .stat strong{display:block;font-size:28px;margin-top:8px}.lg .scroll{overflow-x:auto}.lg table{width:100%;border-collapse:collapse;font-size:13px}.lg th,.lg td{text-align:left;padding:12px;border-bottom:1px solid #e2e8f0;vertical-align:top}.lg th{color:#64748b;white-space:nowrap}.lg .badge{display:inline-block;border-radius:6px;padding:5px 8px;background:#eff6ff;color:#1d4ed8;font-size:12px;white-space:nowrap}.lg .ENVIADO{background:#dcfce7;color:#166534}.lg .CONFERIR,.lg .ERRO_CONSULTA{background:#fff1f2;color:#9f1239}.lg .alert{padding:16px;border-radius:10px;background:#fff7ed;color:#9a3412;margin:16px 0}.lg a{color:#1d4ed8}.lg .actions{display:flex;gap:16px;align-items:center}.lg .actions button{width:auto}.lg .filter{display:flex;gap:12px;align-items:center}.lg .filter select{width:auto;margin:0}.lg .filter button{width:auto}.lg .message{max-width:400px;overflow-wrap:anywhere}@media(max-width:800px){.lg .form-grid{grid-template-columns:1fr}}
-</style>
-<div class="lg">
-<div class="topbar"><h1>LG · Mapeamento POD</h1><p>Consulte o período e acompanhe o mapeamento e o envio dos comprovantes para aprovação.</p></div>
-{% if error %}<div class="alert">{{ error }}</div>{% endif %}
-<div class="card">
-<h3>Consultar comprovantes</h3>
-<p class="muted">Somente arquivos com nome iniciado por ROBR e status PENDING entram no novo mapeamento. Para o retroativo, ajuste as datas abaixo; para a rotina diária, mantenha hoje.</p>
-<form method="post" action="/lg-pod/executar">
-<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-<div class="form-grid">
-<div><label for="start">Data inicial do comprovante</label><input id="start" type="date" name="data_inicial" value="{{ today }}" max="{{ today }}" required></div>
-<div><label for="end">Data final do comprovante</label><input id="end" type="date" name="data_final" value="{{ today }}" max="{{ today }}" required></div>
-<div><label for="mode">Ação</label><select id="mode" name="modo"><option value="simular">Consultar sem enviar</option>{% if send_enabled %}<option value="executar">Mapear e enviar para aprovação</option>{% endif %}</select></div>
-</div>
-<div class="actions"><button type="submit" {% if error %}disabled{% endif %}>Iniciar consulta</button><span class="muted">As consultas sem envio também ficam no histórico.</span></div>
-</form>
-</div>
+<style>{% include 'lg_pod_style.css' %}</style>
+<div class="lp" id="lg-pod-app">
+<header class="lp-header"><div><span class="lp-eyebrow">OPERAÇÃO · COMPROVANTES</span><h1>LG <span>POD</span></h1><p>Do comprovante ao envio. Tudo em um só lugar.</p></div><div class="lp-headernote"><span class="lp-brandmark" aria-hidden="true">LG</span><span>Portal LG<small>Mapeamento de notas fiscais</small></span></div></header>
+{% if error %}<div class="lp-alert" role="alert">{{ error }}</div>{% endif %}
+<div id="lp-accounts">{% include 'lg_pod_accounts.html' %}</div>
+<details class="lp-box lp-config" {% if not report %}open{% endif %}>
+<summary><span><strong>Nova consulta</strong><small>Defina o período e escolha como processar</small></span><span class="lp-configplus" aria-hidden="true">+</span></summary>
+<div class="lp-configbody"><p class="lp-muted">Entram no novo mapeamento apenas arquivos iniciados por <strong>ROBR</strong> com status <strong>PENDING</strong>. Ajuste o período para consultas retroativas.</p>
+<form method="post" action="/lg-pod/executar" id="lp-run-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<div class="lp-profilefield"><label for="lp-profile">Operação</label><select id="lp-profile" name="perfil">{% for a in accounts %}<option value="{{ a.code }}" {% if operation==a.code %}selected{% endif %} {% if not a.configured %}disabled{% endif %}>{{ a.code }} · {{ a.carrier }}{% if not a.configured %} (configurar .env){% endif %}</option>{% endfor %}{% set configured_codes = accounts|selectattr('configured')|map(attribute='code')|list %}<option value="AMBAS" {% if 'SC' not in configured_codes or 'PR' not in configured_codes %}disabled{% endif %}>SC + PR · executar simultaneamente</option><option value="TODAS" {% if configured_codes|length != 3 %}disabled{% endif %}>SC + PR + SP · executar simultaneamente</option></select><p class="lp-muted">Cada conta tem sessão, bloqueio e relatório próprios. O envio precisa estar habilitado no perfil escolhido.</p></div><div class="lp-formgrid"><div><label for="start">Data inicial do comprovante</label><input id="start" type="date" name="data_inicial" value="{{ today }}" max="{{ today }}" required></div><div><label for="end">Data final do comprovante</label><input id="end" type="date" name="data_final" value="{{ today }}" max="{{ today }}" required></div><div><label for="mode">Ação</label><select id="mode" name="modo"><option value="simular">Consultar sem enviar</option>{% if send_enabled %}<option value="executar">Mapear e enviar para aprovação</option>{% endif %}</select></div></div>
+<div class="lp-formfooter"><button class="lp-primary" type="submit" {% if error %}disabled{% endif %}>Iniciar consulta <span aria-hidden="true">→</span></button><span class="lp-muted">Toda execução fica registrada no histórico.</span></div></form></div></details>
 {% if report and report.run %}
-{% set r = report.run %}{% set c = report.counts %}
-<div class="card">
-<div class="actions"><h3 style="margin:0">Resultado da execução</h3><span class="badge">{{ r.status }}</span><a href="/lg-pod?execucao={{ r.id }}">Atualizar</a></div>
-<p class="muted">{{ r.data_inicial }} a {{ r.data_final }} · {{ 'Consulta sem envio' if r.simulacao else 'Mapeamento e envio' }} · {{ r.solicitado_por }}</p>
-<p>{{ r.mensagem }}</p>
-<div class="cards">
-<div class="stat">Enviados para aprovação<strong>{{ c.get('ENVIADO',0) }}</strong></div>
-<div class="stat">Consultados sem envio<strong>{{ c.get('SIMULADO',0) }}</strong></div>
-<div class="stat">Mapeados, falta envio<strong>{{ c.get('MAPEADO',0) }}</strong></div>
-<div class="stat">Conferir resultado<strong>{{ c.get('CONFERIR',0)+c.get('ENVIO_SOLICITADO',0)+c.get('MAPEAMENTO_SOLICITADO',0) }}</strong></div>
-<div class="stat">Erros na consulta<strong>{{ c.get('ERRO_CONSULTA',0) }}</strong></div>
-<div class="stat">Ignorados<strong>{{ c.get('IGNORADO',0) }}</strong></div>
-</div>
-{% if r.status in ['EXECUTANDO','AGUARDANDO'] %}<p class="muted">Processamento em andamento. O relatório atualiza a cada 8 segundos.</p><script>setTimeout(() => window.location.reload(),8000);</script>{% endif %}
-<form class="filter" method="get"><input type="hidden" name="execucao" value="{{ r.id }}"><label for="stage">Exibir</label><select id="stage" name="etapa"><option value="">Todas as situações</option>{% for key in c %}<option value="{{ key }}" {% if stage==key %}selected{% endif %}>{{ key }} ({{ c[key] }})</option>{% endfor %}</select><button>Filtrar</button></form>
-<div class="scroll"><table><thead><tr><th>Arquivo</th><th>NF / Série</th><th>Resultado</th><th>Mensagem</th><th>Atualizado</th></tr></thead><tbody>
-{% for i in report['items'] %}<tr><td>{{ i.arquivo }}<br><small class="muted">POD {{ i.pod_id }} · Registro {{ i.id }}</small></td><td>{{ i.nf or '—' }} / {{ i.serie or '—' }}</td><td><span class="badge {{ i.etapa }}">{{ i.etapa }}</span></td><td class="message">{{ i.mensagem }}</td><td>{{ i.atualizado_em }}</td></tr>{% else %}<tr><td colspan="5">Nenhum item registrado para este filtro.</td></tr>{% endfor %}
-</tbody></table></div>
-<p class="muted">{{ report.total }} itens · Página {{ page }}{% if page>1 %} · <a href="?execucao={{ r.id }}&page={{ page-1 }}&etapa={{ stage|urlencode }}">Anterior</a>{% endif %}{% if page*100<report.total %} · <a href="?execucao={{ r.id }}&page={{ page+1 }}&etapa={{ stage|urlencode }}">Próxima</a>{% endif %}</p>
-<p class="muted">“Enviado” indica envio para aprovação. A aprovação final pertence à LG.</p>
+<section class="lp-box lp-execution" aria-label="Resultado da execução">
+<div class="lp-toolbar"><div class="lp-sync"><span id="lp-sync-dot" class="lp-syncdot {% if live_active %}live{% endif %}"></span><span id="lp-sync-text">{{ 'Atualização automática a cada 5 segundos' if live_active else 'Execução encerrada' }}</span></div><div class="lp-toolbuttons"><button type="button" class="lp-textbutton" id="lp-pause" {% if not live_active %}hidden{% endif %}>Pausar atualização</button><button type="button" class="lp-outline" id="lp-refresh">↻ Atualizar</button></div></div>
+<p class="lp-connection" id="lp-connection" role="status" hidden></p><div id="lp-summary">{% include 'lg_pod_summary.html' %}</div>
+</section>
+<div class="lp-workspace">
+<section class="lp-box lp-results"><div class="lp-sectionhead"><div><span class="lp-eyebrow">RELATÓRIO</span><h2>Comprovantes da execução</h2></div></div>
+<form class="lp-filter" id="lp-filter" method="get" action="/lg-pod"><input type="hidden" name="execucao" value="{{ report.run.id }}"><input type="hidden" name="operacao" value="{{ operation }}"><div class="lp-search"><label class="lp-sr" for="lp-search">Buscar NF, arquivo ou POD</label><input id="lp-search" name="busca" placeholder="Buscar NF, arquivo ou POD…" value="{{ search }}" maxlength="120" type="search"></div><div><label class="lp-sr" for="lp-stage">Situação</label><select id="lp-stage" name="etapa"><option value="">Todas as situações</option>{% for key in ['ENVIADO','SIMULADO','MAPEADO','CONFERIR','ERRO_CONSULTA','IGNORADO','CONSULTANDO','MAPEAMENTO_SOLICITADO','ENVIO_SOLICITADO','LIBERADO'] %}<option value="{{ key }}" {% if stage==key %}selected{% endif %}>{{ lg_labels.get(key,key) }}</option>{% endfor %}</select></div><button class="lp-outline" type="submit">Filtrar</button></form>
+<div class="lp-downloads"><span>Exportar execução com os filtros atuais · todas as páginas</span><a data-lg-export="xlsx" href="/lg-pod/relatorio?execucao={{ report.run.id|urlencode }}&formato=xlsx&etapa={{ stage|urlencode }}&busca={{ search|urlencode }}">Excel ↓</a><a data-lg-export="csv" href="/lg-pod/relatorio?execucao={{ report.run.id|urlencode }}&formato=csv&etapa={{ stage|urlencode }}&busca={{ search|urlencode }}">CSV ↓</a></div><div id="lp-items">{% include 'lg_pod_items.html' %}</div><p class="lp-footnote">“Enviado” confirma o envio para aprovação. A aprovação final pertence à LG.</p></section>
+<aside class="lp-box lp-activity"><div class="lp-sectionhead"><div><span class="lp-eyebrow">ACOMPANHAMENTO</span><h2>Atividades recentes</h2></div><span class="lp-feedicon" aria-hidden="true">≋</span></div><p class="lp-feednote">Último estado dos 30 comprovantes mais recentes. Acompanhe os detalhes de cada resultado.</p><div id="lp-activity">{% include 'lg_pod_activity.html' %}</div></aside>
 </div>
 {% endif %}
-<div class="card"><h3>Histórico</h3><div class="scroll"><table><thead><tr><th>Início</th><th>Período</th><th>Ação</th><th>Situação</th><th></th></tr></thead><tbody>
-{% for r in history %}<tr><td>{{ r.iniciado_em }}</td><td>{{ r.data_inicial }} a {{ r.data_final }}</td><td>{{ 'Consulta' if r.simulacao else 'Mapear e enviar' }}</td><td><span class="badge">{{ r.status }}</span></td><td><a href="/lg-pod?execucao={{ r.id }}">Ver relatório</a></td></tr>{% else %}<tr><td colspan="5">Nenhuma execução registrada.</td></tr>{% endfor %}
-</tbody></table></div></div>
+<section class="lp-box"><div class="lp-sectionhead"><div><span class="lp-eyebrow">CONSULTAS ANTERIORES</span><h2>Histórico de execuções</h2></div><div class="lp-historyfilters"><a href="?{% if report %}execucao={{ report.run.id|urlencode }}&{% endif %}operacao=">Todas</a>{% for code in ['SC','PR','SP'] %}<a href="?{% if report %}execucao={{ report.run.id|urlencode }}&{% endif %}operacao={{ code }}" {% if operation==code %}aria-current="true"{% endif %}>{{ code }}</a>{% endfor %}</div></div><div id="lp-history">{% include 'lg_pod_history.html' %}</div></section>
+<section class="lp-box"><div class="lp-sectionhead"><div><span class="lp-eyebrow">AUDITORIA</span><h2>Exportar por período</h2></div></div><form class="lp-auditform" method="get" action="/lg-pod/relatorio"><div><label for="audit-start">Data de execução · início</label><input id="audit-start" type="date" name="inicio" value="{{ today }}" max="{{ today }}" required></div><div><label for="audit-end">Data de execução · fim</label><input id="audit-end" type="date" name="fim" value="{{ today }}" max="{{ today }}" required></div><div><label for="audit-operation">Operação</label><select id="audit-operation" name="operacao"><option value="">Todas</option>{% for code in ['SC','PR','SP'] %}<option value="{{ code }}">{{ code }}</option>{% endfor %}</select></div><div><label for="audit-format">Formato</label><select id="audit-format" name="formato"><option value="xlsx">Excel · resumo e itens</option><option value="csv">CSV · itens</option></select></div><button type="submit" class="lp-primary">Baixar relatório ↓</button></form><p class="lp-footnote">Datas de início das execuções em Brasília. Inclui todas as tentativas; não representa documentos únicos.</p></section><noscript><p class="lp-alert">Ative o JavaScript para acompanhar as atualizações automáticas. Os filtros e links continuam disponíveis.</p></noscript>
 </div>
+{% if report and report.run %}
+<script>
+(function () {
+'use strict';
+const root = document.getElementById('lg-pod-app');
+const runId = {{ report.run.id|tojson }};
+const operation = {{ operation|tojson }};
+let active = {{ live_active|tojson }}, paused = false, timer = null, controller = null, generation = 0, failures = 0;
+let page = {{ page }}, stage = {{ stage|tojson }}, search = {{ search|tojson }};
+const sync = document.getElementById('lp-sync-text'), dot = document.getElementById('lp-sync-dot');
+const pause = document.getElementById('lp-pause'), note = document.getElementById('lp-connection');
+function syncLabel() {
+  pause.hidden = !active;
+  pause.textContent = paused ? 'Retomar atualização' : 'Pausar atualização';
+  dot.classList.toggle('live', active && !paused && !failures);
+  sync.textContent = !active ? 'Execução encerrada · ' + new Date().toLocaleTimeString('pt-BR') : paused ? 'Atualização pausada · a execução continua' : 'Atualização automática a cada 5 segundos';
+}
+function schedule() { clearTimeout(timer); if (active && !paused) timer = setTimeout(refresh, Math.min(30000, 5000 * Math.pow(2, failures))); }
+function setLocation() {
+  const url = new URL(window.location.href);
+  url.searchParams.set('execucao', runId);
+  if (operation) url.searchParams.set('operacao', operation);
+  for (const [key,value] of [['page',page > 1 ? page : ''],['etapa',stage],['busca',search]]) {
+    if (value) url.searchParams.set(key,value); else url.searchParams.delete(key);
+  }
+  window.history.replaceState(null,'',url);
+  for (const link of root.querySelectorAll('[data-lg-export]')) {
+    const download = new URL('/lg-pod/relatorio',window.location.origin);
+    download.search = new URLSearchParams({execucao:runId,formato:link.dataset.lgExport,etapa:stage,busca:search});
+    link.href = download;
+  }
+}
+async function refresh() {
+  clearTimeout(timer);
+  if (controller) controller.abort();
+  controller = new AbortController();
+  const mine = ++generation;
+  const deadline = setTimeout(() => controller && mine === generation && controller.abort(), 20000);
+  const url = new URL('/lg-pod/estado', window.location.origin);
+  url.search = new URLSearchParams({execucao:runId, page:String(page), etapa:stage, busca:search, operacao:operation});
+  root.setAttribute('aria-busy','true');
+  try {
+    const response = await fetch(url, {credentials:'same-origin',cache:'no-store',signal:controller.signal,headers:{Accept:'application/json'}});
+    if (mine !== generation) return;
+    if (response.status === 401 || response.status === 403) {
+      paused = true; note.hidden = false;
+      note.textContent = 'Sua sessão expirou. Entre novamente para acompanhar. A execução não é cancelada por esta tela.';
+      const link = document.createElement('a'); link.href = '/login'; link.textContent = ' Entrar novamente'; note.appendChild(link);
+      return;
+    }
+    if (!response.ok) throw new Error('refresh');
+    const result = await response.json();
+    if (mine !== generation) return;
+    if (!result.parts || typeof result.active !== 'boolean') throw new Error('format');
+    for (const part of ['summary','items','activity','history','accounts']) {
+      const element = document.getElementById('lp-' + part);
+      if (typeof result.parts[part] !== 'string') throw new Error('format');
+      if (element.innerHTML !== result.parts[part]) {
+        const scroller = element.querySelector('.lp-tablewrap, .lp-feed');
+        const left = scroller ? scroller.scrollLeft : 0, top = scroller ? scroller.scrollTop : 0;
+        element.innerHTML = result.parts[part];
+        const next = element.querySelector('.lp-tablewrap, .lp-feed');
+        if (next) {next.scrollLeft = left; next.scrollTop = top;}
+      }
+    }
+    active = result.active; failures = 0; note.hidden = true;
+  } catch (error) {
+    if (mine !== generation) return;
+    failures = Math.min(failures + 1,3); note.hidden = false;
+    note.textContent = 'Não foi possível atualizar agora. Os últimos resultados continuam na tela. ' + (paused || !active ? 'Clique em Atualizar para tentar novamente.' : 'Tentaremos novamente em instantes.');
+  } finally {
+    clearTimeout(deadline);
+    if (mine === generation) {root.removeAttribute('aria-busy'); syncLabel(); schedule();}
+  }
+}
+document.getElementById('lp-refresh').addEventListener('click', refresh);
+pause.addEventListener('click', () => { paused = !paused; syncLabel(); clearTimeout(timer); if (!paused) refresh(); });
+document.getElementById('lp-filter').addEventListener('submit', event => {
+  event.preventDefault(); stage = document.getElementById('lp-stage').value;
+  search = document.getElementById('lp-search').value.trim(); page = 1; setLocation(); refresh();
+});
+root.addEventListener('click', event => {
+  const filter = event.target.closest('[data-lg-stage]');
+  if (filter) {stage = filter.dataset.lgStage; document.getElementById('lp-stage').value = stage; page = 1; setLocation(); refresh();}
+  const pagination = event.target.closest('[data-lg-page]');
+  if (pagination && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {event.preventDefault(); page = Number(pagination.dataset.lgPage); setLocation(); refresh();}
+});
+window.addEventListener('pagehide', () => {clearTimeout(timer); generation++; if (controller) controller.abort();});
+schedule();
+})();
+</script>
+{% endif %}
 {% endblock %}

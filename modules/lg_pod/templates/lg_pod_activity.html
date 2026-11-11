@@ -1,0 +1,3 @@
+<ol class="lp-feed">
+{% for i in activities %}<li><span class="lp-dot {{ i.etapa }}" aria-hidden="true"></span><div><div class="lp-eventhead"><strong>{{ lg_labels.get(i.etapa,i.etapa) }}</strong><time>{{ i.atualizado_em|lg_clock }}</time></div><span class="lp-eventnf">{{ 'NF ' + i.nf if i.nf else i.arquivo }}</span><p>{{ i.mensagem|lg_message }}</p><small>POD {{ i.pod_id }} · Registro {{ i.id }}</small></div></li>{% else %}<li class="lp-feedempty">{% if view.active %}A execução está começando. Os registros aparecerão aqui.{% else %}Nenhuma atividade registrada nesta execução.{% endif %}</li>{% endfor %}
+</ol>

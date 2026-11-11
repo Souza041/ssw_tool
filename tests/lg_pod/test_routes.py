@@ -5,13 +5,30 @@ from unittest import TestCase, mock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.middleware.sessions import SessionMiddleware
+import sys
+from types import ModuleType
+from jinja2 import ChoiceLoader, DictLoader
+# O pacote de atualização não contém o login SSW. Só nos testes, usar uma
+# dependência mínima se o aplicativo completo não estiver presente.
+try:
+    import web.session_store
+except ModuleNotFoundError:
+    web = ModuleType('web')
+    web.__path__ = []
+    session = ModuleType('web.session_store')
+    session.obter_client = lambda request: None
+    sys.modules['web'] = web
+    sys.modules['web.session_store'] = session
 from modules.lg_pod import routes
+routes.templates.env.loader = ChoiceLoader([routes.templates.env.loader,
+    DictLoader({'base.html': '<html><body>{% block content %}{% endblock %}</body></html>'})])
 
 
 class Repo:
     def __enter__(self): return self
     def __exit__(self, *args): pass
     def history(self): return []
+    def activities(self, *args): return self.report()['items']
     def report(self, *args):
         return dict(run=dict(id='test-run', status='CONCLUIDA', data_inicial=date(2026,11,3),
                     data_final=date(2026,11,4), simulacao=True, solicitado_por='teste',mensagem='Concluído'),
@@ -57,5 +74,5 @@ class RoutesTests(TestCase):
             response=self.client.post('/lg-pod/executar', data=dict(data_inicial='2026-11-03',
                  data_final='2026-11-04',modo='simular',csrf_token=csrf),follow_redirects=False)
         self.assertEqual(response.status_code,303)
-        self.assertEqual(response.headers['location'],'/lg-pod?execucao=run-1')
-        self.assertEqual(start.call_args.kwargs,dict(dry_run=True,actor='operador'))
+        self.assertEqual(response.headers['location'],'/lg-pod?execucao=run-1&operacao=SC')
+        self.assertEqual(start.call_args.kwargs,dict(dry_run=True,actor='operador',profile='SC'))
