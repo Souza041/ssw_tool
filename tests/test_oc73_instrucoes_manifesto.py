@@ -45,10 +45,10 @@ class InstrucoesManifesto(unittest.TestCase):
         with self.assertRaises(ValueError):
             ler(instrucao(TEXTOS[0]))
 
-    def test_texto_desconhecido_nao_e_descartado(self):
+    def test_texto_livre_sem_codigo_e_instrucao_estruturada(self):
         for texto in ("Texto livre sem classificação", "Manifesto CWB237298-3 cancelado. OUTRO TEXTO", "DACTE conferido"):
-            with self.subTest(texto=texto), self.assertRaises(ValueError):
-                ler(instrucao(texto)+ocorrencia("63"))
+            with self.subTest(texto=texto):
+                self.assertEqual([r.codigo for r in ler(instrucao(texto)+ocorrencia("63"))], ["63"])
 
     def test_campos_nao_vazios_divergentes_invalidos_bloqueiam(self):
         base=instrucao(TEXTOS[0])

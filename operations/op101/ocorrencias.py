@@ -541,11 +541,48 @@ class OP101Ocorrencias:
         return texto.strip()
 
     @classmethod
+    def _ler_instrucao_sem_codigo(cls, registro_xml: str, campos: dict) -> dict | None:
+        """Distingue código explicitamente vazio de campo ausente ou ilegível."""
+        if campos["f5"] or campos["f10"]:
+            return None
+
+        originais = {}
+        for indice in (0, 3, 5, 6, 10):
+            aberturas = re.findall(rf"<f{indice}>", registro_xml, re.IGNORECASE)
+            fechamentos = re.findall(rf"</f{indice}>", registro_xml, re.IGNORECASE)
+            completos = re.findall(
+                rf"<f{indice}>(.*?)</f{indice}>", registro_xml,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            if len(aberturas) != 1 or len(fechamentos) != 1 or len(completos) != 1:
+                raise ValueError("Historico OP101 contem registro sem codigo valido: campos XML incompletos ou duplicados.")
+            if re.search(r"</?f[0-9]+\b", completos[0], re.IGNORECASE):
+                raise ValueError("Instrução OP101 com campos XML aninhados.")
+            originais[indice] = completos[0]
+
+        # Não converter HTML ou conteúdo ilegível em um código vazio.
+        if any(unescape(originais[i]).strip() for i in (5, 10)):
+            return None
+        if not campos["f6"] or campos["f3"] != campos["f0"]:
+            return None
+        try:
+            datetime.strptime(campos["f0"], "%d/%m/%y %H:%M")
+        except ValueError as erro:
+            raise ValueError("Instrução OP101 com data inválida.") from erro
+
+        return {
+            "tipo": "instrucao_sem_ocorrencia",
+            "data_hora": campos["f0"],
+            "texto": campos["f6"],
+        }
+
+    @classmethod
     def listar_ocorrencias(
         cls,
         html: str,
         *,
         estrito: bool = False,
+        diagnostico_instrucoes: list[dict] | None = None,
     ) -> list[OcorrenciaHistorico]:
         """
         Converte as linhas XML da tela de ocorrências em objetos.
@@ -624,77 +661,10 @@ class OP101Ocorrencias:
 
             if not match_codigo:
                 if estrito:
-                    texto_complementar = "".join(
-                        caractere
-                        for caractere in unicodedata.normalize(
-                            "NFKD",
-                            campos["f6"],
-                        )
-                        if not unicodedata.combining(caractere)
-                    ).upper().strip()
-
-                    eventos_informativos = (
-                        "CTRC APONTADO PARA MANIFESTO NA UNIDADE",
-                        "GERADO COM DADOS IMPORTADOS ATRAVES DA OPCAO",
-                    )
-
-                    evento_rastreamento_sacflow = (
-                        campos["f12"].casefold() == "sacflow"
-                        and re.fullmatch(
-                            r"RASTREAMENTOS \d{2}:\d{2} - \d{2}:\d{2}:\s*"
-                            r"SACFLOW \(WHATSAPP\): .+\s+"
-                            r"TOTAL: \d+ RASTREAMENTO\(S\)",
-                            texto_complementar,
-                        ) is not None
-                    )
-
-                    # Formatos administrativos observados na OP101. Não aceitar
-                    # qualquer texto com f5 vazio como uma instrução válida.
-                    formatos_administrativos = (
-                        r"DACTE CONFERIDO NA SAIDA DO MANIFESTO [A-Z]{3}[0-9]{1,20}-[0-9]",
-                        r"MANIFESTO [A-Z]{3}[0-9]{1,20}-[0-9] CANCELADO\.",
-                        r"- OPC 034 MANIFESTO [A-Z]{3}[0-9]{1,20}-[0-9] - DACTE CAPTURADO\.",
-                        r"SSWBAR - VOLUME NR [0-9]{12} \([0-9]{2}/[0-9]{2}\) "
-                        r"CAPTURADO EM CARREGAMENTO DE MANIFESTO PLACA PROV "
-                        r"[A-Z]{3}[0-9][A-Z0-9][0-9]{2}",
-                        r"ETIQUETAS DE IDENTIFICACAO DE VOLUMES FORAM REIMPRESSAS",
-                    )
-                    evento_administrativo = any(
-                        re.fullmatch(formato, texto_complementar) is not None
-                        for formato in formatos_administrativos
-                    )
-                    if evento_administrativo:
-                        # Tags ausentes, duplicadas ou truncadas não podem ser
-                        # confundidas com campos explicitamente vazios.
-                        for indice in (0, 3, 5, 6, 10):
-                            tags = re.findall(
-                                rf"<f{indice}>(.*?)</f{indice}>", registro_xml,
-                                flags=re.IGNORECASE | re.DOTALL,
-                            )
-                            if len(tags) != 1:
-                                raise ValueError("Instrução OP101 com campos XML incompletos ou duplicados.")
-                        try:
-                            datetime.strptime(campos["f0"], "%d/%m/%y %H:%M")
-                        except ValueError as erro:
-                            raise ValueError("Instrução OP101 com data inválida.") from erro
-
-                    evento_conhecido = (
-                        any(
-                            texto_complementar.startswith(prefixo)
-                            for prefixo in eventos_informativos
-                        )
-                        or evento_rastreamento_sacflow
-                        or evento_administrativo
-                    )
-
-                    linha_informativa = (
-                        not campo_ocorrencia
-                        and not campos["f10"]
-                        and campos["f3"] == campos["f0"]
-                        and evento_conhecido
-                    )
-
-                    if linha_informativa:
+                    instrucao = cls._ler_instrucao_sem_codigo(registro_xml, campos)
+                    if instrucao is not None:
+                        if diagnostico_instrucoes is not None:
+                            diagnostico_instrucoes.append(instrucao)
                         continue
 
                     raise ValueError(

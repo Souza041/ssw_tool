@@ -83,12 +83,12 @@ class InstrucoesVolumes(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "vazio ou sem ocorrencias"):
             ler(instrucao(CAPTURA) + instrucao(ETIQUETAS))
 
-    def test_textos_genericos_e_variantes_nao_observadas_bloqueiam(self):
+    def test_textos_nao_definem_codigo_da_instrucao(self):
         for texto in ("SSWBAR", "Etiquetas reimpressas", CAPTURA + " OUTRA INFORMACAO",
                       ETIQUETAS + " CANCELADO", CAPTURA.replace("000802279749", "INVALIDO"),
                       CAPTURA.replace("AUJ0915", "INVALIDA")):
-            with self.subTest(texto=texto), self.assertRaises(ValueError):
-                ler(instrucao(texto) + oc("64"))
+            with self.subTest(texto=texto):
+                self.assertEqual([r.codigo for r in ler(instrucao(texto) + oc("64"))], ["64"])
 
     def test_campos_divergentes_ou_invalidos_bloqueiam(self):
         for texto in (CAPTURA, ETIQUETAS):
