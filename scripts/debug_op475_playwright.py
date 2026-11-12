@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import (
     BrowserContext,
@@ -15,6 +15,7 @@ from playwright.sync_api import (
 )
 
 from ssw.client import SSWClient
+from ssw.settings import settings, normalizar_base_url
 
 from ssw.utils import dummy
 
@@ -91,7 +92,17 @@ def resumo_post_data(post_data: str | None) -> dict:
 # NETWORK LOGGER
 # ============================================================
 
-def instalar_network_logger(page: Page, nome: str) -> None:
+def instalar_network_logger(page: Page, nome: str, base_url: str | None = None) -> None:
+    origem = urlsplit(normalizar_base_url(settings.base_url if base_url is None else base_url))
+
+    def mesma_origem(url: str) -> bool:
+        try:
+            alvo = urlsplit(url)
+            return (alvo.scheme, alvo.hostname, alvo.port or (443 if alvo.scheme == "https" else 80)) == (
+                origem.scheme, origem.hostname, origem.port or (443 if origem.scheme == "https" else 80)
+            )
+        except ValueError:
+            return False
 
     contador = {
         "request": 0,
@@ -99,7 +110,7 @@ def instalar_network_logger(page: Page, nome: str) -> None:
     }
 
     def on_request(request: Request) -> None:
-        if "sistema.ssw.inf.br" not in request.url:
+        if not mesma_origem(request.url):
             return
 
         contador["request"] += 1
@@ -125,7 +136,7 @@ def instalar_network_logger(page: Page, nome: str) -> None:
                 )
 
     def on_response(response: Response) -> None:
-        if "sistema.ssw.inf.br" not in response.url:
+        if not mesma_origem(response.url):
             return
 
         contador["response"] += 1
@@ -180,7 +191,7 @@ def copiar_cookies_para_playwright(
             "name": cookie.name,
             "value": cookie.value,
             "domain": cookie.domain
-            or "sistema.ssw.inf.br",
+            or urlsplit(normalizar_base_url(client.base_url)).hostname,
             "path": cookie.path or "/",
         }
 
@@ -422,6 +433,7 @@ def abrir_op475(
     instalar_network_logger(
         page,
         "OP475",
+        base_url=client.base_url,
     )
 
     print(
@@ -586,6 +598,7 @@ def prosseguir_tela_inicial(
         instalar_network_logger(
             nova,
             "OP475-NOVA-ABA",
+            base_url=client.base_url,
         )
 
         try:

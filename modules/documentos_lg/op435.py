@@ -16,7 +16,10 @@ from zoneinfo import ZoneInfo
 import requests
 from dotenv import load_dotenv
 
-BASE = 'https://sistema.ssw.inf.br'
+from ssw.settings import settings, normalizar_base_url
+
+# Alias preservado para consumidores antigos. As chamadas usam a instância.
+BASE = settings.base_url
 LOG = logging.getLogger('op435')
 FILTROS = {
     'cod_emp_ctb': '01', 't_data_ref_ini': '010101', 't_tp_fil': 'C',
@@ -69,19 +72,20 @@ def validar_arquivo(path):
 
 
 class Extrator:
-    def __init__(self, session=None, timeout=600):
+    def __init__(self, session=None, timeout=600, base_url=None):
+        self.base_url = normalizar_base_url(settings.base_url if base_url is None else base_url)
         self.session = session or requests.Session()
         self.timeout = timeout
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0', 'Origin': BASE,
-            'Referer': BASE + '/bin/ssw0422',
+            'User-Agent': 'Mozilla/5.0', 'Origin': self.base_url,
+            'Referer': self.base_url + '/bin/ssw0422',
         })
 
     def post(self, endpoint, data, ajax=True):
         payload = dict(data)
         if ajax:
             payload['dummy'] = str(int(time.time() * 1000))
-        r = self.session.post(BASE + '/bin/' + endpoint, data=payload,
+        r = self.session.post(self.base_url + '/bin/' + endpoint, data=payload,
                               timeout=(30, self.timeout), allow_redirects=False)
         r.raise_for_status()
         if 300 <= r.status_code < 400:
@@ -92,7 +96,7 @@ class Extrator:
     def login(self, dominio, cpf, usuario, senha):
         LOG.info('Autenticando no SSW')
         # A captura começa no POST; não há necessidade de reaproveitar cookies do HAR.
-        r = self.session.get(BASE + '/bin/ssw0422', timeout=(30, self.timeout), allow_redirects=False)
+        r = self.session.get(self.base_url + '/bin/ssw0422', timeout=(30, self.timeout), allow_redirects=False)
         r.raise_for_status()
         r.encoding = 'latin1'
         initial = Inputs(r.text).values
@@ -107,7 +111,7 @@ class Extrator:
         inputs = Inputs(menu).values
         if 'f2' not in inputs or 'f3' not in inputs:
             raise ErroSSW('O SSW não apresentou o menu esperado após o login.')
-        self.session.headers['Referer'] = BASE + '/bin/menu01'
+        self.session.headers['Referer'] = self.base_url + '/bin/menu01'
 
     def extrair(self, unidade, data_final, pasta):
         LOG.info('Abrindo OP435 na unidade %s', unidade)
@@ -118,7 +122,7 @@ class Extrator:
         inputs = Inputs(form).values
         if not all(k in inputs for k in FILTROS) or 't_data_ref_fim' not in inputs:
             raise ErroSSW('O formulário da OP435 mudou ou a sessão expirou.')
-        self.session.headers['Referer'] = BASE + '/bin/ssw0103'
+        self.session.headers['Referer'] = self.base_url + '/bin/ssw0103'
         filtros = dict(FILTROS, t_data_ref_fim=data_final.strftime('%d%m%y'))
         LOG.info('Gerando relatório até %s; aguardando resposta', data_final.strftime('%d/%m/%Y'))
         result = self.post('ssw0103', dict(filtros, act='PES'))
@@ -132,7 +136,7 @@ class Extrator:
         total = 0
         LOG.info('Baixando arquivo bruto')
         try:
-            with self.session.get(BASE + '/bin/ssw0424', params=params, stream=True,
+            with self.session.get(self.base_url + '/bin/ssw0424', params=params, stream=True,
                                   timeout=(30, self.timeout), allow_redirects=False) as r:
                 r.raise_for_status()
                 if r.status_code != 200:

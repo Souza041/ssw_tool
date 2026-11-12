@@ -91,10 +91,8 @@ def executar(job, client, config, pasta):
                                  'url': f'/documentos-lg/jobs/{job.id}/arquivos/{len(job.result_files)}'})
 
     try:
-        if client.base_url.rstrip('/') != BASE:
-            raise ValueError('A OP435 foi validada para o servidor sistema.ssw.inf.br.')
         add_log(job, 'OP435: gerando e baixando relatório bruto.')
-        bruto = Extrator(session=client.session, timeout=config['timeout']).extrair(
+        bruto = Extrator(session=client.session, timeout=config['timeout'], base_url=client.base_url).extrair(
             config['unidade'], config['data_final'], pasta)
         publicar(bruto, 'OP435 · original SSW')
         publicar(bruto.with_suffix('.json'), 'OP435 · resumo da extração')
