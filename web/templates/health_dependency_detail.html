@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="topbar"><div class="auth-eyebrow">NEXUS / HEALTH CENTER / DEPENDÊNCIAS</div><h1>{{ detail.dependency.name }}</h1><p>Diagnóstico técnico sanitizado, restrito a administradores.</p></div>
+<p><a href="/admin/observabilidade#external-dependencies">← Voltar às dependências externas</a></p>
+<section class="card" style="max-width:1100px">
+  {% set dependency = detail.dependency %}
+  <p><strong>Estado:</strong> {{ dependency.current_state }}{% if dependency.stale %} · dados desatualizados{% endif %} · <strong>Tipo:</strong> {{ dependency.dependency_type }}</p>
+  <p><strong>Última verificação:</strong> {{ dependency.last_check_at_utc or 'não confirmada' }}{% if dependency.last_check_at_utc %} UTC{% endif %} · <strong>Latência:</strong> {% if dependency.latency_ms is not none %}{{ dependency.latency_ms|round(1) }} ms{% else %}—{% endif %}</p>
+  <p><strong>Disponibilidade técnica:</strong> 24h {% if dependency.availability_24h is not none %}{{ dependency.availability_24h }}%{% else %}—{% endif %} · 7 dias {% if dependency.availability_7d is not none %}{{ dependency.availability_7d }}%{% else %}—{% endif %}</p>
+  <p>HTTP bem-sucedido confirma somente alcance técnico; não comprova login nem disponibilidade funcional.</p>
+  <h2>Verificações recentes</h2>
+  <div style="overflow-x:auto"><table style="width:100%;min-width:760px;text-align:left"><thead><tr><th>Data UTC</th><th>Probe</th><th>Estado observado</th><th>Latência</th><th>Código</th><th>Detalhe</th></tr></thead><tbody>{% for check in detail.checks %}<tr><td>{{ check.checked_at_utc }}</td><td>{{ check.probe_type }}</td><td>{{ check.observed_state }}</td><td>{% if check.latency_ms is not none %}{{ check.latency_ms|round(1) }} ms{% else %}—{% endif %}</td><td>{{ check.reason_code }}</td><td>{{ check.technical_detail }}</td></tr>{% else %}<tr><td colspan="6">Sem verificações registradas.</td></tr>{% endfor %}</tbody></table></div>
+  <h2>Linha do tempo de incidentes</h2>
+  {% for incident in detail.incidents %}<article style="margin:10px 0;padding:12px;border-left:4px solid {% if incident.state == 'OPEN' %}#dc2626{% else %}#16a34a{% endif %};background:var(--bg)"><strong>{{ incident.state }}</strong> · {{ incident.opened_at_utc }} UTC{% if incident.recovered_at_utc %} → {{ incident.recovered_at_utc }} UTC{% endif %}<br><small>{{ incident.reason_code }} · {{ incident.technical_detail }} · alertas internos: {{ incident.internal_alert_count }}</small></article>{% else %}<p>Sem incidentes registrados.</p>{% endfor %}
+</section>
+{% endblock %}

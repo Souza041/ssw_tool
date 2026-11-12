@@ -232,5 +232,8 @@ def test_router_expoe_somente_metodos_get():
         "/admin/health-center/bots/{bot_id}/view",
         "/admin/health-center/executions/{execution_id}",
         "/admin/health-center/executions/{execution_id}/view",
+        "/admin/health-center/dependencies",
+        "/admin/health-center/dependencies/{dependency_id}",
+        "/admin/health-center/dependencies/{dependency_id}/view",
     }
     assert all(route.methods == {"GET"} for route in routes.router.routes)
