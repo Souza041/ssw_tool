@@ -26,7 +26,7 @@ from operations.op001.batch_transporte import processar_planilha_transporte
 
 from web.jobs import JOBS, add_log, criar_job, executar_job, set_progress
 from web.automation_metrics import snapshot
-from modules.health_center.routes import dashboard_context
+from modules.health_center.routes import dashboard_context, dependency_dashboard_context
 from web.admin_access import is_admin
 from fastapi import HTTPException, Query
 
@@ -253,6 +253,7 @@ def nexus_observabilidade(
         ),
         "health_bot": health_bot, "health_status": health_status,
         "health_days": health_days, "health_page": health_page,
+        "dependencies": dependency_dashboard_context(request),
     })
 
 @router.get("/op455", response_class=HTMLResponse)

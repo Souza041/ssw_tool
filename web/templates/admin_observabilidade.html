@@ -75,5 +75,40 @@
   {% endif %}
 </section>
 
+<style>
+.dep-section{margin-top:32px;border:1px solid var(--border);border-radius:18px;background:var(--card);color:var(--text);padding:24px;box-shadow:0 10px 30px rgba(15,23,42,.05)}
+.dep-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}.dep-head h2{margin:4px 0}.dep-muted{color:var(--muted)}
+.dep-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:12px;margin:20px 0}.dep-card{padding:15px;border:1px solid var(--border);border-radius:12px}.dep-card strong{display:block;font-size:25px;margin:5px 0}
+.dep-table-wrap{overflow-x:auto}.dep-table{width:100%;border-collapse:collapse;min-width:850px}.dep-table th,.dep-table td{text-align:left;padding:10px;border-bottom:1px solid var(--border);vertical-align:top;font-size:13px}.dep-table th{font-size:12px;color:var(--muted)}
+.dep-state{display:inline-block;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:800}.dep-state-HEALTHY{background:#dcfce7;color:#166534}.dep-state-DEGRADED{background:#ffedd5;color:#9a3412}.dep-state-DOWN{background:#fee2e2;color:#b91c1c}.dep-state-UNKNOWN{background:#e2e8f0;color:#475569}.dep-state-MAINTENANCE{background:#ede9fe;color:#6d28d9}
+.dep-alert{margin:14px 0;padding:14px;border-radius:12px;background:var(--bg)}.dep-timeline{display:grid;gap:10px;margin-top:12px}.dep-event{border-left:4px solid var(--border);padding:10px 14px;background:var(--bg);border-radius:0 10px 10px 0}.dep-event[data-state="OPEN"]{border-color:#dc2626}.dep-event[data-state="RECOVERED"]{border-color:#16a34a}
+.nexus-dark .dep-state-HEALTHY{background:#163d2b;color:#8ee5b5}.nexus-dark .dep-state-DEGRADED{background:#4a3218;color:#ffd08a}.nexus-dark .dep-state-DOWN{background:#4a2027;color:#ff9ea8}.nexus-dark .dep-state-UNKNOWN{background:#273449;color:#cbd5e1}.nexus-dark .dep-state-MAINTENANCE{background:#35265c;color:#d8c8ff}
+@media(max-width:700px){.dep-section{padding:16px}.dep-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+{% set dependency_data = dependencies|default({'state': 'disabled', 'overview': none, 'catalog': [], 'incidents': []}, true) %}
+<section class="dep-section" id="external-dependencies" aria-labelledby="dep-title">
+  <div class="dep-head"><div><div class="auth-eyebrow">NEXUS / HEALTH CENTER</div><h2 id="dep-title">Dependências Externas</h2><p class="dep-muted">Disponibilidade técnica passiva; não executa login, bots ou operações no serviço monitorado.</p></div><span class="hc-badge">{% if dependency_data.state == 'disabled' %}Monitor desativado{% elif dependency_data.state == 'error' %}Dados indisponíveis{% else %}Alertas internos{% endif %}</span></div>
+  {% if dependency_data.state == 'disabled' %}
+    <div class="dep-alert">Monitoramento desativado por padrão. Nenhum probe ou consulta às tabelas incrementais foi executado.</div>
+  {% elif dependency_data.state == 'error' %}
+    <div class="dep-alert">Não foi possível consultar o estado das dependências. O painel não presume disponibilidade.</div>
+  {% else %}
+    {% set d = dependency_data.overview %}
+    <div class="dep-grid" aria-label="Resumo de dependências externas">
+      <div class="dep-card"><span>Monitoradas</span><strong>{{ d.total }}</strong><small>Catálogo habilitado</small></div>
+      <div class="dep-card"><span>Saudáveis</span><strong>{{ d.healthy }}</strong><small>Alcance técnico</small></div>
+      <div class="dep-card"><span>Degradadas</span><strong>{{ d.degraded }}</strong><small>Falha ainda não confirmada</small></div>
+      <div class="dep-card"><span>Indisponíveis</span><strong>{{ d.down_count }}</strong><small>Após histerese</small></div>
+      <div class="dep-card"><span>Desconhecidas</span><strong>{{ d.unknown_count }}</strong><small>Sem confirmação</small></div>
+      <div class="dep-card"><span>Manutenção</span><strong>{{ d.maintenance }}</strong><small>Estado administrativo</small></div>
+      <div class="dep-card"><span>Dados desatualizados</span><strong>{{ d.stale }}</strong><small>Acima do limite configurado</small></div>
+    </div>
+    {% if dependency_data.catalog %}<div class="dep-table-wrap"><table class="dep-table"><thead><tr><th>Serviço</th><th>Estado</th><th>Última verificação</th><th>Latência</th><th>24h</th><th>7 dias</th><th>Diagnóstico sanitizado</th></tr></thead><tbody>
+    {% for item in dependency_data.catalog %}<tr><td><a href="/admin/health-center/dependencies/{{ item.identifier }}/view"><strong>{{ item.name }}</strong></a><br><small>{{ item.dependency_type }}</small></td><td><span class="dep-state dep-state-{{ item.current_state }}">{{ item.current_state }}</span>{% if item.stale %}<br><small>dados desatualizados</small>{% endif %}</td><td>{{ item.last_check_at_utc or '—' }}{% if item.last_check_at_utc %} UTC{% endif %}</td><td>{% if item.latency_ms is not none %}{{ item.latency_ms|round(1) }} ms{% else %}—{% endif %}</td><td>{% if item.availability_24h is not none %}{{ item.availability_24h }}%{% else %}—{% endif %}</td><td>{% if item.availability_7d is not none %}{{ item.availability_7d }}%{% else %}—{% endif %}</td><td>{{ item.reason_code or 'sem verificação' }}<br><small>{{ item.technical_detail or 'Nenhum detalhe disponível.' }}</small></td></tr>{% endfor %}
+    </tbody></table></div>{% else %}<div class="dep-alert">Nenhuma dependência habilitada no catálogo.</div>{% endif %}
+    <h3>Incidentes recentes</h3><div class="dep-timeline">{% for incident in dependency_data.incidents %}<article class="dep-event" data-state="{{ incident.state }}"><strong>{{ incident.name }} · {{ incident.state }}</strong><div>{{ incident.opened_at_utc }} UTC{% if incident.recovered_at_utc %} → {{ incident.recovered_at_utc }} UTC{% endif %}</div><small>{{ incident.reason_code }} · {{ incident.technical_detail }} · alertas internos: {{ incident.internal_alert_count }}</small></article>{% else %}<div class="dep-alert">Nenhum incidente registrado.</div>{% endfor %}</div>
+  {% endif %}
+</section>
+
 <p class="n4-disclaimer">O painel superior representa somente os jobs web registrados em web/jobs.py. O Health Center usa registros próprios e observa apenas automações instrumentadas; seus indicadores não são somados aos jobs web. Agendamentos e disponibilidade operacional exigem verificação independente.</p>
 {% endblock %}

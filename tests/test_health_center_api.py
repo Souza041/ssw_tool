@@ -433,6 +433,11 @@ def test_existing_nexus_page_receives_health_context(monkeypatch):
         captured.append(kwargs)
         return {"state": "disabled"}
     monkeypatch.setattr(web_routes, "dashboard_context", health_context)
+    monkeypatch.setattr(
+        web_routes, "dependency_dashboard_context",
+        lambda _request: {"state": "disabled", "overview": None,
+                          "catalog": [], "incidents": []},
+    )
     response = web_routes.nexus_observabilidade(
         request, dias=7, modulo="", status="", health_bot="ocorrencia_73",
         health_status="FAILED", health_days=30, health_page=2,

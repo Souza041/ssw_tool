@@ -10,12 +10,17 @@ from fastapi.templating import Jinja2Templates
 from modules.health_center.monitor import enabled
 from modules.health_center.privacy import checked_execution_id, checked_identifier
 from modules.health_center.repository import HealthRepository
+from modules.health_center.dependency_repository import DependencyRepository
 from web.admin_access import is_admin
 from web.session_store import obter_client
 
 
 router = APIRouter(prefix="/admin/health-center", tags=["Health Center"])
 templates = Jinja2Templates(directory="web/templates")
+
+
+def dependency_monitor_enabled() -> bool:
+    return os.getenv("HEALTH_DEPENDENCY_MONITOR_ENABLED", "false").strip().lower() == "true"
 
 
 def _authorize(request: Request) -> None:
@@ -77,6 +82,31 @@ def dashboard_context(
     except Exception:
         return {"state": "error", "overview": None, "catalog": [],
                 "history": {"items": [], "total": 0, "page": page, "per_page": 20}}
+
+
+def dependency_dashboard_context(request: Request) -> dict:
+    """Nunca consulta as tabelas incrementais quando o monitor está desligado."""
+    _authorize(request)
+    if not dependency_monitor_enabled():
+        return {"state": "disabled", "overview": None, "catalog": [], "incidents": []}
+    try:
+        repository = DependencyRepository()
+        now = datetime.now(timezone.utc)
+        return {
+            "state": "ready",
+            "overview": repository.overview(now=now),
+            "catalog": repository.catalog(now=now, limit=100),
+            "incidents": repository.incidents(limit=100),
+        }
+    except Exception:
+        return {"state": "error", "overview": None, "catalog": [], "incidents": []}
+
+
+def _dependency_repository(request: Request) -> DependencyRepository:
+    _authorize(request)
+    if not dependency_monitor_enabled():
+        raise HTTPException(status_code=503, detail="Monitor de dependências desativado.")
+    return DependencyRepository()
 
 
 @router.get("/status")
@@ -194,6 +224,42 @@ def health_suspicious_running(request: Request, limit: int = Query(50, ge=1, le=
         } for row in rows],
         "classification": "suspected_interruption_only",
     }
+
+
+@router.get("/dependencies")
+def dependency_overview(request: Request):
+    repository = _dependency_repository(request)
+    now = datetime.now(timezone.utc)
+    return _read(lambda: {
+        "overview": repository.overview(now=now),
+        "items": repository.catalog(now=now, limit=100),
+        "incidents": repository.incidents(limit=100),
+    })
+
+
+@router.get("/dependencies/{dependency_id}")
+def dependency_detail(
+    request: Request,
+    dependency_id: str = Path(pattern=r"^[a-z][a-z0-9_]{0,99}$"),
+):
+    repository = _dependency_repository(request)
+    result = _read(lambda: repository.detail(
+        dependency_id, now=datetime.now(timezone.utc)
+    ))
+    if result is None:
+        raise HTTPException(status_code=404, detail="Dependência não encontrada.")
+    return result
+
+
+@router.get("/dependencies/{dependency_id}/view", response_class=HTMLResponse)
+def dependency_detail_page(
+    request: Request,
+    dependency_id: str = Path(pattern=r"^[a-z][a-z0-9_]{0,99}$"),
+):
+    result = dependency_detail(request, dependency_id)
+    return templates.TemplateResponse(request, "health_dependency_detail.html", {
+        "is_admin": True, "detail": result,
+    })
 
 
 def _safe_identity(value, checker):
