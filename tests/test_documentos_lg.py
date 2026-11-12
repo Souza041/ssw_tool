@@ -51,7 +51,8 @@ def fake_operations(monkeypatch):
     calls = []
 
     class Extract:
-        def __init__(self, session, timeout):
+        def __init__(self, session, timeout, base_url):
+            assert base_url == service.BASE
             pass
 
         def extrair(self, unidade, data_final, pasta):

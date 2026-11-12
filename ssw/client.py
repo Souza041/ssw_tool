@@ -1,6 +1,6 @@
 import requests
 
-from ssw.settings import settings
+from ssw.settings import settings, normalizar_base_url
 from ssw.utils import dummy
 
 import time
@@ -17,7 +17,7 @@ class SSWClient:
     ) -> None:
         settings.validate(required_login=False)
 
-        self.base_url = settings.base_url.rstrip("/")
+        self.base_url = normalizar_base_url(settings.base_url)
         self.timeout = settings.timeout
         self.session = requests.Session()
 
