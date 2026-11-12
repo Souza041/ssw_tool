@@ -40,6 +40,31 @@ HEALTH_DEPENDENCY_ALLOWED_HOSTS=host-autorizado
 Habilitar primeiro em QA. HTTP 2xx representa alcance técnico e não comprova login
 ou disponibilidade funcional. Redirecionamentos não são seguidos.
 
+## Exemplo controlado para produção
+
+As variáveis fornecidas diretamente pelo Supervisor têm precedência sobre o `.env`.
+O entrypoint usa `load_dotenv(..., override=False)` e não registra URL, host,
+credenciais ou conteúdo de exceções.
+
+```dotenv
+HEALTH_DEPENDENCY_MONITOR_ENABLED=true
+HEALTH_DEPENDENCY_SSW_ENABLED=true
+HEALTH_DEPENDENCY_SSW_URL=https://host-autorizado/caminho-passivo
+HEALTH_DEPENDENCY_SSW_HTTP_METHOD=HEAD
+HEALTH_DEPENDENCY_ALLOWED_HOSTS=host-autorizado
+HEALTH_DEPENDENCY_INTERVAL_SECONDS=300
+HEALTH_DEPENDENCY_TIMEOUT_SECONDS=5
+HEALTH_DEPENDENCY_MAX_CONCURRENCY=1
+HEALTH_DEPENDENCY_RETRIES=0
+HEALTH_DEPENDENCY_FAILURE_THRESHOLD=3
+HEALTH_DEPENDENCY_RECOVERY_THRESHOLD=2
+HEALTH_DEPENDENCY_STALE_AFTER_SECONDS=900
+HEALTH_DEPENDENCY_ALERT_COOLDOWN_SECONDS=1800
+```
+
+Os logs são eventos JSON sanitizados. Falhas internas do processo são classificadas
+como `UNKNOWN` e nunca como indisponibilidade comprovada da dependência.
+
 ## Worker
 
 Somente depois da migration e da validação da allowlist:

@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import os
+import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -13,6 +17,37 @@ from modules.health_center.dependency_models import (
 )
 from modules.health_center.dependency_probes import PROBES, allowed_hosts_from_env
 from modules.health_center.dependency_repository import DependencyRepository
+
+
+logger = logging.getLogger("nexus.health.dependencies")
+_LOG_FIELDS = frozenset({
+    "dependency_id", "probe", "observed_state", "current_state", "reason_code",
+    "cycle_results", "duration_ms", "enabled", "dependencies", "interval_seconds",
+    "exception_type",
+})
+_SAFE_LOG_TEXT = re.compile(r"[A-Za-z0-9_.:-]{1,100}\Z")
+
+
+def log_event(level: int, event: str, **fields) -> None:
+    """Emite JSON com campos estritamente permitidos, sem alvo ou configuração."""
+    payload = {
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "event": event if _SAFE_LOG_TEXT.fullmatch(event) else "invalid_event",
+    }
+    for key, value in fields.items():
+        if key not in _LOG_FIELDS:
+            continue
+        if isinstance(value, str) and not _SAFE_LOG_TEXT.fullmatch(value):
+            value = "redacted"
+        if value is None or isinstance(value, (str, int, float, bool)):
+            payload[key] = value
+    try:
+        logger.log(
+            level,
+            json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+        )
+    except Exception:
+        pass
 
 
 def _boolean(name: str, default: bool = False) -> bool:
@@ -122,7 +157,13 @@ class DependencyMonitor:
                 )
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as error:
+                log_event(
+                    logging.ERROR, "dependency_probe_internal_failure",
+                    dependency_id=definition.identifier, probe=kind.value,
+                    reason_code="monitor_internal_failure",
+                    exception_type=type(error).__name__,
+                )
                 result = ProbeResult.unknown(
                     definition.identifier, kind, "monitor_internal_failure"
                 )
@@ -134,6 +175,14 @@ class DependencyMonitor:
 
     @staticmethod
     def _aggregate(definition: DependencyDefinition, results: list[ProbeResult]) -> ProbeResult:
+        internal_failure = next(
+            (item for item in results if item.reason_code == "monitor_internal_failure"),
+            None,
+        )
+        if internal_failure is not None:
+            return ProbeResult.unknown(
+                definition.identifier, ProbeKind.COMPOSITE, "monitor_internal_failure"
+            )
         rank = {
             DependencyState.HEALTHY: 0,
             DependencyState.UNKNOWN: 1,
@@ -172,14 +221,30 @@ class DependencyMonitor:
                 stale_after_seconds=self.settings.stale_after_seconds,
                 alert_cooldown_seconds=self.settings.alert_cooldown_seconds,
             )
-            return {
+            response = {
                 "dependency_id": definition.identifier,
                 "observed_state": aggregate.state.value,
                 "current_state": decision.state.value,
             }
+            log_event(
+                logging.INFO, "dependency_check_result",
+                dependency_id=definition.identifier,
+                observed_state=aggregate.state.value,
+                current_state=decision.state.value,
+                reason_code=aggregate.reason_code,
+            )
+            return response
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as error:
+            log_event(
+                logging.ERROR, "dependency_check_internal_failure",
+                dependency_id=definition.identifier,
+                observed_state=DependencyState.UNKNOWN.value,
+                current_state=DependencyState.UNKNOWN.value,
+                reason_code="monitor_internal_failure",
+                exception_type=type(error).__name__,
+            )
             return {
                 "dependency_id": definition.identifier,
                 "observed_state": DependencyState.UNKNOWN.value,
@@ -190,13 +255,24 @@ class DependencyMonitor:
     async def run_cycle(self) -> list[dict]:
         if not self.settings.enabled:
             return []
+        started = time.monotonic()
+        log_event(
+            logging.INFO, "dependency_cycle_started",
+            dependencies=len(self.definitions),
+        )
         semaphore = asyncio.Semaphore(self.settings.max_concurrency)
 
         async def limited(definition):
             async with semaphore:
                 return await self._run_dependency(definition)
 
-        return list(await asyncio.gather(*(limited(item) for item in self.definitions)))
+        rows = list(await asyncio.gather(*(limited(item) for item in self.definitions)))
+        log_event(
+            logging.INFO, "dependency_cycle_completed",
+            cycle_results=len(rows),
+            duration_ms=round((time.monotonic() - started) * 1000, 3),
+        )
+        return rows
 
     async def run_forever(self, stop_event: asyncio.Event) -> None:
         """Loop explícito; falhas são isoladas e nunca alcançam bots operacionais."""
@@ -207,8 +283,12 @@ class DependencyMonitor:
                 await self.run_cycle()
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                pass
+            except Exception as error:
+                log_event(
+                    logging.ERROR, "dependency_cycle_internal_failure",
+                    reason_code="monitor_internal_failure",
+                    exception_type=type(error).__name__,
+                )
             try:
                 await asyncio.wait_for(
                     stop_event.wait(), timeout=self.settings.interval_seconds

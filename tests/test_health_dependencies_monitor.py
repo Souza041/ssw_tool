@@ -1,10 +1,14 @@
 import asyncio
+import json
+import logging
 from datetime import datetime, timezone
 
 from modules.health_center.dependency_models import (
     DependencyDefinition, DependencyState, HysteresisDecision, ProbeKind, ProbeResult,
 )
-from modules.health_center.dependency_monitor import DependencyMonitor, MonitorSettings
+from modules.health_center.dependency_monitor import (
+    DependencyMonitor, MonitorSettings, log_event,
+)
 
 
 def definition(index=0):
@@ -63,7 +67,7 @@ def test_disabled_monitor_never_touches_repository():
     assert asyncio.run(monitor.run_cycle()) == []
 
 
-def test_concurrency_limit_and_cycle_persistence():
+def test_concurrency_limit_and_cycle_persistence(caplog):
     active = 0
     maximum = 0
 
@@ -82,10 +86,15 @@ def test_concurrency_limit_and_cycle_persistence():
         definitions=definitions, probes={ProbeKind.DNS: probe},
         allowed_hosts=frozenset(item.host for item in definitions),
     )
-    rows = asyncio.run(monitor.run_cycle())
+    with caplog.at_level(logging.INFO, logger="nexus.health.dependencies"):
+        rows = asyncio.run(monitor.run_cycle())
     assert maximum == 2
     assert len(rows) == len(repository.results) == 5
     assert all(item.probe is ProbeKind.COMPOSITE for item in repository.results)
+    events = [json.loads(record.message)["event"] for record in caplog.records]
+    assert events[0] == "dependency_cycle_started"
+    assert events.count("dependency_check_result") == 5
+    assert events[-1] == "dependency_cycle_completed"
 
 
 def test_retry_recovers_without_duplicate_state_transition():
@@ -111,12 +120,13 @@ def test_retry_recovers_without_duplicate_state_transition():
     assert len(repository.observations) == len(repository.results) == 1
 
 
-def test_monitor_failure_is_unknown_and_does_not_escape_cycle():
+def test_monitor_failure_is_unknown_and_does_not_escape_cycle(caplog):
     monitor = DependencyMonitor(
         repository=Repository(fail=True), settings=settings(),
         definitions=[definition()], probes={}, allowed_hosts=frozenset(),
     )
-    rows = asyncio.run(monitor.run_cycle())
+    with caplog.at_level(logging.INFO, logger="nexus.health.dependencies"):
+        rows = asyncio.run(monitor.run_cycle())
     assert rows == [{
         "dependency_id": "dependency_0",
         "observed_state": "UNKNOWN",
@@ -124,6 +134,10 @@ def test_monitor_failure_is_unknown_and_does_not_escape_cycle():
         "reason_code": "monitor_internal_failure",
     }]
     assert "password" not in str(rows).lower()
+    messages = "\n".join(record.message for record in caplog.records)
+    assert "dependency_check_internal_failure" in messages
+    assert "RuntimeError" in messages
+    assert "password" not in messages.lower()
 
 
 def test_aggregate_uses_worst_probe_without_claiming_success():
@@ -142,6 +156,36 @@ def test_aggregate_uses_worst_probe_without_claiming_success():
     assert aggregate.probe is ProbeKind.COMPOSITE
     assert aggregate.state is DependencyState.DEGRADED
     assert aggregate.reason_code == "http_server_error"
+
+
+def test_internal_probe_failure_forces_unknown_not_confirmed_down():
+    item = DependencyDefinition(
+        identifier="ssw_web", name="SSW", host="ssw.example.test", port=443,
+        probes=(ProbeKind.DNS, ProbeKind.HTTP), enabled=True,
+    )
+    internal = ProbeResult.unknown(
+        item.identifier, ProbeKind.DNS, "monitor_internal_failure"
+    )
+    down = result(item, DependencyState.DOWN)
+    aggregate = DependencyMonitor._aggregate(item, [internal, down])
+    assert aggregate.state is DependencyState.UNKNOWN
+    assert aggregate.reason_code == "monitor_internal_failure"
+
+
+def test_structured_log_uses_allowlist_and_redacts_untrusted_text(caplog):
+    with caplog.at_level(logging.INFO, logger="nexus.health.dependencies"):
+        log_event(
+            logging.INFO, "dependency_check_result",
+            dependency_id="https://user:password@secret.example/path",
+            observed_state="UNKNOWN", reason_code="monitor_internal_failure",
+            url="https://secret.example/token", detail="password=never-log",
+        )
+    payload = json.loads(caplog.records[-1].message)
+    assert payload["event"] == "dependency_check_result"
+    assert payload["dependency_id"] == "redacted"
+    assert payload["observed_state"] == "UNKNOWN"
+    assert "url" not in payload and "detail" not in payload
+    assert "password" not in caplog.records[-1].message.lower()
 
 
 def test_monitor_and_ssw_catalog_are_disabled_by_default(monkeypatch):
