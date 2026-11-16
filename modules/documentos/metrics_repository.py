@@ -320,6 +320,7 @@ def get_pipeline_history(limit: int = 30) -> list[dict[str, Any]]:
                 SELECT
                     id,
                     status,
+                    triggered_by,
                     reference_date,
                     started_at,
                     finished_at,

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+import re
+import secrets
+import threading
+
+from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
@@ -8,6 +12,11 @@ from modules.documentos.services.dashboard import (
     dashboard_snapshot,
     export_documents,
 )
+from modules.documentos.execution import execute_daily_documents
+from modules.documentos.services.daily_pipeline import acquire_execution_lock
+from web.admin_access import is_admin
+from web.jobs import JOBS, add_log, criar_job, executar_job, set_progress
+from web.session_store import obter_client
 
 from datetime import date, datetime
 from io import BytesIO
@@ -18,6 +27,39 @@ from openpyxl.utils import get_column_letter
 
 router = APIRouter()
 templates = Jinja2Templates(directory="web/templates")
+_manual_job_guard = threading.Lock()
+_latest_manual_job_id: str | None = None
+_manual_job_ids: set[str] = set()
+
+
+def _require_documents_admin(request: Request) -> None:
+    if not request.session.get("ssw_session_id") or obter_client(request) is None:
+        raise HTTPException(status_code=401, detail="Sessão expirada. Entre novamente.")
+    if not is_admin(request):
+        raise HTTPException(status_code=403, detail="Execução restrita a administradores.")
+
+
+def _job_logs(job) -> list[str]:
+    with job.logs.mutex:
+        return list(job.logs.queue)
+
+
+def _run_manual_job(job, *, execution_lease):
+    set_progress(job, 0, 6)
+
+    def progress(message: str) -> None:
+        add_log(job, message)
+        match = re.match(r"\[(\d)/6\]", message)
+        if match:
+            set_progress(job, max(job.progress, int(match.group(1)) - 1), 6)
+
+    result = execute_daily_documents(
+        triggered_by="MANUAL",
+        progress=progress,
+        execution_lease=execution_lease,
+    )
+    set_progress(job, 6, 6)
+    return result
 
 
 @router.get("/documentos", response_class=HTMLResponse)
@@ -44,13 +86,94 @@ def documentos_dashboard(
         lifecycle_status=lifecycle_status,
     )
 
+    csrf_token = request.session.setdefault(
+        "documentos_gce_csrf", secrets.token_urlsafe(32)
+    )
+
     return templates.TemplateResponse(
         "documentos_dashboard_v2.html",
         {
             "request": request,
             "dashboard": snapshot,
+            "documents_is_admin": is_admin(request),
+            "documents_csrf_token": csrf_token,
         },
     )
+
+
+@router.post("/documentos/executar", status_code=202)
+def documentos_executar(
+    request: Request,
+    csrf_token: str = Header("", alias="X-CSRF-Token"),
+):
+    """Reserva a trava e entrega o pipeline existente a uma thread daemon."""
+    global _latest_manual_job_id
+    _require_documents_admin(request)
+
+    expected = str(request.session.get("documentos_gce_csrf") or "")
+    if not expected or not csrf_token or not secrets.compare_digest(expected, csrf_token):
+        raise HTTPException(status_code=403, detail="Token CSRF inválido. Recarregue a página.")
+
+    try:
+        execution_lease = acquire_execution_lock()
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="O Documentos GCE já está em execução (manual ou agendada).",
+        ) from exc
+
+    try:
+        with _manual_job_guard:
+            job = criar_job("Documentos GCE · manual")
+            _latest_manual_job_id = job.id
+            _manual_job_ids.add(job.id)
+            executar_job(
+                job,
+                _run_manual_job,
+                execution_lease=execution_lease,
+            )
+    except BaseException:
+        execution_lease.release()
+        raise
+
+    return {
+        "accepted": True,
+        "job_id": job.id,
+        "message": "Execução manual iniciada em segundo plano.",
+    }
+
+
+@router.get("/documentos/executar/status")
+def documentos_execution_status(request: Request, job_id: str = ""):
+    _require_documents_admin(request)
+    selected_id = job_id or _latest_manual_job_id or ""
+    job = JOBS.get(selected_id) if selected_id in _manual_job_ids else None
+    if job is None:
+        return {
+            "available": False,
+            "status": "idle",
+            "message": "Nenhuma execução manual ativa nesta instância.",
+        }
+
+    total = int(job.total or 0)
+    progress = int(job.progress or 0)
+    percent = round(progress * 100 / total) if total else 0
+    messages = {
+        "running": "Execução em andamento.",
+        "done": "Execução concluída com sucesso. Indicadores atualizados.",
+        "error": "A execução falhou. Consulte os logs abaixo.",
+    }
+    return {
+        "available": True,
+        "job_id": job.id,
+        "status": job.status,
+        "progress": progress,
+        "total": total,
+        "percent": percent,
+        "logs": _job_logs(job),
+        "error": job.error,
+        "message": messages.get(job.status, "Status da execução atualizado."),
+    }
 
 @router.get("/documentos/export")
 def documentos_export(

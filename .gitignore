@@ -77,3 +77,8 @@ outputs/metricas_snapshots/
 data/nexus_automation_metrics.sqlite3
 data/nexus_automation_metrics.sqlite3-shm
 data/nexus_automation_metrics.sqlite3-wal
+
+# Nexus Local Agent - fila e auditoria locais
+data/nexus_local_agent.sqlite3
+data/nexus_local_agent.sqlite3-shm
+data/nexus_local_agent.sqlite3-wal

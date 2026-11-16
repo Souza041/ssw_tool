@@ -233,6 +233,7 @@ def _automation_snapshot() -> dict[str, Any]:
             "running": False,
             "error": False,
             "run_id": None,
+            "triggered_by": None,
             "started_at": None,
             "finished_at": None,
             "duration_seconds": None,
@@ -266,6 +267,7 @@ def _automation_snapshot() -> dict[str, Any]:
         "error": status == "ERROR",
 
         "run_id": int(run["id"]),
+        "triggered_by": str(run.get("triggered_by") or "").upper() or None,
 
         "reference_date": run.get("reference_date"),
         "period_start": run.get("period_start"),

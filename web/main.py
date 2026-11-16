@@ -34,6 +34,7 @@ if not QA_MODE:
     from modules.ocorrencia_73.scheduler import iniciar_scheduler_ocorrencia_73
     from modules.ocorrencia_73.routes import router as ocorrencia_73_router
     from modules.health_center.routes import router as health_center_router
+    from modules.local_agent.routes import router as local_agent_router
 
 mimetypes.add_type("text/css", ".css")
 mimetypes.add_type("application/javascript", ".js")
@@ -113,6 +114,7 @@ if not QA_MODE:
     app.include_router(lg_pod_router)
     app.include_router(ocorrencia_73_router)
     app.include_router(health_center_router)
+    app.include_router(local_agent_router)
     app.include_router(whirlpool_router)
     app.include_router(documentos_lg_router)
 

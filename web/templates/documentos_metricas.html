@@ -1173,6 +1173,7 @@
                 <tr>
                     <th>#</th>
                     <th>Data</th>
+                    <th>Origem</th>
                     <th>Status</th>
                     <th>Duração</th>
                     <th>Vínculos processados</th>
@@ -1195,6 +1196,10 @@
 
                         <td>
                             {{ run.started_at.strftime('%d/%m/%Y %H:%M') }}
+                        </td>
+
+                        <td>
+                            {% if run.triggered_by == 'MANUAL' %}Manual{% elif run.triggered_by == 'SCHEDULED' %}Agendada{% else %}Não informada{% endif %}
                         </td>
 
                         <td>

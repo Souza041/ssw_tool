@@ -102,6 +102,50 @@
     background: #1e40af;
 }
 
+.execute-now-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 15px;
+    border: 1px solid #15803d;
+    border-radius: 10px;
+    background: #16a34a;
+    color: #fff;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.execute-now-btn:hover { background: #15803d; }
+.execute-now-btn:disabled { cursor: wait; opacity: .65; }
+
+.manual-execution {
+    display: none;
+    margin: -8px 0 18px;
+    padding: 14px 16px;
+    border: 1px solid #bfdbfe;
+    border-radius: 12px;
+    background: #eff6ff;
+    color: #1e3a8a;
+}
+
+.manual-execution.visible { display: block; }
+.manual-execution.success { border-color: #86efac; background: #f0fdf4; color: #166534; }
+.manual-execution.error { border-color: #fecaca; background: #fef2f2; color: #991b1b; }
+.manual-execution-head { display: flex; justify-content: space-between; gap: 16px; font-size: 13px; }
+.manual-progress { height: 7px; margin-top: 10px; overflow: hidden; border-radius: 99px; background: rgba(148, 163, 184, .3); }
+.manual-progress-bar { width: 0; height: 100%; border-radius: inherit; background: #2563eb; transition: width .25s ease; }
+.manual-execution.success .manual-progress-bar { background: #16a34a; }
+.manual-execution.error .manual-progress-bar { background: #dc2626; }
+.manual-logs { max-height: 180px; margin: 10px 0 0; padding: 10px 12px; overflow: auto; border-radius: 8px; background: #0f172a; color: #dbeafe; font: 11px/1.55 Consolas, monospace; white-space: pre-wrap; }
+
+body.nexus-dark .execute-now-btn { border-color: #4ade80; background: #15803d; color: #fff; }
+body.nexus-dark .manual-execution { border-color: #31517c; background: #17243a; color: #dbeafe; }
+body.nexus-dark .manual-execution.success { border-color: #287c4b; background: #132d25; color: #bbf7d0; }
+body.nexus-dark .manual-execution.error { border-color: #8b3a42; background: #321c23; color: #fecaca; }
+
 /* Cards */
 .documents-cards {
     display: grid;
@@ -1148,8 +1192,27 @@
             <a class="refresh-btn" href="/documentos">
                 ↻ Recarregar painel
             </a>
+
+            {% if documents_is_admin %}
+                <button id="execute-now" class="execute-now-btn" type="button">
+                    ▶ Executar agora
+                </button>
+            {% endif %}
         </div>
     </div>
+
+    {% if documents_is_admin %}
+        <section id="manual-execution" class="manual-execution" aria-live="polite">
+            <div class="manual-execution-head">
+                <strong id="manual-execution-message">Preparando execução...</strong>
+                <span id="manual-execution-percent">0%</span>
+            </div>
+            <div class="manual-progress" aria-hidden="true">
+                <div id="manual-progress-bar" class="manual-progress-bar"></div>
+            </div>
+            <pre id="manual-execution-logs" class="manual-logs"></pre>
+        </section>
+    {% endif %}
 
     <!-- Indicadores -->
     <div class="documents-cards">
@@ -1199,6 +1262,7 @@
                         {% if automation["available"] %}
                             <span>
                                 Processamento #{{ automation["run_id"] }}
+                                · {% if automation["triggered_by"] == "MANUAL" %}Manual{% elif automation["triggered_by"] == "SCHEDULED" %}Agendada{% else %}Origem não informada{% endif %}
                             </span>
                         {% else %}
                             <span>
@@ -2030,6 +2094,73 @@
     const automationToggleLabel = document.querySelector(
         "#automation-toggle-label"
     );
+
+    const executeButton = document.querySelector("#execute-now");
+    const executionPanel = document.querySelector("#manual-execution");
+    const executionMessage = document.querySelector("#manual-execution-message");
+    const executionPercent = document.querySelector("#manual-execution-percent");
+    const executionBar = document.querySelector("#manual-progress-bar");
+    const executionLogs = document.querySelector("#manual-execution-logs");
+    const csrfToken = {{ documents_csrf_token|default('')|tojson }};
+    let executionTimer = null;
+
+    function showExecution(data, fallbackStatus = "error") {
+        const status = data.status || fallbackStatus;
+        executionPanel?.classList.add("visible");
+        executionPanel?.classList.toggle("success", status === "done");
+        executionPanel?.classList.toggle("error", status === "error");
+        if (executionMessage) executionMessage.textContent = data.message || data.detail || "Não foi possível iniciar a execução.";
+        const percent = Number(data.percent || 0);
+        if (executionPercent) executionPercent.textContent = `${percent}%`;
+        if (executionBar) executionBar.style.width = `${percent}%`;
+        if (executionLogs) {
+            executionLogs.textContent = (data.logs || []).join("\n") || (data.error || "Aguardando os primeiros logs...");
+            executionLogs.scrollTop = executionLogs.scrollHeight;
+        }
+        if (executeButton) executeButton.disabled = status === "running";
+    }
+
+    async function pollExecution(jobId) {
+        try {
+            const response = await fetch(`/documentos/executar/status?job_id=${encodeURIComponent(jobId)}`, {headers: {"Accept": "application/json"}});
+            const data = await response.json();
+            if (!response.ok) throw data;
+            showExecution(data);
+            if (data.status === "running") {
+                executionTimer = window.setTimeout(() => pollExecution(jobId), 1500);
+            } else {
+                sessionStorage.setItem("documentos-gce-last-job", jobId);
+                if (sessionStorage.getItem("documentos-gce-reloaded-job") !== jobId) {
+                    sessionStorage.setItem("documentos-gce-reloaded-job", jobId);
+                    window.setTimeout(() => window.location.reload(), 1200);
+                }
+            }
+        } catch (error) {
+            showExecution(error);
+        }
+    }
+
+    executeButton?.addEventListener("click", async () => {
+        executeButton.disabled = true;
+        showExecution({status: "running", message: "Solicitando execução manual...", percent: 0, logs: []}, "running");
+        try {
+            const response = await fetch("/documentos/executar", {
+                method: "POST",
+                headers: {"Accept": "application/json", "X-CSRF-Token": csrfToken}
+            });
+            const data = await response.json();
+            if (!response.ok) throw data;
+            sessionStorage.setItem("documentos-gce-last-job", data.job_id);
+            showExecution({status: "running", message: data.message, percent: 0, logs: []}, "running");
+            pollExecution(data.job_id);
+        } catch (error) {
+            executeButton.disabled = false;
+            showExecution(error);
+        }
+    });
+
+    const rememberedJob = sessionStorage.getItem("documentos-gce-last-job");
+    if (rememberedJob) pollExecution(rememberedJob);
 
     automationToggle?.addEventListener("click", () => {
         const isOpen =
