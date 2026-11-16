@@ -9,7 +9,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from modules.documentos.services.daily_pipeline import DailyDocumentsPipeline, dump_result
+from modules.documentos.execution import execute_daily_documents
+from modules.documentos.services.daily_pipeline import dump_result
 
 
 def parse_date(value: str):
@@ -44,7 +45,8 @@ def main() -> None:
     if (args.data_inicial is None) != (args.data_final is None):
         parser.error("Use --data-inicial e --data-final juntas.")
 
-    result = DailyDocumentsPipeline().run(
+    result = execute_daily_documents(
+        triggered_by="SCHEDULED",
         reference_date=args.data_referencia,
         period_start=args.data_inicial,
         period_end=args.data_final,

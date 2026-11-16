@@ -36,20 +36,51 @@ def resolve_period(
     return PipelinePeriod(reference_date - timedelta(days=days - 1), reference_date)
 
 
-@contextmanager
-def execution_lock(name: str = "documentos_gce_diario.lock") -> Iterator[None]:
-    """Impede duas execuções simultâneas no Windows e no Linux."""
-    lock_path = Path(tempfile.gettempdir()) / name
-    handle = lock_path.open("a+b")
-    handle.seek(0)
-    if handle.read(1) == b"":
-        handle.seek(0)
-        handle.write(b"0")
-    handle.flush()
-    handle.seek(0)
-    locked = False
+class ExecutionLease:
+    """Trava de processo transferível para o worker web em segundo plano."""
 
+    def __init__(self, handle) -> None:
+        self.handle = handle
+        self.released = False
+
+    def release(self) -> None:
+        if self.released:
+            return
+        try:
+            self.handle.seek(0)
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(self.handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            self.released = True
+            self.handle.close()
+
+    def __enter__(self) -> "ExecutionLease":
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        self.release()
+
+
+def acquire_execution_lock(
+    name: str = "documentos_gce_diario.lock",
+) -> ExecutionLease:
+    """Adquire sem espera a trava comum às execuções web e agendadas."""
+    lock_path = Path(tempfile.gettempdir()) / name
+    handle = None
     try:
+        handle = lock_path.open("a+b")
+        handle.seek(0)
+        if handle.read(1) == b"":
+            handle.seek(0)
+            handle.write(b"0")
+        handle.flush()
+        handle.seek(0)
         if os.name == "nt":
             import msvcrt
 
@@ -57,7 +88,6 @@ def execution_lock(name: str = "documentos_gce_diario.lock") -> Iterator[None]:
                 msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
             except OSError as exc:
                 raise RuntimeError("A rotina diária de documentos já está em execução.") from exc
-            locked = True
         else:
             import fcntl
 
@@ -65,23 +95,22 @@ def execution_lock(name: str = "documentos_gce_diario.lock") -> Iterator[None]:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
                 raise RuntimeError("A rotina diária de documentos já está em execução.") from exc
-            locked = True
-
-        yield
-    finally:
-        try:
-            if locked:
-                handle.seek(0)
-                if os.name == "nt":
-                    import msvcrt
-
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-                else:
-                    import fcntl
-
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        finally:
+        return ExecutionLease(handle)
+    except OSError as exc:
+        if handle is not None:
             handle.close()
+        raise RuntimeError("A rotina diária de documentos já está em execução.") from exc
+    except BaseException:
+        if handle is not None:
+            handle.close()
+        raise
+
+
+@contextmanager
+def execution_lock(name: str = "documentos_gce_diario.lock") -> Iterator[None]:
+    """Impede duas execuções simultâneas no Windows e no Linux."""
+    with acquire_execution_lock(name):
+        yield
 
 
 class DailyDocumentsPipeline:
@@ -110,6 +139,8 @@ class DailyDocumentsPipeline:
         send_notifications: bool = False,
         preview_notifications: bool = False,
         notification_limit: int | None = None,
+        triggered_by: str = "MANUAL",
+        execution_lease: ExecutionLease | None = None,
     ) -> dict:
         from modules.documentos.collectors.portal import GCEPortalCollector
         from modules.documentos.collectors.ssw import SSWDocumentsCollector
@@ -141,12 +172,13 @@ class DailyDocumentsPipeline:
         run_id: int | None = None
         current_step = "INITIALIZATION"
 
-        with execution_lock():
+        lock_context = execution_lease or execution_lock()
+        with lock_context:
             run_id = create_pipeline_run(
                 reference_date=reference_date,
                 period_start=period.start,
                 period_end=period.end,
-                triggered_by="MANUAL",
+                triggered_by=triggered_by,
             )
 
             self._log(f"[MONITORAMENTO] Execução #{run_id} registrada.")
