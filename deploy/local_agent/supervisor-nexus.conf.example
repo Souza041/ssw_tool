@@ -1,0 +1,14 @@
+; Mesclar manualmente ao programa web Nexus já existente após revisão.
+; Não criar um segundo servidor concorrente na mesma porta.
+[program:nexus]
+directory=/opt/ssw_tool
+command=/opt/ssw_tool/.venv/bin/python /opt/ssw_tool/scripts/run_nexus_server.py --env-file /etc/nexus/local-agent.env --host 127.0.0.1 --port 8000 --workers 1
+user=automacao
+autostart=true
+autorestart=true
+startsecs=5
+stopasgroup=true
+killasgroup=true
+redirect_stderr=true
+stdout_logfile=/var/log/nexus/nexus.log
+environment=PYTHONUNBUFFERED="1"

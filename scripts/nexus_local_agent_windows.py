@@ -14,6 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from modules.local_agent.config import load_executor_settings
+from modules.local_agent.private_env import load_private_environment
 from modules.local_agent.executor import (
     AgentClient,
     HandlerRegistry,
@@ -30,7 +31,13 @@ def main() -> int:
         "--once", action="store_true",
         help="Faz um único polling e encerra; útil para homologação controlada.",
     )
+    parser.add_argument(
+        "--env-file", type=Path,
+        help="Arquivo privado fora do repositório, por exemplo em ProgramData.",
+    )
     args = parser.parse_args()
+    if args.env_file:
+        load_private_environment(args.env_file, project_root=PROJECT_ROOT)
     settings = load_executor_settings()
     registry = HandlerRegistry()
     register_builtin_handlers(registry)

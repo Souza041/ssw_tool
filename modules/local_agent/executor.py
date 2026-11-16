@@ -155,7 +155,7 @@ class _Heartbeat:
         self.job_id = job_id
         self.lease_token = lease_token
         self.context = context
-        self.interval = max(5, lease_seconds // 3)
+        self.interval = max(1, lease_seconds // 3)
         self.stop_event = threading.Event()
         self.lost_lease = threading.Event()
         self.thread = threading.Thread(target=self._run, daemon=True)
@@ -238,6 +238,20 @@ class LocalAgentExecutor:
                 pass
         finally:
             heartbeat.stop()
+
+        final_progress = context.progress_snapshot()
+        try:
+            final_state = self.client.heartbeat(
+                job_id,
+                lease_token,
+                final_progress.current,
+                final_progress.total,
+            )
+            if final_state.get("cancellation_requested"):
+                context.cancel_event.set()
+        except AgentProtocolError:
+            # A conclusão abaixo preserva o comportamento fail-closed do lease.
+            pass
 
         if buffered_logs:
             try:

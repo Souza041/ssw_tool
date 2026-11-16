@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 import hmac
+import hashlib
 import secrets
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Path as ApiPath, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from modules.local_agent.bootstrap import (
+    canonical_ping_body,
+    sign_request,
+    validate_freshness,
+    validate_nonce,
+    verify_signature,
+)
 
 from modules.local_agent.config import (
     AGENT_ID_RE,
@@ -13,7 +22,11 @@ from modules.local_agent.config import (
     ServerSettings,
     load_server_settings,
 )
-from modules.local_agent.repository import LocalAgentRepository
+from modules.local_agent.repository import (
+    BootstrapRateLimitError,
+    BootstrapReplayError,
+    LocalAgentRepository,
+)
 from web.admin_access import is_admin
 from web.session_store import obter_client
 
@@ -59,6 +72,11 @@ class EnqueueRequest(BaseModel):
     max_attempts: int = Field(default=3, ge=1, le=10)
 
 
+class BootstrapPingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    message: str = Field(default="homologacao", min_length=1, max_length=200)
+
+
 def _settings() -> ServerSettings:
     try:
         settings = load_server_settings()
@@ -99,6 +117,83 @@ def _agent_context(
 ) -> tuple[ServerSettings, LocalAgentRepository, str]:
     settings = _settings()
     return settings, _repository(settings), _agent(settings, agent_id, authorization)
+
+
+def _bootstrap_context(request: Request):
+    settings = _settings()
+    if not settings.bootstrap_enabled:
+        raise HTTPException(status_code=503, detail="Bootstrap operacional desativado.")
+    remote = str(request.client.host if request.client else "unknown")[:128]
+    return settings, _repository(settings), remote
+
+
+def _safe_bootstrap_identity(value: str, fallback: str) -> str:
+    if 1 <= len(value) <= 128 and value.isascii():
+        return value
+    return f"{fallback}-{hashlib.sha256(value.encode('utf-8', 'ignore')).hexdigest()[:24]}"
+
+
+def _audit_bootstrap_rejection(
+    repository: LocalAgentRepository,
+    settings: ServerSettings,
+    *,
+    key_id: str,
+    nonce: str,
+    remote: str,
+    outcome: str,
+) -> None:
+    recorded = repository.audit_bootstrap_rejection(
+        key_id=_safe_bootstrap_identity(key_id, "invalid-key"),
+        nonce=_safe_bootstrap_identity(nonce, "invalid-nonce"),
+        remote_address=remote,
+        outcome=outcome,
+        per_minute=settings.bootstrap_per_minute,
+        per_hour=settings.bootstrap_per_hour,
+    )
+    if recorded == "RATE_LIMITED":
+        raise HTTPException(status_code=429, detail="Limite do bootstrap excedido.")
+    if recorded == "REPLAY":
+        raise HTTPException(status_code=409, detail="Requisição de bootstrap repetida.")
+
+
+def _verify_bootstrap(
+    repository: LocalAgentRepository,
+    settings: ServerSettings,
+    *,
+    key_id: str,
+    timestamp: str,
+    nonce: str,
+    signature: str,
+    method: str,
+    path: str,
+    body: bytes,
+    remote: str,
+) -> None:
+    try:
+        validate_freshness(
+            timestamp, max_skew_seconds=settings.bootstrap_max_skew_seconds
+        )
+        validate_nonce(nonce)
+    except ValueError:
+        _audit_bootstrap_rejection(
+            repository, settings, key_id=key_id, nonce=nonce,
+            remote=remote, outcome="INVALID_REQUEST",
+        )
+        raise HTTPException(status_code=401, detail="Autenticação do bootstrap inválida.") from None
+    expected = sign_request(
+        settings.bootstrap_secret,
+        method=method,
+        path=path,
+        timestamp=timestamp,
+        nonce=nonce,
+        body=body,
+    )
+    if key_id != settings.bootstrap_key_id or not verify_signature(expected, signature):
+        _audit_bootstrap_rejection(
+            repository, settings, key_id=key_id, nonce=nonce,
+            remote=remote, outcome="INVALID_SIGNATURE",
+        )
+        raise HTTPException(status_code=401, detail="Autenticação do bootstrap inválida.")
 
 
 def _admin(request: Request) -> tuple[ServerSettings, LocalAgentRepository]:
@@ -198,6 +293,88 @@ def complete(
     return {"status": status}
 
 
+@router.post("/api/local-agent/v1/bootstrap/system-ping", status_code=202)
+def bootstrap_system_ping(
+    request: Request,
+    body: BootstrapPingRequest,
+    x_nexus_bootstrap_key_id: str = Header("", alias="X-Nexus-Bootstrap-Key-Id"),
+    x_nexus_bootstrap_timestamp: str = Header("", alias="X-Nexus-Bootstrap-Timestamp"),
+    x_nexus_bootstrap_nonce: str = Header("", alias="X-Nexus-Bootstrap-Nonce"),
+    x_nexus_bootstrap_signature: str = Header("", alias="X-Nexus-Bootstrap-Signature"),
+):
+    settings, repository, remote = _bootstrap_context(request)
+    path = "/api/local-agent/v1/bootstrap/system-ping"
+    _verify_bootstrap(
+        repository,
+        settings,
+        key_id=x_nexus_bootstrap_key_id,
+        timestamp=x_nexus_bootstrap_timestamp,
+        nonce=x_nexus_bootstrap_nonce,
+        signature=x_nexus_bootstrap_signature,
+        method="POST",
+        path=path,
+        body=canonical_ping_body(body.message),
+        remote=remote,
+    )
+    try:
+        job_id = repository.bootstrap_enqueue_ping(
+            key_id=x_nexus_bootstrap_key_id,
+            nonce=x_nexus_bootstrap_nonce,
+            remote_address=remote,
+            message=body.message,
+            per_minute=settings.bootstrap_per_minute,
+            per_hour=settings.bootstrap_per_hour,
+        )
+    except BootstrapReplayError:
+        raise HTTPException(status_code=409, detail="Requisição de bootstrap repetida.") from None
+    except BootstrapRateLimitError:
+        raise HTTPException(status_code=429, detail="Limite do bootstrap excedido.") from None
+    return {"accepted": True, "job_id": job_id, "task": "system.ping"}
+
+
+@router.post("/api/local-agent/v1/bootstrap/system-ping/{job_id}/status")
+def bootstrap_system_ping_status(
+    request: Request,
+    job_id: str = ApiPath(
+        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    ),
+    x_nexus_bootstrap_key_id: str = Header("", alias="X-Nexus-Bootstrap-Key-Id"),
+    x_nexus_bootstrap_timestamp: str = Header("", alias="X-Nexus-Bootstrap-Timestamp"),
+    x_nexus_bootstrap_nonce: str = Header("", alias="X-Nexus-Bootstrap-Nonce"),
+    x_nexus_bootstrap_signature: str = Header("", alias="X-Nexus-Bootstrap-Signature"),
+):
+    settings, repository, remote = _bootstrap_context(request)
+    path = f"/api/local-agent/v1/bootstrap/system-ping/{job_id}/status"
+    _verify_bootstrap(
+        repository,
+        settings,
+        key_id=x_nexus_bootstrap_key_id,
+        timestamp=x_nexus_bootstrap_timestamp,
+        nonce=x_nexus_bootstrap_nonce,
+        signature=x_nexus_bootstrap_signature,
+        method="POST",
+        path=path,
+        body=b"",
+        remote=remote,
+    )
+    try:
+        result = repository.bootstrap_authorize_status(
+            key_id=x_nexus_bootstrap_key_id,
+            nonce=x_nexus_bootstrap_nonce,
+            remote_address=remote,
+            job_id=job_id,
+            per_minute=settings.bootstrap_per_minute,
+            per_hour=settings.bootstrap_per_hour,
+        )
+    except BootstrapReplayError:
+        raise HTTPException(status_code=409, detail="Requisição de bootstrap repetida.") from None
+    except BootstrapRateLimitError:
+        raise HTTPException(status_code=429, detail="Limite do bootstrap excedido.") from None
+    if result is None:
+        raise HTTPException(status_code=404, detail="Ping de bootstrap não encontrado.")
+    return result
+
+
 @router.get("/admin/local-agent")
 def admin_overview(request: Request, limit: int = Query(50, ge=1, le=200)):
     settings, repository = _admin(request)
@@ -205,8 +382,10 @@ def admin_overview(request: Request, limit: int = Query(50, ge=1, le=200)):
     return {
         "enabled": settings.enabled,
         "allowed_tasks": sorted(settings.allowed_tasks),
+        "bootstrap_enabled": settings.bootstrap_enabled,
         "jobs": repository.list_jobs(limit=limit),
         "agents": repository.list_agents(),
+        "bootstrap_audit": repository.list_bootstrap_audit(limit=100),
         "csrf_token": csrf_token,
     }
 
