@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
@@ -99,13 +99,19 @@ def _agent_tasks(
 class ServerSettings:
     enabled: bool
     database_path: Path
-    tokens: dict[str, str]
+    tokens: dict[str, str] = field(repr=False)
     allowed_tasks: frozenset[str]
     agent_tasks: dict[str, frozenset[str]]
     lease_seconds: int
     max_payload_bytes: int
     max_result_bytes: int
     max_log_bytes: int
+    bootstrap_enabled: bool
+    bootstrap_key_id: str
+    bootstrap_secret: str = field(repr=False)
+    bootstrap_max_skew_seconds: int
+    bootstrap_per_minute: int
+    bootstrap_per_hour: int
 
 
 def load_server_settings() -> ServerSettings:
@@ -117,10 +123,15 @@ def load_server_settings() -> ServerSettings:
         known_agents=set(tokens),
         allowed_tasks=allowed_tasks,
     )
+    bootstrap_enabled = _enabled("NEXUS_LOCAL_AGENT_BOOTSTRAP_ENABLED", False)
+    bootstrap_key_id = os.getenv(
+        "NEXUS_LOCAL_AGENT_BOOTSTRAP_KEY_ID", ""
+    ).strip()
+    bootstrap_secret = os.getenv("NEXUS_LOCAL_AGENT_BOOTSTRAP_SECRET", "")
     settings = ServerSettings(
         enabled=enabled,
         database_path=Path(os.getenv(
-            "NEXUS_LOCAL_AGENT_DB", "data/nexus_local_agent.sqlite3"
+            "NEXUS_LOCAL_AGENT_DB", "/var/lib/nexus/local-agent.sqlite3"
         )),
         tokens=tokens,
         allowed_tasks=allowed_tasks,
@@ -135,6 +146,18 @@ def load_server_settings() -> ServerSettings:
         max_log_bytes=_bounded_int(
             "NEXUS_LOCAL_AGENT_MAX_LOG_BYTES", 4096, 128, 65536
         ),
+        bootstrap_enabled=bootstrap_enabled,
+        bootstrap_key_id=bootstrap_key_id,
+        bootstrap_secret=bootstrap_secret,
+        bootstrap_max_skew_seconds=_bounded_int(
+            "NEXUS_LOCAL_AGENT_BOOTSTRAP_MAX_SKEW_SECONDS", 60, 15, 300
+        ),
+        bootstrap_per_minute=_bounded_int(
+            "NEXUS_LOCAL_AGENT_BOOTSTRAP_PER_MINUTE", 5, 1, 30
+        ),
+        bootstrap_per_hour=_bounded_int(
+            "NEXUS_LOCAL_AGENT_BOOTSTRAP_PER_HOUR", 20, 1, 200
+        ),
     )
     if settings.enabled and not settings.tokens:
         raise LocalAgentConfigurationError(
@@ -144,6 +167,26 @@ def load_server_settings() -> ServerSettings:
         raise LocalAgentConfigurationError(
             "Todo agente habilitado deve possuir uma allowlist própria."
         )
+    if settings.bootstrap_enabled:
+        if not settings.enabled:
+            raise LocalAgentConfigurationError(
+                "Bootstrap não pode ser habilitado com o Local Agent desativado."
+            )
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{2,63}", settings.bootstrap_key_id):
+            raise LocalAgentConfigurationError("Identificador do bootstrap inválido.")
+        if (
+            settings.bootstrap_secret != settings.bootstrap_secret.strip()
+            or not 32 <= len(settings.bootstrap_secret) <= 512
+        ):
+            raise LocalAgentConfigurationError("Segredo do bootstrap inválido.")
+        if settings.bootstrap_secret in settings.tokens.values():
+            raise LocalAgentConfigurationError(
+                "O segredo do bootstrap deve ser independente dos tokens de agentes."
+            )
+        if "system.ping" not in settings.allowed_tasks:
+            raise LocalAgentConfigurationError(
+                "O bootstrap exige system.ping na allowlist global."
+            )
     return settings
 
 
@@ -151,7 +194,7 @@ def load_server_settings() -> ServerSettings:
 class ExecutorSettings:
     server_url: str
     agent_id: str
-    token: str
+    token: str = field(repr=False)
     poll_seconds: int
     request_timeout_seconds: int
     allow_insecure_http: bool
@@ -163,7 +206,15 @@ def load_executor_settings() -> ExecutorSettings:
     token = os.getenv("NEXUS_LOCAL_AGENT_TOKEN", "")
     allow_insecure = _enabled("NEXUS_LOCAL_AGENT_ALLOW_INSECURE_HTTP", False)
     parsed = urlparse(server_url)
-    if not server_url or parsed.scheme not in {"https", "http"} or not parsed.netloc:
+    if (
+        not server_url
+        or parsed.scheme not in {"https", "http"}
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
         raise LocalAgentConfigurationError("URL do servidor do Local Agent inválida.")
     if parsed.scheme != "https" and not allow_insecure:
         raise LocalAgentConfigurationError("O executor exige HTTPS.")

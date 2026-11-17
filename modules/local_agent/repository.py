@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
+import os
 from pathlib import Path
 import secrets
 import sqlite3
@@ -27,6 +29,14 @@ def utc_text(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat()
 
 
+class BootstrapReplayError(RuntimeError):
+    pass
+
+
+class BootstrapRateLimitError(RuntimeError):
+    pass
+
+
 class LocalAgentRepository:
     def __init__(
         self,
@@ -40,7 +50,19 @@ class LocalAgentRepository:
         self.max_payload_bytes = max_payload_bytes
         self.max_result_bytes = max_result_bytes
         self.max_log_bytes = max_log_bytes
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self.database_path.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
+        if self.database_path.is_symlink():
+            raise RuntimeError("O banco do Local Agent não pode ser um link simbólico.")
+        if not self.database_path.exists():
+            flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            try:
+                descriptor = os.open(self.database_path, flags, 0o600)
+            except FileExistsError:
+                pass
+            else:
+                os.close(descriptor)
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
@@ -49,6 +71,12 @@ class LocalAgentRepository:
         connection.execute("PRAGMA busy_timeout=10000")
         connection.execute("PRAGMA journal_mode=WAL")
         connection.execute("PRAGMA foreign_keys=ON")
+        if os.name != "nt":
+            os.chmod(self.database_path, 0o600)
+            for suffix in ("-wal", "-shm"):
+                sidecar = Path(str(self.database_path) + suffix)
+                if sidecar.exists():
+                    os.chmod(sidecar, 0o600)
         return connection
 
     @contextmanager
@@ -111,7 +139,222 @@ class LocalAgentRepository:
                     last_seen_at TEXT NOT NULL,
                     current_job_id TEXT
                 );
+                CREATE TABLE IF NOT EXISTS local_agent_bootstrap_audit (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    occurred_at TEXT NOT NULL,
+                    key_id TEXT NOT NULL,
+                    nonce_hash TEXT NOT NULL,
+                    remote_address TEXT NOT NULL,
+                    authenticated INTEGER NOT NULL,
+                    action TEXT NOT NULL,
+                    outcome TEXT NOT NULL,
+                    job_id TEXT,
+                    UNIQUE(key_id, nonce_hash)
+                );
+                CREATE INDEX IF NOT EXISTS idx_local_agent_bootstrap_rate
+                    ON local_agent_bootstrap_audit(occurred_at, key_id, remote_address);
             """)
+
+    @staticmethod
+    def _nonce_hash(key_id: str, nonce: str) -> str:
+        return hashlib.sha256(f"{key_id}\0{nonce}".encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _bootstrap_rate_exceeded(
+        db: sqlite3.Connection,
+        *,
+        key_id: str,
+        remote_address: str,
+        now: datetime,
+        per_minute: int,
+        per_hour: int,
+    ) -> bool:
+        minute = utc_text(now - timedelta(minutes=1))
+        hour = utc_text(now - timedelta(hours=1))
+        query = """
+            SELECT COUNT(*) FROM local_agent_bootstrap_audit
+            WHERE occurred_at >= ? AND (key_id=? OR remote_address=?)
+        """
+        minute_count = int(db.execute(
+            query, (minute, key_id, remote_address)
+        ).fetchone()[0])
+        hour_count = int(db.execute(
+            query, (hour, key_id, remote_address)
+        ).fetchone()[0])
+        return minute_count >= per_minute or hour_count >= per_hour
+
+    def audit_bootstrap_rejection(
+        self,
+        *,
+        key_id: str,
+        nonce: str,
+        remote_address: str,
+        outcome: str,
+        per_minute: int,
+        per_hour: int,
+        now: datetime | None = None,
+    ) -> str:
+        current = now or utc_now()
+        timestamp = utc_text(current)
+        nonce_hash = self._nonce_hash(key_id, nonce)
+        with self._transaction(immediate=True) as db:
+            limited = self._bootstrap_rate_exceeded(
+                db,
+                key_id=key_id,
+                remote_address=remote_address,
+                now=current,
+                per_minute=per_minute,
+                per_hour=per_hour,
+            )
+            recorded_outcome = "RATE_LIMITED" if limited else outcome
+            inserted = db.execute("""
+                INSERT OR IGNORE INTO local_agent_bootstrap_audit (
+                    occurred_at, key_id, nonce_hash, remote_address,
+                    authenticated, action, outcome
+                ) VALUES (?, ?, ?, ?, 0, 'AUTH', ?)
+            """, (
+                timestamp, key_id, nonce_hash, remote_address, recorded_outcome,
+            ))
+            if inserted.rowcount != 1:
+                return "REPLAY"
+            return recorded_outcome
+
+    def bootstrap_enqueue_ping(
+        self,
+        *,
+        key_id: str,
+        nonce: str,
+        remote_address: str,
+        message: str,
+        per_minute: int,
+        per_hour: int,
+        now: datetime | None = None,
+    ) -> str:
+        current = now or utc_now()
+        timestamp = utc_text(current)
+        nonce_hash = self._nonce_hash(key_id, nonce)
+        payload_json = checked_json_object(
+            {"message": message},
+            maximum_bytes=self.max_payload_bytes,
+            label="Payload",
+        )
+        job_id = str(uuid.uuid4())
+        rate_limited = False
+        with self._transaction(immediate=True) as db:
+            if self._bootstrap_rate_exceeded(
+                db,
+                key_id=key_id,
+                remote_address=remote_address,
+                now=current,
+                per_minute=per_minute,
+                per_hour=per_hour,
+            ):
+                db.execute("""
+                    INSERT OR IGNORE INTO local_agent_bootstrap_audit (
+                        occurred_at, key_id, nonce_hash, remote_address,
+                        authenticated, action, outcome
+                    ) VALUES (?, ?, ?, ?, 1, 'ENQUEUE_PING', 'RATE_LIMITED')
+                """, (timestamp, key_id, nonce_hash, remote_address))
+                rate_limited = True
+            if not rate_limited:
+                try:
+                    db.execute("""
+                        INSERT INTO local_agent_bootstrap_audit (
+                            occurred_at, key_id, nonce_hash, remote_address,
+                            authenticated, action, outcome, job_id
+                        ) VALUES (?, ?, ?, ?, 1, 'ENQUEUE_PING', 'ENQUEUED', ?)
+                    """, (timestamp, key_id, nonce_hash, remote_address, job_id))
+                except sqlite3.IntegrityError as exc:
+                    raise BootstrapReplayError("Requisição de bootstrap repetida.") from exc
+                db.execute("""
+                    INSERT INTO local_agent_jobs (
+                        id, task, payload_json, status, priority, max_attempts,
+                        created_at, updated_at
+                    ) VALUES (?, 'system.ping', ?, 'QUEUED', 100, 2, ?, ?)
+                """, (job_id, payload_json, timestamp, timestamp))
+        if rate_limited:
+            raise BootstrapRateLimitError("Limite do bootstrap excedido.")
+        return job_id
+
+    def bootstrap_authorize_status(
+        self,
+        *,
+        key_id: str,
+        nonce: str,
+        remote_address: str,
+        job_id: str,
+        per_minute: int,
+        per_hour: int,
+        now: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        current = now or utc_now()
+        timestamp = utc_text(current)
+        nonce_hash = self._nonce_hash(key_id, nonce)
+        rate_limited = False
+        with self._transaction(immediate=True) as db:
+            if self._bootstrap_rate_exceeded(
+                db,
+                key_id=key_id,
+                remote_address=remote_address,
+                now=current,
+                per_minute=per_minute,
+                per_hour=per_hour,
+            ):
+                db.execute("""
+                    INSERT OR IGNORE INTO local_agent_bootstrap_audit (
+                        occurred_at, key_id, nonce_hash, remote_address,
+                        authenticated, action, outcome, job_id
+                    ) VALUES (?, ?, ?, ?, 1, 'READ_PING', 'RATE_LIMITED', ?)
+                """, (timestamp, key_id, nonce_hash, remote_address, job_id))
+                rate_limited = True
+            if not rate_limited:
+                try:
+                    db.execute("""
+                        INSERT INTO local_agent_bootstrap_audit (
+                            occurred_at, key_id, nonce_hash, remote_address,
+                            authenticated, action, outcome, job_id
+                        ) VALUES (?, ?, ?, ?, 1, 'READ_PING', 'AUTHORIZED', ?)
+                    """, (timestamp, key_id, nonce_hash, remote_address, job_id))
+                except sqlite3.IntegrityError as exc:
+                    raise BootstrapReplayError("Requisição de bootstrap repetida.") from exc
+                allowed = db.execute("""
+                    SELECT 1 FROM local_agent_bootstrap_audit
+                    WHERE action='ENQUEUE_PING' AND outcome='ENQUEUED' AND job_id=?
+                """, (job_id,)).fetchone()
+                if allowed is None:
+                    db.execute("""
+                        UPDATE local_agent_bootstrap_audit SET outcome='NOT_FOUND'
+                        WHERE key_id=? AND nonce_hash=?
+                    """, (key_id, nonce_hash))
+                    return None
+        if rate_limited:
+            raise BootstrapRateLimitError("Limite do bootstrap excedido.")
+        job = self.get_job(job_id, log_limit=100)
+        if job is None or job.get("task") != "system.ping":
+            return None
+        return {
+            "id": job["id"],
+            "task": job["task"],
+            "status": job["status"],
+            "progress_current": job["progress_current"],
+            "progress_total": job["progress_total"],
+            "result": job["result"],
+            "error_message": job["error_message"],
+            "created_at": job["created_at"],
+            "started_at": job["started_at"],
+            "finished_at": job["finished_at"],
+            "logs": job["logs"],
+        }
+
+    def list_bootstrap_audit(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("""
+                SELECT occurred_at, key_id, remote_address, authenticated,
+                       action, outcome, job_id
+                FROM local_agent_bootstrap_audit
+                ORDER BY id DESC LIMIT ?
+            """, (max(1, min(limit, 500)),)).fetchall()
+        return [dict(row) for row in rows]
 
     def enqueue(
         self,
