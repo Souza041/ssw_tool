@@ -37,10 +37,10 @@ O executor usa `C:\ProgramData\Nexus\local-agent.env`. O instalador remove heran
 
 ## Preparação da VPS — sem ativar
 
-No checkout revisado:
+No checkout revisado da VPS:
 
 ```bash
-cd /opt/ssw_tool
+cd /home/automacao/bots/ssw_tool
 sudo bash deploy/local_agent/install_ubuntu.sh --apply
 ```
 
@@ -53,14 +53,21 @@ O comando cria ou valida, sem sobrescrever conteúdo existente:
 
 Ele não executa `supervisorctl`, não reinicia o Nexus e mantém as flags falsas.
 
-Gere dois segredos diferentes sem salvá-los no histórico do shell:
+Provisione o HMAC e o token individual sem colocá-los no histórico ou na saída. O
+arquivo de transferência deve ficar fora do checkout e ser enviado ao Windows por
+canal seguro:
 
 ```bash
-sudo -u automacao /opt/ssw_tool/.venv/bin/python -c 'import secrets; print(secrets.token_urlsafe(48))'
-sudo -u automacao /opt/ssw_tool/.venv/bin/python -c 'import secrets; print(secrets.token_urlsafe(48))'
+sudo /home/automacao/venv/bin/python \
+  /home/automacao/bots/ssw_tool/scripts/nexus_local_agent_provision.py \
+  --server-url https://HOST_NEXUS \
+  --windows-env-output /root/nexus-local-agent-windows.env
 ```
 
-Transfira os valores diretamente para `/etc/nexus/local-agent.env` usando editor seguro. Não coloque o segredo na linha de comando. Configuração de homologação:
+O comando é idempotente, preserva credenciais válidas, mantém as duas flags falsas,
+grava atomicamente com modo `0600` e nunca imprime os valores. Rotação exige a opção
+explícita `--rotate` e somente é aceita com ambas as flags desligadas. A configuração
+resultante segue este contrato (os valores secretos não são literais):
 
 ```text
 NEXUS_LOCAL_AGENT_ENABLED=false
@@ -84,16 +91,20 @@ O arquivo [supervisor-nexus.conf.example](../deploy/local_agent/supervisor-nexus
 Validação somente leitura:
 
 ```bash
-cd /opt/ssw_tool
+cd /home/automacao/bots/ssw_tool
 sudo bash deploy/local_agent/diagnose_ubuntu.sh /etc/nexus/local-agent.env
 ```
+
+Para um Python ou checkout não padrão, o diagnóstico aceita explicitamente
+`NEXUS_PYTHON_BIN` e `NEXUS_PROJECT_ROOT`. Falta de permissão para consultar o
+Supervisor é apenas aviso sanitizado; validações locais continuam sendo executadas.
 
 Somente após revisão e janela aprovada:
 
 ```bash
 sudo supervisorctl reread
 sudo supervisorctl update
-sudo supervisorctl restart nexus
+sudo supervisorctl restart ssw_web
 ```
 
 Esses três comandos não são executados pelos scripts do repositório.
@@ -107,7 +118,10 @@ Set-Location C:\Nexus\ssw_tool
 .\deploy\local_agent\install_windows_agent.ps1 -ProjectRoot C:\Nexus\ssw_tool -Apply
 ```
 
-Na primeira execução o script cria o arquivo sem token e interrompe antes de registrar uma configuração utilizável. Preencha `C:\ProgramData\Nexus\local-agent.env` por editor seguro:
+Na primeira execução o script cria o arquivo sem token, restringe a ACL e interrompe
+antes de registrar uma configuração utilizável. Transfira o pacote gerado na VPS por
+canal corporativo seguro para `C:\ProgramData\Nexus\local-agent.env`, preservando a
+ACL, ou preencha-o por editor seguro:
 
 ```text
 NEXUS_LOCAL_AGENT_SERVER_URL=https://HOST_NEXUS
@@ -118,7 +132,8 @@ NEXUS_LOCAL_AGENT_REQUEST_TIMEOUT_SECONDS=15
 NEXUS_LOCAL_AGENT_ALLOW_INSECURE_HTTP=false
 ```
 
-Execute novamente o instalador. Ele registra idempotentemente a tarefa `Nexus Local Agent` para LOCAL SERVICE, inicialização no boot, privilégio limitado, reinício a cada minuto e até 999 recuperações. A tarefa não é iniciada pelo instalador:
+Execute novamente o instalador apenas para validar ambiente e ACL. Nesta etapa ele
+**não registra** tarefa automática:
 
 ```powershell
 .\deploy\local_agent\install_windows_agent.ps1 -ProjectRoot C:\Nexus\ssw_tool -Apply
@@ -130,7 +145,7 @@ Diagnóstico offline:
 .\deploy\local_agent\diagnose_windows_agent.ps1 -ProjectRoot C:\Nexus\ssw_tool
 ```
 
-Homologação foreground de um único polling, antes de iniciar a tarefa:
+Homologação foreground de um único polling, sem tarefa agendada:
 
 ```powershell
 .\.venv\Scripts\python.exe .\scripts\nexus_local_agent_windows.py --env-file C:\ProgramData\Nexus\local-agent.env --once
@@ -139,32 +154,46 @@ Homologação foreground de um único polling, antes de iniciar a tarefa:
 ## Homologação ponta a ponta
 
 1. Na VPS, mantenha ambas as flags falsas, instale arquivos, revise Supervisor e faça os diagnósticos.
-2. Em janela aprovada, altere somente `NEXUS_LOCAL_AGENT_ENABLED=true`, reinicie o Nexus e valide que nenhum job foi criado.
-3. Prepare o Windows e execute `--once`; a fila ainda estará vazia.
-4. Altere `NEXUS_LOCAL_AGENT_BOOTSTRAP_ENABLED=true` e reinicie o Nexus na janela aprovada.
-5. Enfileire o ping sem colocar segredo no comando:
+2. Mescle somente o carregamento explícito do ambiente privado no programa Supervisor
+   existente `ssw_web`, preservando integralmente suas demais opções e variáveis.
+3. Em janela aprovada, use `sudoedit /etc/nexus/local-agent.env`, altere somente
+   `NEXUS_LOCAL_AGENT_ENABLED=true`, execute `sudo supervisorctl restart ssw_web` e
+   valide que nenhum job foi criado.
+4. Prepare o Windows e execute `--once`; a fila ainda estará vazia.
+5. Use novamente `sudoedit /etc/nexus/local-agent.env`, altere somente
+   `NEXUS_LOCAL_AGENT_BOOTSTRAP_ENABLED=true` e execute
+   `sudo supervisorctl restart ssw_web` na janela aprovada.
+6. Enfileire o ping sem colocar segredo no comando:
 
 ```bash
-sudo -u automacao /opt/ssw_tool/.venv/bin/python \
-  /opt/ssw_tool/scripts/nexus_local_agent_bootstrap.py \
+sudo -u automacao /home/automacao/venv/bin/python \
+  /home/automacao/bots/ssw_tool/scripts/nexus_local_agent_bootstrap.py \
   --env-file /etc/nexus/local-agent.env enqueue --message homologacao
 ```
 
-6. Inicie manualmente a tarefa Windows, ou execute novamente `--once`:
+7. Execute um polling único no Windows:
 
 ```powershell
-Start-ScheduledTask -TaskName "Nexus Local Agent"
+.\.venv\Scripts\python.exe .\scripts\nexus_local_agent_windows.py --env-file C:\ProgramData\Nexus\local-agent.env --once
 ```
 
-7. Consulte o resultado usando um nonce novo gerado pelo cliente:
+8. Consulte o resultado usando um nonce novo gerado pelo cliente:
 
 ```bash
-sudo -u automacao /opt/ssw_tool/.venv/bin/python \
-  /opt/ssw_tool/scripts/nexus_local_agent_bootstrap.py \
+sudo -u automacao /home/automacao/venv/bin/python \
+  /home/automacao/bots/ssw_tool/scripts/nexus_local_agent_bootstrap.py \
   --env-file /etc/nexus/local-agent.env status ID_RETORNADO
 ```
 
 Resultado esperado: `SUCCEEDED`, progresso `1/1`, `ok=true`, logs do handler e agente Windows visível. O E2E automatizado cobre enfileiramento assinado, claim, execução, heartbeat, logs, conclusão e consulta assinada.
+
+Somente depois desse resultado, registre a inicialização automática. O instalador
+configura LOCAL SERVICE, boot, privilégio limitado e recuperação, mas não inicia a
+tarefa nesta execução:
+
+```powershell
+.\deploy\local_agent\install_windows_agent.ps1 -ProjectRoot C:\Nexus\ssw_tool -Apply -RegisterTask
+```
 
 ## Operação e auditoria
 
@@ -176,15 +205,12 @@ O SQLite usa `BEGIN IMMEDIATE` para claim, WAL, token de lease e recuperação d
 
 Em ordem:
 
-```text
-NEXUS_LOCAL_AGENT_BOOTSTRAP_ENABLED=false
-NEXUS_LOCAL_AGENT_ENABLED=false
-```
-
-Depois, em janela aprovada:
-
 ```bash
-sudo supervisorctl restart nexus
+sudoedit /etc/nexus/local-agent.env
+# Defina, nesta ordem:
+# NEXUS_LOCAL_AGENT_BOOTSTRAP_ENABLED=false
+# NEXUS_LOCAL_AGENT_ENABLED=false
+sudo supervisorctl restart ssw_web
 ```
 
 No Windows:

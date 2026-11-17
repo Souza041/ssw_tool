@@ -19,7 +19,11 @@ foreach ($entry in $acl.Access) {
 }
 & $python (Join-Path $root "scripts\nexus_local_agent_diagnose.py") --role executor --env-file $EnvFile
 $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-if ($null -eq $task) { Write-Host "PENDENTE: tarefa automática não registrada."; exit 1 }
+if ($null -eq $task) {
+    Write-Host "AVISO: tarefa automática ainda não registrada; estado esperado antes da homologação --once."
+    Write-Host "Diagnóstico somente leitura concluído; nenhum token foi exibido."
+    exit 0
+}
 $info = Get-ScheduledTaskInfo -TaskName $TaskName
 Write-Host ("Tarefa: {0}; Estado: {1}; Último resultado: {2}" -f $TaskName, $task.State, $info.LastTaskResult)
 Write-Host "Diagnóstico somente leitura concluído; nenhum token foi exibido."

@@ -6,7 +6,8 @@ if [[ "${1:-}" == "--apply" ]]; then MODE="apply"; shift; fi
 if [[ $# -ne 0 ]]; then echo "Uso: $0 [--apply]" >&2; exit 2; fi
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
+PROJECT_ROOT="${NEXUS_PROJECT_ROOT:-/home/automacao/bots/ssw_tool}"
+PYTHON_BIN="${NEXUS_PYTHON_BIN:-/home/automacao/venv/bin/python}"
 ENV_DIR="/etc/nexus"
 ENV_FILE="$ENV_DIR/local-agent.env"
 DATA_DIR="/var/lib/nexus"
@@ -14,7 +15,7 @@ DB_FILE="$DATA_DIR/local-agent.sqlite3"
 LOG_DIR="/var/log/nexus"
 SERVICE_USER="automacao"
 
-command -v python3 >/dev/null || { echo "ERRO: python3 não encontrado." >&2; exit 1; }
+[[ -x "$PYTHON_BIN" ]] || { echo "ERRO: NEXUS_PYTHON_BIN não é executável: $PYTHON_BIN" >&2; exit 1; }
 id "$SERVICE_USER" >/dev/null 2>&1 || { echo "ERRO: usuário automacao não existe." >&2; exit 1; }
 [[ -f "$PROJECT_ROOT/scripts/run_nexus_server.py" ]] || { echo "ERRO: checkout incompleto." >&2; exit 1; }
 
@@ -59,4 +60,4 @@ fi
 
 echo "OK: pré-requisitos de arquivos e permissões validados."
 echo "NÃO EXECUTADO: supervisorctl reread/update/restart."
-echo "Revise deploy/local_agent/supervisor-nexus.conf.example antes de alterar o programa existente."
+echo "Revise deploy/local_agent/supervisor-nexus.conf.example antes de alterar o programa ssw_web existente."
