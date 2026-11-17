@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory=$true)][string]$ProjectRoot,
     [string]$EnvFile = "$env:ProgramData\Nexus\local-agent.env",
     [string]$TaskName = "Nexus Local Agent",
-    [switch]$Apply
+    [switch]$Apply,
+    [switch]$RegisterTask
 )
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path -LiteralPath $ProjectRoot).Path
@@ -39,7 +40,8 @@ if ([string]::IsNullOrWhiteSpace($values['NEXUS_LOCAL_AGENT_ID'])) { throw "Iden
 if (($values['NEXUS_LOCAL_AGENT_TOKEN']).Length -lt 32) { throw "Token do agente ausente ou curto." }
 if ($values['NEXUS_LOCAL_AGENT_ALLOW_INSECURE_HTTP'] -ne 'false') { throw "HTTP inseguro deve permanecer desativado." }
 
-if ($Apply -and $PSCmdlet.ShouldProcess($TaskName, "Registrar tarefa automática")) {
+if ($RegisterTask -and -not $Apply) { throw "-RegisterTask exige -Apply." }
+if ($Apply -and $RegisterTask -and $PSCmdlet.ShouldProcess($TaskName, "Registrar tarefa automática")) {
     $arguments = ('"{0}" --env-file "{1}"' -f $agentScript, $EnvFile)
     $action = New-ScheduledTaskAction -Execute $pythonw -Argument $arguments -WorkingDirectory $root
     $trigger = New-ScheduledTaskTrigger -AtStartup
@@ -48,4 +50,5 @@ if ($Apply -and $PSCmdlet.ShouldProcess($TaskName, "Registrar tarefa automática
     Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
     Write-Host "Tarefa registrada, mas não iniciada automaticamente nesta execução."
 }
+if (-not $RegisterTask) { Write-Host "Tarefa não registrada; use -Apply -RegisterTask somente após homologar --once." }
 Write-Host "OK: configuração validada sem exibir credenciais."
