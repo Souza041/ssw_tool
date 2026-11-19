@@ -62,6 +62,10 @@ Para a recuperação inicial do login, os handlers de GCE/OP455 podem permanecer
 desligados. O instalador restringe a ACL e a tarefa agendada sempre inicia o executor
 com `--env-file C:\ProgramData\Nexus\local-agent.env`.
 
+A definição persistente, logs, diagnóstico e recuperação automática estão detalhados
+em `docs/nexus_local_agent_windows_service.md`. Ela usa `python.exe` em sessão não
+interativa; não use mais uma ação baseada em `pythonw.exe`.
+
 ## Validação antes da ativação
 
 VPS:

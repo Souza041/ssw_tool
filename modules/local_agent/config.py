@@ -235,6 +235,8 @@ class ExecutorSettings:
     request_timeout_seconds: int
     allow_insecure_http: bool
     remote_auth_enabled: bool
+    https_proxy: str | None = field(default=None, repr=False)
+    ca_bundle: Path | None = None
 
 
 def load_executor_settings() -> ExecutorSettings:
@@ -242,6 +244,19 @@ def load_executor_settings() -> ExecutorSettings:
     agent_id = os.getenv("NEXUS_LOCAL_AGENT_ID", "").strip()
     token = os.getenv("NEXUS_LOCAL_AGENT_TOKEN", "")
     allow_insecure = _enabled("NEXUS_LOCAL_AGENT_ALLOW_INSECURE_HTTP", False)
+    proxy_value = os.getenv("NEXUS_LOCAL_AGENT_HTTPS_PROXY", "").strip()
+    proxy = urlparse(proxy_value) if proxy_value else None
+    if proxy is not None and (
+        proxy.scheme not in {"http", "https"}
+        or not proxy.netloc
+        or proxy.query
+        or proxy.fragment
+    ):
+        raise LocalAgentConfigurationError("Proxy HTTPS do executor inválido.")
+    ca_value = os.getenv("NEXUS_LOCAL_AGENT_CA_BUNDLE", "").strip()
+    ca_bundle = Path(ca_value).expanduser().resolve() if ca_value else None
+    if ca_bundle is not None and not ca_bundle.is_file():
+        raise LocalAgentConfigurationError("CA bundle do executor não encontrado.")
     parsed = urlparse(server_url)
     if (
         not server_url
@@ -269,4 +284,6 @@ def load_executor_settings() -> ExecutorSettings:
         ),
         allow_insecure_http=allow_insecure,
         remote_auth_enabled=_enabled("NEXUS_SSW_REMOTE_AUTH_ENABLED", False),
+        https_proxy=proxy_value or None,
+        ca_bundle=ca_bundle,
     )

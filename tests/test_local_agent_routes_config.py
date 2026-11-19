@@ -9,6 +9,7 @@ from modules.local_agent.config import (
     load_server_settings,
 )
 from modules.local_agent import routes
+from modules.local_agent.executor import AgentClient
 
 
 TOKEN = "token-seguro-para-testes-com-mais-de-32-caracteres"
@@ -61,6 +62,22 @@ def test_executor_requires_https_unless_explicitly_overridden(monkeypatch):
         load_executor_settings()
     monkeypatch.setenv("NEXUS_LOCAL_AGENT_ALLOW_INSECURE_HTTP", "true")
     assert load_executor_settings().allow_insecure_http is True
+
+
+def test_executor_uses_explicit_proxy_and_ca_without_user_profile(monkeypatch, tmp_path):
+    ca_bundle = tmp_path / "corporate-ca.pem"
+    ca_bundle.write_text("synthetic-ca", encoding="utf-8")
+    monkeypatch.setenv("NEXUS_LOCAL_AGENT_SERVER_URL", "https://nexus.example.test")
+    monkeypatch.setenv("NEXUS_LOCAL_AGENT_ID", "windows-cwb-01")
+    monkeypatch.setenv("NEXUS_LOCAL_AGENT_TOKEN", TOKEN)
+    monkeypatch.setenv("NEXUS_LOCAL_AGENT_ALLOW_INSECURE_HTTP", "false")
+    monkeypatch.setenv("NEXUS_LOCAL_AGENT_HTTPS_PROXY", "http://proxy.example.test:8080")
+    monkeypatch.setenv("NEXUS_LOCAL_AGENT_CA_BUNDLE", str(ca_bundle))
+    settings = load_executor_settings()
+    client = AgentClient(settings)
+    assert client.session.proxies["https"] == "http://proxy.example.test:8080"
+    assert client.session.verify == str(ca_bundle.resolve())
+    assert "proxy.example.test" not in repr(settings)
 
 
 def test_agent_claim_authenticates_and_filters_capabilities(monkeypatch, tmp_path):

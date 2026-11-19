@@ -49,6 +49,11 @@ def main() -> int:
         host = urlparse(settings.server_url).hostname or "indefinido"
         print(f"OK: executor {settings.agent_id}; servidor HTTPS em {host}; token configurado.")
         print(
+            "Transporte explícito: proxy="
+            f"{'configurado' if settings.https_proxy else 'não configurado'}; CA="
+            f"{'configurada' if settings.ca_bundle else 'padrão do requests'}."
+        )
+        print(
             "Capacidades validadas: system.ping"
             + (
                 " e " + ",".join(sorted(selected_tasks))

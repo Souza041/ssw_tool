@@ -24,6 +24,13 @@ class AgentClient:
     def __init__(self, settings: ExecutorSettings, session: requests.Session | None = None):
         self.settings = settings
         self.session = session or requests.Session()
+        if settings.https_proxy:
+            self.session.proxies.update({
+                "http": settings.https_proxy,
+                "https": settings.https_proxy,
+            })
+        if settings.ca_bundle is not None:
+            self.session.verify = str(settings.ca_bundle)
         self.headers = {
             "Authorization": f"Bearer {settings.token}",
             "X-Nexus-Agent-Id": settings.agent_id,

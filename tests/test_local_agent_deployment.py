@@ -65,6 +65,12 @@ def test_installers_do_not_restart_or_start_services_implicitly():
     assert "$apply -and $registertask" in windows
     assert "nexus_local_agent_ssw_tasks" in windows
     assert "nexus_ssw_remote_auth_enabled" in windows
+    assert '.venv\\scripts\\python.exe' in windows
+    assert 'pythonw.exe' not in windows
+    assert '--log-file' in windows and '--lock-file' in windows
+    assert '-multipleinstances ignorenew' in windows
+    assert '-allowstartifonbatteries' in windows
+    assert '-dontstopifgoingonbatteries' in windows
     windows_diagnostic = (ROOT / "deploy/local_agent/diagnose_windows_agent.ps1").read_text(
         encoding="utf-8"
     ).casefold()
