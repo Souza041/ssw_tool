@@ -108,25 +108,12 @@ def _executar_ocorrencia_73_agendada_serializada(
         )
         return None
 
-    from modules.local_agent.delegation import (
-        delegation_enabled,
-        enqueue_ssw_task,
-        scheduled_key,
-    )
+    from modules.local_agent.delegation import delegation_enabled
     if delegation_enabled():
-        job_id = enqueue_ssw_task(
-            "ssw.ocorrencia_73",
-            {"flow": fluxo, "reference_date": data_referencia.isoformat()},
-            idempotency_key=scheduled_key(
-                "ssw.ocorrencia_73", fluxo, data_referencia.isoformat()
-            ),
-            concurrency_key="ssw.ocorrencia_73",
-            priority=50,
+        logger.warning(
+            "[OCORRENCIA 73][%s] Bloqueada durante a fase de delegação SSW.", fluxo
         )
-        logger.info(
-            "[OCORRENCIA 73][%s] Delegada ao Windows; job_id=%s.", fluxo, job_id
-        )
-        return {"success": True, "delegated": True, "job_id": job_id, "flow": fluxo}
+        return None
 
     return executar_ocorrencia_73_local(
         fluxo=fluxo, reference_date=data_referencia
@@ -220,25 +207,10 @@ def executar_rechecagens_big_local(*, raise_on_error: bool = False):
 
 
 def executar_rechecagens_big():
-    from modules.local_agent.delegation import (
-        current_minute_key,
-        delegation_enabled,
-        enqueue_ssw_task,
-    )
+    from modules.local_agent.delegation import delegation_enabled
     if delegation_enabled():
-        now = datetime.now(TIMEZONE).replace(second=0, microsecond=0)
-        job_id = enqueue_ssw_task(
-            "ssw.ocorrencia_73.recheck_big",
-            {"scheduled_at": now.isoformat()},
-            idempotency_key=current_minute_key(
-                "ssw.ocorrencia_73.recheck_big", now
-            ),
-            concurrency_key="ssw.ocorrencia_73",
-            priority=60,
-            coalesce_active=True,
-        )
-        logger.info("[OC73][BIG] Rechecagem delegada; job_id=%s.", job_id)
-        return {"delegated": True, "job_id": job_id}
+        logger.warning("[OC73][BIG] Rechecagem bloqueada durante a delegação SSW.")
+        return []
     return executar_rechecagens_big_local()
 
 

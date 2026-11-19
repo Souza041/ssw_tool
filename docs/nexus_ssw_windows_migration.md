@@ -6,6 +6,8 @@
 - O Windows apenas faz `claim` HTTPS autenticado e executa handlers compilados.
 - `NEXUS_SSW_DELEGATION_ENABLED=false` e
   `NEXUS_LOCAL_AGENT_SSW_HANDLERS_ENABLED=false` são os padrões.
+- `NEXUS_SSW_DELEGATED_TASKS` autoriza nesta fase somente Documentos GCE e
+  Métricas OP455. OC73 é recusada também pela allowlist Windows.
 - Jobs operacionais usam uma tentativa. Uma perda de lease termina em `FAILED` e
   nunca dispara novamente a mesma operação automaticamente.
 - Chaves de idempotência impedem dois disparos do mesmo horário. Chaves de
@@ -16,9 +18,9 @@
 
 | Fluxo | Entrada/horário na VPS | Parâmetros | SSW e efeitos | Migração |
 |---|---|---|---|---|
-| OC73 CWB | APScheduler, dom–sex, 23:55, `America/Sao_Paulo` | fluxo e data de referência; calendário calcula janela | OP455, OP101 e, sob os gates existentes, ocorrência 73; MySQL e Health Center | `ssw.ocorrencia_73`, scheduler permanece na VPS |
-| OC73 BIG | APScheduler, seg–qui, 23:55 | fluxo e data de referência | mesmos gates; regras BIG preservadas | mesmo handler, concorrência comum com CWB |
-| Rechecagem BIG | APScheduler a cada minuto quando o gate preexistente está ativo | minuto agendado | retoma pendências persistidas; pode consultar/lançar somente sob gates OC73 | `ssw.ocorrencia_73.recheck_big` |
+| OC73 CWB | APScheduler, dom–sex, 23:55, `America/Sao_Paulo` | fluxo e data de referência | OP455, OP101 e possível ocorrência 73 | bloqueada quando a delegação global está ativa; nunca enviada ao Windows |
+| OC73 BIG | APScheduler, seg–qui, 23:55 | fluxo e data de referência | mesmas regras BIG | bloqueada nesta fase |
+| Rechecagem BIG | APScheduler a cada minuto quando o gate preexistente está ativo | minuto agendado | pode consultar/lançar sob gates OC73 | bloqueada nesta fase |
 | Documentos GCE | `scripts/processar_documentos_diario.py`, agenda externa não declarada no repositório; também POST `/documentos/executar` | referência, período, modos de notificação | Portal GCE, OP455/OP930, importação, matching, alertas, métricas e notificações | `ssw.documentos_gce`; histórico e Health Center continuam no MySQL central |
 | Métricas OP455 | POST `/api/metricas/refresh`; scheduler horário existe no código, mas seu startup está comentado | 1–365 dias; origem manual/scheduler | OP455, `dashboard_runs` e snapshot | `ssw.metricas_op455`; snapshot remoto obrigatoriamente no banco |
 | Documentos LG | POST `/documentos-lg/executar` e CLI incremental; sem agenda instalada pelo repositório | períodos, unidade, timeout, planilha | OP435/455/930, arquivos para download e eventualmente planilha | execução direta na VPS é bloqueada quando a delegação está ativa; usar a FastAPI Windows. Não serializar sessão nem artefatos pela fila |
@@ -50,15 +52,16 @@ VPS, em `/etc/nexus/local-agent.env`:
 ```text
 NEXUS_LOCAL_AGENT_ENABLED=true
 NEXUS_SSW_DELEGATION_ENABLED=false
-NEXUS_LOCAL_AGENT_ALLOWED_TASKS=system.ping,ssw.documentos_gce,ssw.metricas_op455,ssw.ocorrencia_73,ssw.ocorrencia_73.recheck_big
-NEXUS_LOCAL_AGENT_AGENT_TASKS_JSON={"windows-corporativo-01":["system.ping","ssw.documentos_gce","ssw.metricas_op455","ssw.ocorrencia_73","ssw.ocorrencia_73.recheck_big"]}
+NEXUS_SSW_DELEGATED_TASKS=ssw.documentos_gce,ssw.metricas_op455
+NEXUS_LOCAL_AGENT_ALLOWED_TASKS=system.ping,ssw.documentos_gce,ssw.metricas_op455
+NEXUS_LOCAL_AGENT_AGENT_TASKS_JSON={"windows-corporativo-01":["system.ping","ssw.documentos_gce","ssw.metricas_op455"]}
 ```
 
 Windows, em `C:\ProgramData\Nexus\local-agent.env`:
 
 ```text
 NEXUS_LOCAL_AGENT_SSW_HANDLERS_ENABLED=false
-NEXUS_LOCAL_AGENT_SSW_TASKS=
+NEXUS_LOCAL_AGENT_SSW_TASKS=ssw.documentos_gce,ssw.metricas_op455
 NEXUS_LOCAL_AGENT_RUNTIME_ENV_FILE=C:\ProgramData\Nexus\ssw-automation.env
 ```
 
@@ -75,7 +78,7 @@ rotacione credenciais como parte desta implantação. Preserve os gates OC73 atu
 3. No Windows 64 bits, instalar os requisitos completos do projeto e preparar os
    dois arquivos privados com ACL para Administradores, SYSTEM e LOCAL SERVICE.
 4. Manter os handlers SSW falsos e homologar `system.ping --once`.
-5. Incluir as quatro tarefas nas allowlists da VPS e do agente, sem alterar ainda
+5. Incluir somente Documentos GCE e Métricas nas allowlists da VPS e do agente, sem alterar ainda
    `NEXUS_SSW_DELEGATION_ENABLED`.
 6. No Windows, definir `NEXUS_LOCAL_AGENT_SSW_HANDLERS_ENABLED=true`, manter todos
    os gates produtivos preexistentes como estavam e executar diagnóstico/`--once`
@@ -96,7 +99,7 @@ VPS, ainda com a delegação falsa:
 ```bash
 cd /home/automacao/bots/ssw_tool
 sudoedit /etc/nexus/local-agent.env
-# Acrescente as quatro tarefas às duas allowlists; mantenha:
+# Acrescente somente Documentos GCE e Métricas às allowlists; mantenha:
 # NEXUS_SSW_DELEGATION_ENABLED=false
 
 sudo -u automacao env NEXUS_PYTHON_BIN=/home/automacao/venv/bin/python \

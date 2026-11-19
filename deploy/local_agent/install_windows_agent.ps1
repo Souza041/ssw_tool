@@ -45,7 +45,7 @@ if ($sswHandlers) {
     if ([string]::IsNullOrWhiteSpace($sswTasks)) {
         throw "Handlers SSW exigem allowlist NEXUS_LOCAL_AGENT_SSW_TASKS explícita."
     }
-    $knownTasks = @('ssw.documentos_gce','ssw.metricas_op455','ssw.ocorrencia_73','ssw.ocorrencia_73.recheck_big')
+    $knownTasks = @('ssw.documentos_gce','ssw.metricas_op455')
     foreach ($task in $sswTasks.Split(',')) {
         if ($knownTasks -notcontains $task.Trim()) { throw "Tarefa desconhecida na allowlist Windows." }
     }
