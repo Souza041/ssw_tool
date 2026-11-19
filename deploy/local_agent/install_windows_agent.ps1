@@ -41,6 +41,14 @@ if (($values['NEXUS_LOCAL_AGENT_TOKEN']).Length -lt 32) { throw "Token do agente
 if ($values['NEXUS_LOCAL_AGENT_ALLOW_INSECURE_HTTP'] -ne 'false') { throw "HTTP inseguro deve permanecer desativado." }
 $sswHandlers = $values['NEXUS_LOCAL_AGENT_SSW_HANDLERS_ENABLED'] -eq 'true'
 if ($sswHandlers) {
+    $sswTasks = $values['NEXUS_LOCAL_AGENT_SSW_TASKS']
+    if ([string]::IsNullOrWhiteSpace($sswTasks)) {
+        throw "Handlers SSW exigem allowlist NEXUS_LOCAL_AGENT_SSW_TASKS explícita."
+    }
+    $knownTasks = @('ssw.documentos_gce','ssw.metricas_op455','ssw.ocorrencia_73','ssw.ocorrencia_73.recheck_big')
+    foreach ($task in $sswTasks.Split(',')) {
+        if ($knownTasks -notcontains $task.Trim()) { throw "Tarefa desconhecida na allowlist Windows." }
+    }
     $runtimeEnvFile = $values['NEXUS_LOCAL_AGENT_RUNTIME_ENV_FILE']
     if ([string]::IsNullOrWhiteSpace($runtimeEnvFile) -or -not (Test-Path -LiteralPath $runtimeEnvFile -PathType Leaf)) {
         throw "Handlers SSW exigem arquivo privado de runtime existente."

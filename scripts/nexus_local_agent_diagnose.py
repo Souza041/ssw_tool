@@ -30,7 +30,10 @@ def main() -> int:
         ).strip().lower() in {"1", "true", "yes", "sim", "on"}
         if handlers:
             from modules.local_agent.private_env import SSW_RUNTIME_PREFIXES
-            from modules.local_agent.ssw_tasks import validate_ssw_runtime_environment
+            from modules.local_agent.ssw_tasks import (
+                selected_ssw_tasks,
+                validate_ssw_runtime_environment,
+            )
 
             runtime_value = os.getenv("NEXUS_LOCAL_AGENT_RUNTIME_ENV_FILE", "").strip()
             if not runtime_value:
@@ -40,13 +43,17 @@ def main() -> int:
                 project_root=PROJECT_ROOT,
                 allowed_prefixes=SSW_RUNTIME_PREFIXES,
             )
-            validate_ssw_runtime_environment()
+            selected_tasks = selected_ssw_tasks()
+            validate_ssw_runtime_environment(selected_tasks)
         settings = load_executor_settings()
         host = urlparse(settings.server_url).hostname or "indefinido"
         print(f"OK: executor {settings.agent_id}; servidor HTTPS em {host}; token configurado.")
         print(
             "Capacidades validadas: system.ping"
-            + (" e handlers SSW permitidos" if handlers else "")
+            + (
+                " e " + ",".join(sorted(selected_tasks))
+                if handlers else ""
+            )
         )
         return 0
 

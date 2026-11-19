@@ -75,6 +75,7 @@ def provision_values(
     server = {
         "NEXUS_LOCAL_AGENT_ENABLED": "false",
         "NEXUS_SSW_DELEGATION_ENABLED": "false",
+        "NEXUS_LOCAL_AGENT_METRICS_HOMOLOGATION_ENABLED": "false",
         "NEXUS_LOCAL_AGENT_DB": "/var/lib/nexus/local-agent.sqlite3",
         "NEXUS_LOCAL_AGENT_TOKENS_JSON": json.dumps(tokens, separators=(",", ":")),
         "NEXUS_LOCAL_AGENT_ALLOWED_TASKS": "system.ping",
@@ -96,6 +97,7 @@ def provision_values(
         "NEXUS_LOCAL_AGENT_REQUEST_TIMEOUT_SECONDS": "15",
         "NEXUS_LOCAL_AGENT_ALLOW_INSECURE_HTTP": "false",
         "NEXUS_LOCAL_AGENT_SSW_HANDLERS_ENABLED": "false",
+        "NEXUS_LOCAL_AGENT_SSW_TASKS": "",
         "NEXUS_LOCAL_AGENT_RUNTIME_ENV_FILE": r"C:\ProgramData\Nexus\ssw-automation.env",
     }
     return server, windows

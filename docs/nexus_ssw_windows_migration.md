@@ -58,6 +58,7 @@ Windows, em `C:\ProgramData\Nexus\local-agent.env`:
 
 ```text
 NEXUS_LOCAL_AGENT_SSW_HANDLERS_ENABLED=false
+NEXUS_LOCAL_AGENT_SSW_TASKS=
 NEXUS_LOCAL_AGENT_RUNTIME_ENV_FILE=C:\ProgramData\Nexus\ssw-automation.env
 ```
 

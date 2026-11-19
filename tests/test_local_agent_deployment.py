@@ -65,6 +65,7 @@ def test_installers_do_not_restart_or_start_services_implicitly():
     assert "-restartcount 999" in windows
     assert "s-1-5-19" in windows
     assert "$apply -and $registertask" in windows
+    assert "nexus_local_agent_ssw_tasks" in windows
     windows_diagnostic = (ROOT / "deploy/local_agent/diagnose_windows_agent.ps1").read_text(
         encoding="utf-8"
     ).casefold()
