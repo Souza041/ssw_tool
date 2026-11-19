@@ -93,7 +93,7 @@ class SSWClient:
 
         raise last_error
 
-    def login(self) -> None:
+    def login(self) -> requests.Response:
         payload = {
             "act": "L",
             "f1": self.dominio,
@@ -104,10 +104,10 @@ class SSWClient:
             "dummy": dummy(),
         }
 
-        self.post("/bin/ssw0422", payload)
+        return self.post("/bin/ssw0422", payload)
 
-    def open_menu(self) -> None:
-        self.post("/bin/menu01", {"act": ""})
+    def open_menu(self) -> requests.Response:
+        return self.post("/bin/menu01", {"act": ""})
 
     def open_option(self, option: str, unidade: str | None = None) -> requests.Response:
         payload_menu = {

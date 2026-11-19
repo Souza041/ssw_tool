@@ -10,6 +10,7 @@ import requests
 
 from modules.local_agent.config import ExecutorSettings
 from modules.local_agent.contracts import checked_log_message, checked_task
+from modules.local_agent.remote_auth import response_proof
 
 
 Handler = Callable[[dict[str, Any], "ExecutionContext"], dict[str, Any]]
@@ -79,6 +80,34 @@ class AgentClient:
             "succeeded": succeeded,
             "result": result or {},
             "error_message": error_message,
+        })
+
+    def remote_auth_claim(self) -> dict[str, Any]:
+        return self._post("/api/local-agent/v1/remote-auth/claim", {})
+
+    def remote_auth_complete(
+        self,
+        *,
+        request_id: str,
+        lease_token: str,
+        challenge: str,
+        identity_fingerprint: str,
+        accepted: bool,
+    ) -> dict[str, Any]:
+        proof = response_proof(
+            self.settings.token,
+            request_id=request_id,
+            challenge=challenge,
+            identity=identity_fingerprint,
+            agent_id=self.settings.agent_id,
+            accepted=accepted,
+        )
+        return self._post("/api/local-agent/v1/remote-auth/complete", {
+            "request_id": request_id,
+            "lease_token": lease_token,
+            "accepted": accepted,
+            "identity_fingerprint": identity_fingerprint,
+            "proof": proof,
         })
 
 

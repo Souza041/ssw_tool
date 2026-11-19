@@ -112,6 +112,12 @@ class ServerSettings:
     bootstrap_max_skew_seconds: int
     bootstrap_per_minute: int
     bootstrap_per_hour: int
+    remote_auth_enabled: bool
+    remote_auth_agent_id: str
+    remote_auth_timeout_seconds: int
+    remote_auth_request_ttl_seconds: int
+    remote_auth_per_minute: int
+    remote_auth_max_pending: int
 
 
 def load_server_settings() -> ServerSettings:
@@ -128,6 +134,10 @@ def load_server_settings() -> ServerSettings:
         "NEXUS_LOCAL_AGENT_BOOTSTRAP_KEY_ID", ""
     ).strip()
     bootstrap_secret = os.getenv("NEXUS_LOCAL_AGENT_BOOTSTRAP_SECRET", "")
+    remote_auth_enabled = _enabled("NEXUS_SSW_REMOTE_AUTH_ENABLED", False)
+    remote_auth_agent_id = os.getenv(
+        "NEXUS_SSW_REMOTE_AUTH_AGENT_ID", ""
+    ).strip()
     settings = ServerSettings(
         enabled=enabled,
         database_path=Path(os.getenv(
@@ -158,6 +168,20 @@ def load_server_settings() -> ServerSettings:
         bootstrap_per_hour=_bounded_int(
             "NEXUS_LOCAL_AGENT_BOOTSTRAP_PER_HOUR", 20, 1, 200
         ),
+        remote_auth_enabled=remote_auth_enabled,
+        remote_auth_agent_id=remote_auth_agent_id,
+        remote_auth_timeout_seconds=_bounded_int(
+            "NEXUS_SSW_REMOTE_AUTH_TIMEOUT_SECONDS", 20, 2, 60
+        ),
+        remote_auth_request_ttl_seconds=_bounded_int(
+            "NEXUS_SSW_REMOTE_AUTH_REQUEST_TTL_SECONDS", 30, 5, 120
+        ),
+        remote_auth_per_minute=_bounded_int(
+            "NEXUS_SSW_REMOTE_AUTH_PER_MINUTE", 5, 1, 30
+        ),
+        remote_auth_max_pending=_bounded_int(
+            "NEXUS_SSW_REMOTE_AUTH_MAX_PENDING", 50, 1, 500
+        ),
     )
     if settings.enabled and not settings.tokens:
         raise LocalAgentConfigurationError(
@@ -187,6 +211,18 @@ def load_server_settings() -> ServerSettings:
             raise LocalAgentConfigurationError(
                 "O bootstrap exige system.ping na allowlist global."
             )
+    if settings.remote_auth_enabled:
+        if not settings.enabled:
+            raise LocalAgentConfigurationError(
+                "Autenticação remota exige o Local Agent habilitado."
+            )
+        if (
+            not AGENT_ID_RE.fullmatch(settings.remote_auth_agent_id)
+            or settings.remote_auth_agent_id not in settings.tokens
+        ):
+            raise LocalAgentConfigurationError(
+                "Agente autorizado para autenticação remota inválido."
+            )
     return settings
 
 
@@ -198,6 +234,7 @@ class ExecutorSettings:
     poll_seconds: int
     request_timeout_seconds: int
     allow_insecure_http: bool
+    remote_auth_enabled: bool
 
 
 def load_executor_settings() -> ExecutorSettings:
@@ -231,4 +268,5 @@ def load_executor_settings() -> ExecutorSettings:
             "NEXUS_LOCAL_AGENT_REQUEST_TIMEOUT_SECONDS", 15, 2, 120
         ),
         allow_insecure_http=allow_insecure,
+        remote_auth_enabled=_enabled("NEXUS_SSW_REMOTE_AUTH_ENABLED", False),
     )

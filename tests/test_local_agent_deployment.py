@@ -50,6 +50,7 @@ def test_deployment_templates_keep_both_gates_disabled():
         assert "NEXUS_LOCAL_AGENT_BOOTSTRAP_ENABLED=false" in content
         assert "NEXUS_LOCAL_AGENT_DB=/var/lib/nexus/local-agent.sqlite3" in content
         assert "NEXUS_SSW_DELEGATION_ENABLED=false" in content
+        assert "NEXUS_SSW_REMOTE_AUTH_ENABLED=false" in content
 
 
 def test_installers_do_not_restart_or_start_services_implicitly():
@@ -66,10 +67,15 @@ def test_installers_do_not_restart_or_start_services_implicitly():
     assert "s-1-5-19" in windows
     assert "$apply -and $registertask" in windows
     assert "nexus_local_agent_ssw_tasks" in windows
+    assert "nexus_ssw_remote_auth_enabled" in windows
     windows_diagnostic = (ROOT / "deploy/local_agent/diagnose_windows_agent.ps1").read_text(
         encoding="utf-8"
     ).casefold()
     assert "estado esperado antes da homologação --once" in windows_diagnostic
+    server_bootstrap = (ROOT / "scripts/run_nexus_server.py").read_text(
+        encoding="utf-8"
+    )
+    assert "remote_auth_enabled and args.workers != 1" in server_bootstrap
 
 
 def test_ubuntu_diagnostic_uses_real_contract_and_sanitizes_supervisor_failure():
@@ -107,6 +113,8 @@ def test_provisioning_is_idempotent_secure_and_ping_only(tmp_path, monkeypatch):
     assert "system.ping" in server["NEXUS_LOCAL_AGENT_AGENT_TASKS_JSON"]
     assert server["NEXUS_LOCAL_AGENT_ENABLED"] == "false"
     assert server["NEXUS_LOCAL_AGENT_BOOTSTRAP_ENABLED"] == "false"
+    assert server["NEXUS_SSW_REMOTE_AUTH_ENABLED"] == "false"
+    assert windows["NEXUS_SSW_REMOTE_AUTH_ENABLED"] == "false"
 
     destination = tmp_path / "private.env"
     atomic_private_write(destination, merge_env("# preserved\n", server))
@@ -127,6 +135,12 @@ def test_provisioning_refuses_enabled_flags_and_unsafe_url():
             {},
             agent_id="windows-corporativo-01",
             server_url="http://nexus.example.test",
+        )
+    with pytest.raises(ProvisioningError, match="autenticação remota"):
+        provision_values(
+            {"NEXUS_SSW_REMOTE_AUTH_ENABLED": "true"},
+            agent_id="windows-corporativo-01",
+            server_url="https://nexus.example.test",
         )
 
 

@@ -55,6 +55,10 @@ def main() -> int:
                 if handlers else ""
             )
         )
+        print(
+            "Autenticação SSW remota: "
+            f"{'ativa' if settings.remote_auth_enabled else 'inativa'}."
+        )
         return 0
 
     settings = load_server_settings()
@@ -63,7 +67,8 @@ def main() -> int:
     print(
         "OK: servidor configurado; Local Agent="
         f"{'ativo' if settings.enabled else 'inativo'}; bootstrap="
-        f"{'ativo' if settings.bootstrap_enabled else 'inativo'}."
+        f"{'ativo' if settings.bootstrap_enabled else 'inativo'}; autenticação remota="
+        f"{'ativa' if settings.remote_auth_enabled else 'inativa'}."
     )
     print(f"Allowlist global: {','.join(sorted(settings.allowed_tasks))}")
     if settings.database_path.exists():

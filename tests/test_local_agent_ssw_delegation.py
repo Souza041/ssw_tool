@@ -55,15 +55,13 @@ def test_ssw_handler_allowlist_is_fixed_and_explicit(monkeypatch):
     monkeypatch.setenv("NEXUS_LOCAL_AGENT_SSW_HANDLERS_ENABLED", "true")
     monkeypatch.setenv(
         "NEXUS_LOCAL_AGENT_SSW_TASKS",
-        ",".join((TASK_DOCUMENTOS, TASK_METRICAS, TASK_OC73, "ssw.ocorrencia_73.recheck_big")),
+        ",".join((TASK_DOCUMENTOS, TASK_METRICAS)),
     )
     registry = HandlerRegistry()
     register_ssw_handlers(registry)
     assert registry.capabilities() == [
         "ssw.documentos_gce",
         "ssw.metricas_op455",
-        "ssw.ocorrencia_73",
-        "ssw.ocorrencia_73.recheck_big",
     ]
 
 
@@ -73,6 +71,50 @@ def test_metrics_can_be_the_only_registered_ssw_handler(monkeypatch):
     registry = HandlerRegistry()
     register_ssw_handlers(registry)
     assert registry.capabilities() == [TASK_METRICAS]
+
+
+def test_oc73_cannot_be_selected_on_windows(monkeypatch):
+    monkeypatch.setenv("NEXUS_LOCAL_AGENT_SSW_HANDLERS_ENABLED", "true")
+    monkeypatch.setenv("NEXUS_LOCAL_AGENT_SSW_TASKS", TASK_OC73)
+    with pytest.raises(RuntimeError, match="desconhecida"):
+        register_ssw_handlers(HandlerRegistry())
+
+
+def test_vps_delegation_requires_global_gate_and_task_allowlist(monkeypatch):
+    from modules.local_agent.delegation import delegation_enabled, delegated_tasks
+
+    monkeypatch.setenv("NEXUS_SSW_DELEGATION_ENABLED", "false")
+    monkeypatch.setenv("NEXUS_SSW_DELEGATED_TASKS", f"{TASK_DOCUMENTOS},{TASK_METRICAS}")
+    assert delegation_enabled() is False
+    assert delegation_enabled(TASK_DOCUMENTOS) is False
+
+    monkeypatch.setenv("NEXUS_SSW_DELEGATION_ENABLED", "true")
+    assert delegated_tasks() == frozenset({TASK_DOCUMENTOS, TASK_METRICAS})
+    assert delegation_enabled(TASK_DOCUMENTOS) is True
+    assert delegation_enabled(TASK_METRICAS) is True
+    assert delegation_enabled(TASK_OC73) is False
+
+
+def test_vps_rejects_oc73_in_delegated_allowlist(monkeypatch):
+    from modules.local_agent.delegation import delegated_tasks
+
+    monkeypatch.setenv("NEXUS_SSW_DELEGATED_TASKS", TASK_OC73)
+    with pytest.raises(RuntimeError, match="não autorizada"):
+        delegated_tasks()
+
+
+def test_enqueue_rejects_task_outside_delegated_allowlist(monkeypatch):
+    from modules.local_agent.delegation import enqueue_ssw_task
+
+    monkeypatch.setenv("NEXUS_SSW_DELEGATION_ENABLED", "true")
+    monkeypatch.setenv("NEXUS_SSW_DELEGATED_TASKS", TASK_DOCUMENTOS)
+    with pytest.raises(RuntimeError, match="desativada ou não autorizada"):
+        enqueue_ssw_task(
+            TASK_METRICAS,
+            {"origin": "manual", "days": 30},
+            idempotency_key=None,
+            concurrency_key="ssw.metricas_op455",
+        )
 
 
 def test_vps_blocks_only_direct_interactive_posts_when_delegation_is_enabled(monkeypatch):
@@ -237,6 +279,63 @@ def test_metrics_homologation_uses_validate_only_without_database(monkeypatch, t
     assert database_calls == []
 
 
+def test_gce_handler_preserves_manual_no_notification_payload(monkeypatch):
+    monkeypatch.setenv("NEXUS_LOCAL_AGENT_SSW_HANDLERS_ENABLED", "true")
+    monkeypatch.setenv("NEXUS_LOCAL_AGENT_SSW_TASKS", TASK_DOCUMENTOS)
+    calls = []
+
+    def fake_execute(**kwargs):
+        calls.append(kwargs)
+        return {
+            "success": True,
+            "pipeline_run_id": 88,
+            "reference_date": "2026-11-19",
+            "period": {"start": "2026-11-13", "end": "2026-11-19"},
+            "matching": {"total": 4, "matched": 3, "errors": 0},
+        }
+
+    monkeypatch.setattr("modules.documentos.execution.execute_daily_documents", fake_execute)
+    registry = HandlerRegistry()
+    register_ssw_handlers(registry)
+    result = registry.get(TASK_DOCUMENTOS)({
+        "origin": "MANUAL",
+        "send_notifications": False,
+        "preview_notifications": False,
+    }, ExecutionContext(lambda *_: None))
+    assert calls[0]["triggered_by"] == "MANUAL"
+    assert calls[0]["send_notifications"] is False
+    assert calls[0]["preview_notifications"] is False
+    assert result["pipeline_run_id"] == 88
+    assert result["matching"]["matched"] == 3
+
+
+def test_scheduled_gce_script_delegates_without_notifications(monkeypatch, capsys):
+    from scripts import processar_documentos_diario as script
+
+    calls = []
+    monkeypatch.setattr(
+        script, "delegation_enabled", lambda task=None: task == TASK_DOCUMENTOS
+    )
+    monkeypatch.setattr(
+        script, "enqueue_ssw_task",
+        lambda task, payload, **kwargs: calls.append((task, payload, kwargs)) or "scheduled-job",
+    )
+    monkeypatch.setattr(
+        script, "execute_daily_documents",
+        lambda **kwargs: pytest.fail("pipeline local não deve executar"),
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        ["processar-documentos", "--data-referencia", "2026-11-19"],
+    )
+    script.main()
+    assert calls[0][0] == TASK_DOCUMENTOS
+    assert calls[0][1]["origin"] == "SCHEDULED"
+    assert calls[0][1]["send_notifications"] is False
+    assert calls[0][1]["preview_notifications"] is False
+    assert "scheduled-job" in capsys.readouterr().out
+
+
 def test_metrics_production_refactor_preserves_persistence_contract(monkeypatch, tmp_path):
     from modules.metricas.service import MetricasService
 
@@ -327,15 +426,11 @@ def test_isolated_metrics_cli_enqueues_validate_only_once(monkeypatch, capsys):
     assert "nenhum segredo" in capsys.readouterr().out
 
 
-def test_oc73_scheduler_delegates_without_constructing_service(monkeypatch):
+def test_oc73_scheduler_is_blocked_while_global_delegation_is_active(monkeypatch):
     from modules.ocorrencia_73 import scheduler
 
-    calls = []
-    monkeypatch.setattr("modules.local_agent.delegation.delegation_enabled", lambda: True)
-    monkeypatch.setattr(
-        "modules.local_agent.delegation.enqueue_ssw_task",
-        lambda task, payload, **options: calls.append((task, payload, options)) or "job-safe",
-    )
+    monkeypatch.setenv("NEXUS_SSW_DELEGATION_ENABLED", "true")
+    monkeypatch.setenv("NEXUS_SSW_DELEGATED_TASKS", f"{TASK_DOCUMENTOS},{TASK_METRICAS}")
     monkeypatch.setattr(
         scheduler, "Ocorrencia73Repository",
         lambda: pytest.fail("VPS não deve construir o executor OC73 quando delega"),
@@ -343,7 +438,4 @@ def test_oc73_scheduler_delegates_without_constructing_service(monkeypatch):
     result = scheduler._executar_ocorrencia_73_agendada_serializada(
         "BIG", date(2026, 11, 19)
     )
-    assert result["delegated"] is True
-    assert result["job_id"] == "job-safe"
-    assert calls[0][0] == TASK_OC73
-    assert calls[0][2]["concurrency_key"] == "ssw.ocorrencia_73"
+    assert result is None

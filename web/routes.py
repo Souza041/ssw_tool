@@ -1,5 +1,8 @@
 import json
 import time
+import hmac
+import os
+import secrets
 
 import uuid
 import shutil
@@ -30,7 +33,13 @@ from modules.health_center.routes import dashboard_context, dependency_dashboard
 from web.admin_access import is_admin
 from fastapi import HTTPException, Query
 
-from web.session_store import criar_sessao, exigir_client, remover_sessao, obter_client
+from web.session_store import (
+    RemoteAuthenticatedClient,
+    criar_sessao,
+    exigir_client,
+    remover_sessao,
+    obter_client,
+)
 
 from operations.op101.comprovantes import OP101Comprovantes
 from operations.op101.batch_comprovantes import processar_planilha_comprovantes
@@ -42,6 +51,12 @@ from modules.ocorrencia_73.observabilidade import usuario_pode_observar
 router = APIRouter()
 templates = Jinja2Templates(directory="web/templates")
 templates.context_processors.append(lambda request: {"is_admin": is_admin(request)})
+
+
+def _remote_auth_enabled() -> bool:
+    return os.getenv("NEXUS_SSW_REMOTE_AUTH_ENABLED", "false").strip().casefold() in {
+        "1", "true", "yes", "sim", "on",
+    }
 
 def validar_login(request: Request):
     if not request.session.get("ssw_session_id"):
@@ -168,6 +183,8 @@ def executar_op488_job(
 
 @router.get("/login", response_class=HTMLResponse)
 def login_form(request: Request):
+    request.session.setdefault("login_csrf", secrets.token_urlsafe(32))
+    request.session.setdefault("remote_auth_binding", secrets.token_urlsafe(32))
     return templates.TemplateResponse("login.html", {"request": request})
 
 
@@ -179,22 +196,64 @@ def login_run(
     usuario: str = Form(...),
     senha: str = Form(...),
     unidade: str = Form(...),
+    login_csrf: str = Form(""),
 ):
     try:
         cpf = "".join(ch for ch in cpf if ch.isdigit())
         if len(cpf) != 11:
             raise ValueError("Informe um CPF com 11 dígitos.")
 
-        client = SSWClient(
-            dominio=dominio,
-            cpf=cpf,
-            usuario=usuario,
-            senha=senha,
-            unidade=unidade,
-        )
+        if _remote_auth_enabled():
+            from modules.local_agent.config import load_server_settings
+            from modules.local_agent.remote_auth import (
+                RemoteAuthError,
+                RemoteCredentials,
+                broker,
+            )
 
-        client.login()
-        client.open_menu()
+            expected_csrf = str(request.session.get("login_csrf") or "")
+            session_binding = str(request.session.get("remote_auth_binding") or "")
+            if (
+                not expected_csrf
+                or not login_csrf
+                or not hmac.compare_digest(expected_csrf, login_csrf)
+                or len(session_binding) < 32
+            ):
+                raise RemoteAuthError("Sessão de login inválida.")
+            settings = load_server_settings()
+            if not settings.remote_auth_enabled:
+                raise RemoteAuthError("Autenticação remota indisponível.")
+            request_id = broker.create(
+                RemoteCredentials(dominio, cpf, usuario, senha, unidade),
+                session_binding=session_binding,
+                ttl_seconds=settings.remote_auth_request_ttl_seconds,
+                per_minute=settings.remote_auth_per_minute,
+                max_pending=settings.remote_auth_max_pending,
+            )
+            result = broker.wait_and_consume(
+                request_id,
+                session_binding=session_binding,
+                timeout_seconds=settings.remote_auth_timeout_seconds,
+            )
+            if not result.accepted:
+                raise PermissionError("Credenciais SSW inválidas.")
+            client = RemoteAuthenticatedClient(
+                dominio=result.dominio,
+                cpf=result.cpf,
+                usuario=result.usuario,
+                unidade=result.unidade,
+            )
+        else:
+            client = SSWClient(
+                dominio=dominio,
+                cpf=cpf,
+                usuario=usuario,
+                senha=senha,
+                unidade=unidade,
+            )
+
+            client.login()
+            client.open_menu()
 
         remover_sessao(request)
         session_id = criar_sessao(client)
@@ -206,11 +265,16 @@ def login_run(
         return RedirectResponse("/", status_code=303)
 
     except Exception as exc:
+        error = (
+            "Não foi possível autenticar no SSW. Verifique as credenciais ou tente novamente."
+            if _remote_auth_enabled()
+            else str(exc)
+        )
         return templates.TemplateResponse(
             "login.html",
             {
                 "request": request,
-                "error": str(exc),
+                "error": error,
             },
         )
 
