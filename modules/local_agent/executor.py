@@ -5,6 +5,7 @@ import platform
 import threading
 import time
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 import requests
 
@@ -38,7 +39,15 @@ class AgentClient:
             "Content-Type": "application/json",
         }
 
+    @staticmethod
+    def _safe_path(path: str) -> str:
+        parsed = urlsplit(str(path))
+        relative = parsed.path if parsed.path.startswith("/") else f"/{parsed.path}"
+        return relative[:200] or "/"
+
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        method = "POST"
+        safe_path = self._safe_path(path)
         try:
             response = self.session.post(
                 f"{self.settings.server_url}{path}",
@@ -46,12 +55,41 @@ class AgentClient:
                 json=payload,
                 timeout=self.settings.request_timeout_seconds,
             )
+        except requests.Timeout as exc:
+            raise AgentProtocolError(
+                f"Timeout na comunicação com a VPS: método={method} caminho={safe_path}."
+            ) from exc
+        except requests.ConnectionError as exc:
+            raise AgentProtocolError(
+                f"Falha de conexão com a VPS: método={method} caminho={safe_path}."
+            ) from exc
+        except requests.RequestException as exc:
+            raise AgentProtocolError(
+                "Falha de transporte na comunicação com a VPS: "
+                f"método={method} caminho={safe_path} tipo={type(exc).__name__}."
+            ) from exc
+        try:
             response.raise_for_status()
+        except requests.HTTPError as exc:
+            error_response = exc.response if exc.response is not None else response
+            status = getattr(error_response, "status_code", None)
+            status_label = str(status) if isinstance(status, int) else "desconhecido"
+            raise AgentProtocolError(
+                "Erro HTTP na comunicação com a VPS: "
+                f"método={method} caminho={safe_path} status={status_label}."
+            ) from exc
+        try:
             data = response.json()
-        except (requests.RequestException, ValueError) as exc:
-            raise AgentProtocolError(f"Falha de comunicação com a VPS: {type(exc).__name__}.") from exc
+        except (requests.exceptions.InvalidJSONError, ValueError) as exc:
+            raise AgentProtocolError(
+                "Resposta JSON inválida da VPS: "
+                f"método={method} caminho={safe_path}."
+            ) from exc
         if not isinstance(data, dict):
-            raise AgentProtocolError("Resposta inválida da VPS.")
+            raise AgentProtocolError(
+                "Contrato JSON inválido da VPS: "
+                f"método={method} caminho={safe_path}."
+            )
         return data
 
     def claim(self, capabilities: list[str]) -> dict[str, Any]:
