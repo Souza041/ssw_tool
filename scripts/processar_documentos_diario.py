@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+import os
 from pathlib import Path
 import sys
+from zoneinfo import ZoneInfo
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -11,6 +13,11 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from modules.documentos.execution import execute_daily_documents
 from modules.documentos.services.daily_pipeline import dump_result
+from modules.local_agent.delegation import (
+    delegation_enabled,
+    enqueue_ssw_task,
+    scheduled_key,
+)
 
 
 def parse_date(value: str):
@@ -42,8 +49,40 @@ def main() -> None:
     parser.add_argument("--limite-notificacoes", type=int)
     args = parser.parse_args()
 
+    private_env = Path(
+        os.getenv("NEXUS_LOCAL_AGENT_ENV_FILE", "/etc/nexus/local-agent.env")
+    )
+    if private_env.is_file():
+        from modules.local_agent.private_env import load_private_environment
+
+        load_private_environment(private_env, project_root=PROJECT_ROOT)
+
     if (args.data_inicial is None) != (args.data_final is None):
         parser.error("Use --data-inicial e --data-final juntas.")
+
+    if delegation_enabled():
+        reference = args.data_referencia or datetime.now(
+            ZoneInfo("America/Sao_Paulo")
+        ).date()
+        payload = {
+            "origin": "SCHEDULED",
+            "reference_date": reference.isoformat(),
+            "period_start": args.data_inicial.isoformat() if args.data_inicial else None,
+            "period_end": args.data_final.isoformat() if args.data_final else None,
+            "send_notifications": args.enviar_notificacoes,
+            "preview_notifications": args.prever_notificacoes,
+            "notification_limit": args.limite_notificacoes,
+        }
+        job_id = enqueue_ssw_task(
+            "ssw.documentos_gce",
+            payload,
+            idempotency_key=scheduled_key("ssw.documentos_gce", reference.isoformat()),
+            concurrency_key="ssw.documentos_gce",
+            priority=50,
+            coalesce_active=True,
+        )
+        print(dump_result({"success": True, "delegated": True, "job_id": job_id}))
+        return
 
     result = execute_daily_documents(
         triggered_by="SCHEDULED",

@@ -61,6 +61,14 @@ if QA_MODE:
 async def bloquear_operacoes_qa(request, call_next):
     if QA_MODE and request.url.path != "/qa/health" and not request.url.path.startswith("/static/"):
         return PlainTextResponse("Operações desabilitadas no ambiente QA.", status_code=503)
+    if not QA_MODE:
+        from modules.local_agent.vps_guard import direct_ssw_post_blocked
+
+        if direct_ssw_post_blocked(request.method, request.url.path):
+            return PlainTextResponse(
+                "Execução SSW direta bloqueada na VPS; use a interface Windows autorizada.",
+                status_code=503,
+            )
     return await call_next(request)
 
 app.add_middleware(

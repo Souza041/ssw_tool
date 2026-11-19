@@ -17,6 +17,24 @@ foreach ($entry in $acl.Access) {
         throw "ACL insegura detectada no arquivo privado."
     }
 }
+$values = @{}
+Get-Content -LiteralPath $EnvFile | ForEach-Object {
+    if ($_ -match '^\s*([^#][^=]*)=(.*)$') { $values[$matches[1].Trim()] = $matches[2] }
+}
+if ($values['NEXUS_LOCAL_AGENT_SSW_HANDLERS_ENABLED'] -eq 'true') {
+    $runtimeEnv = $values['NEXUS_LOCAL_AGENT_RUNTIME_ENV_FILE']
+    if ([string]::IsNullOrWhiteSpace($runtimeEnv) -or -not (Test-Path -LiteralPath $runtimeEnv -PathType Leaf)) {
+        throw "Arquivo privado de runtime SSW ausente."
+    }
+    $runtimeAcl = Get-Acl -LiteralPath $runtimeEnv
+    if (-not $runtimeAcl.AreAccessRulesProtected) { throw "ACL do runtime SSW ainda herda permissões." }
+    foreach ($entry in $runtimeAcl.Access) {
+        $sid = $entry.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+        if ($entry.AccessControlType -eq 'Allow' -and $unsafeSids -contains $sid) {
+            throw "ACL insegura detectada no runtime SSW."
+        }
+    }
+}
 & $python (Join-Path $root "scripts\nexus_local_agent_diagnose.py") --role executor --env-file $EnvFile
 $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($null -eq $task) {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 import signal
 import sys
@@ -14,13 +15,14 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from modules.local_agent.config import load_executor_settings
-from modules.local_agent.private_env import load_private_environment
+from modules.local_agent.private_env import SSW_RUNTIME_PREFIXES, load_private_environment
 from modules.local_agent.executor import (
     AgentClient,
     HandlerRegistry,
     LocalAgentExecutor,
     register_builtin_handlers,
 )
+from modules.local_agent.ssw_tasks import register_ssw_handlers
 
 
 def main() -> int:
@@ -38,9 +40,22 @@ def main() -> int:
     args = parser.parse_args()
     if args.env_file:
         load_private_environment(args.env_file, project_root=PROJECT_ROOT)
+    if os.getenv("NEXUS_LOCAL_AGENT_SSW_HANDLERS_ENABLED", "false").strip().lower() in {
+        "1", "true", "yes", "sim", "on",
+    }:
+        runtime_value = os.getenv("NEXUS_LOCAL_AGENT_RUNTIME_ENV_FILE", "").strip()
+        if not runtime_value:
+            parser.error("Handlers SSW exigem NEXUS_LOCAL_AGENT_RUNTIME_ENV_FILE.")
+        runtime_env = Path(runtime_value)
+        load_private_environment(
+            runtime_env,
+            project_root=PROJECT_ROOT,
+            allowed_prefixes=SSW_RUNTIME_PREFIXES,
+        )
     settings = load_executor_settings()
     registry = HandlerRegistry()
     register_builtin_handlers(registry)
+    register_ssw_handlers(registry)
     executor = LocalAgentExecutor(AgentClient(settings), registry)
     if args.once:
         executor.run_once()

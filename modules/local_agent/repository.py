@@ -154,6 +154,22 @@ class LocalAgentRepository:
                 CREATE INDEX IF NOT EXISTS idx_local_agent_bootstrap_rate
                     ON local_agent_bootstrap_audit(occurred_at, key_id, remote_address);
             """)
+            columns = {
+                row["name"] for row in db.execute("PRAGMA table_info(local_agent_jobs)")
+            }
+            if "idempotency_key" not in columns:
+                db.execute("ALTER TABLE local_agent_jobs ADD COLUMN idempotency_key TEXT")
+            if "concurrency_key" not in columns:
+                db.execute("ALTER TABLE local_agent_jobs ADD COLUMN concurrency_key TEXT")
+            db.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_local_agent_jobs_idempotency
+                ON local_agent_jobs(idempotency_key)
+                WHERE idempotency_key IS NOT NULL
+            """)
+            db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_local_agent_jobs_concurrency
+                ON local_agent_jobs(concurrency_key, status)
+            """)
 
     @staticmethod
     def _nonce_hash(key_id: str, nonce: str) -> str:
@@ -363,6 +379,9 @@ class LocalAgentRepository:
         payload: dict[str, Any],
         priority: int = 100,
         max_attempts: int = 3,
+        idempotency_key: str | None = None,
+        concurrency_key: str | None = None,
+        coalesce_active: bool = False,
         now: datetime | None = None,
     ) -> str:
         task = checked_task(task)
@@ -373,15 +392,44 @@ class LocalAgentRepository:
             raise ValueError("Prioridade fora do intervalo permitido.")
         if not 1 <= max_attempts <= 10:
             raise ValueError("Número máximo de tentativas inválido.")
+        for label, value in (
+            ("Chave de idempotência", idempotency_key),
+            ("Chave de concorrência", concurrency_key),
+        ):
+            if value is not None and (
+                not isinstance(value, str)
+                or not 1 <= len(value) <= 200
+                or any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-" for character in value)
+            ):
+                raise ValueError(f"{label} inválida.")
         job_id = str(uuid.uuid4())
         timestamp = utc_text(now or utc_now())
-        with self._transaction() as db:
-            db.execute("""
-                INSERT INTO local_agent_jobs (
+        with self._transaction(immediate=True) as db:
+            if concurrency_key and coalesce_active:
+                active = db.execute("""
+                    SELECT id FROM local_agent_jobs
+                    WHERE concurrency_key=? AND status IN ('QUEUED','LEASED')
+                    ORDER BY created_at LIMIT 1
+                """, (concurrency_key,)).fetchone()
+                if active is not None:
+                    return str(active["id"])
+            inserted = db.execute("""
+                INSERT OR IGNORE INTO local_agent_jobs (
                     id, task, payload_json, status, priority, max_attempts,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, 'QUEUED', ?, ?, ?, ?)
-            """, (job_id, task, payload_json, priority, max_attempts, timestamp, timestamp))
+                    idempotency_key, concurrency_key, created_at, updated_at
+                ) VALUES (?, ?, ?, 'QUEUED', ?, ?, ?, ?, ?, ?)
+            """, (
+                job_id, task, payload_json, priority, max_attempts,
+                idempotency_key, concurrency_key, timestamp, timestamp,
+            ))
+            if inserted.rowcount != 1:
+                existing = db.execute(
+                    "SELECT id FROM local_agent_jobs WHERE idempotency_key=?",
+                    (idempotency_key,),
+                ).fetchone()
+                if existing is None:
+                    raise RuntimeError("Falha ao resolver idempotência da tarefa.")
+                return str(existing["id"])
         return job_id
 
     def _recover_expired(self, db: sqlite3.Connection, now_text: str) -> None:
@@ -447,6 +495,13 @@ class LocalAgentRepository:
                   AND cancellation_requested = 0
                   AND attempts < max_attempts
                   AND task IN ({placeholders})
+                  AND (
+                    concurrency_key IS NULL OR NOT EXISTS (
+                        SELECT 1 FROM local_agent_jobs active
+                        WHERE active.status='LEASED'
+                          AND active.concurrency_key=local_agent_jobs.concurrency_key
+                    )
+                  )
                 ORDER BY priority ASC, created_at ASC
                 LIMIT 1
             """, checked_capabilities).fetchone()
