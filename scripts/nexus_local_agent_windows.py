@@ -17,11 +17,13 @@ if str(PROJECT_ROOT) not in sys.path:
 from modules.local_agent.config import load_executor_settings
 from modules.local_agent.private_env import SSW_RUNTIME_PREFIXES, load_private_environment
 from modules.local_agent.executor import (
+    AgentProtocolError,
     AgentClient,
     HandlerRegistry,
     LocalAgentExecutor,
     register_builtin_handlers,
 )
+from modules.local_agent.remote_auth import RemoteAuthError, WindowsRemoteAuthExecutor
 from modules.local_agent.ssw_tasks import register_ssw_handlers
 
 
@@ -56,9 +58,19 @@ def main() -> int:
     registry = HandlerRegistry()
     register_builtin_handlers(registry)
     register_ssw_handlers(registry)
-    executor = LocalAgentExecutor(AgentClient(settings), registry)
+    client = AgentClient(settings)
+    executor = LocalAgentExecutor(client, registry)
+    remote_auth_executor = (
+        WindowsRemoteAuthExecutor(client) if settings.remote_auth_enabled else None
+    )
+
+    def run_once() -> bool:
+        if remote_auth_executor is not None and remote_auth_executor.run_once():
+            return True
+        return executor.run_once()
+
     if args.once:
-        executor.run_once()
+        run_once()
         return 0
 
     stop_event = threading.Event()
@@ -69,7 +81,16 @@ def main() -> int:
     signal.signal(signal.SIGINT, stop)
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, stop)
-    executor.run_forever(poll_seconds=settings.poll_seconds, stop_event=stop_event)
+    if remote_auth_executor is None:
+        executor.run_forever(poll_seconds=settings.poll_seconds, stop_event=stop_event)
+        return 0
+    while not stop_event.is_set():
+        try:
+            worked = run_once()
+        except (AgentProtocolError, RemoteAuthError):
+            worked = False
+        if not worked:
+            stop_event.wait(settings.poll_seconds)
     return 0
 
 

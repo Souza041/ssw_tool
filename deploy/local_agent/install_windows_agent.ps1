@@ -39,6 +39,10 @@ if ($values['NEXUS_LOCAL_AGENT_SERVER_URL'] -notmatch '^https://') { throw "A UR
 if ([string]::IsNullOrWhiteSpace($values['NEXUS_LOCAL_AGENT_ID'])) { throw "Identificador do agente ausente." }
 if (($values['NEXUS_LOCAL_AGENT_TOKEN']).Length -lt 32) { throw "Token do agente ausente ou curto." }
 if ($values['NEXUS_LOCAL_AGENT_ALLOW_INSECURE_HTTP'] -ne 'false') { throw "HTTP inseguro deve permanecer desativado." }
+$remoteAuthValue = $values['NEXUS_SSW_REMOTE_AUTH_ENABLED']
+if (-not [string]::IsNullOrWhiteSpace($remoteAuthValue) -and $remoteAuthValue -notin @('true','false')) {
+    throw "NEXUS_SSW_REMOTE_AUTH_ENABLED deve ser true ou false."
+}
 $sswHandlers = $values['NEXUS_LOCAL_AGENT_SSW_HANDLERS_ENABLED'] -eq 'true'
 if ($sswHandlers) {
     $sswTasks = $values['NEXUS_LOCAL_AGENT_SSW_TASKS']

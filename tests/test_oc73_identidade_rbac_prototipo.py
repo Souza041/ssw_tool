@@ -250,14 +250,15 @@ def test_configuracao_segura_proposta_inclui_secure_e_strict():
     assert "secure" in middleware.security_flags
 
 
-def test_login_atual_propaga_str_exc_e_nao_tem_rate_limit_ou_csrf():
+def test_login_remoto_usa_erro_generico_csrf_e_limite_em_memoria():
     fonte = Path("web/routes.py").read_text(encoding="utf-8")
     inicio = fonte.index("def login_run(")
     fim = fonte.index("\n\n@router.get(\"/logout\")", inicio)
     trecho = fonte[inicio:fim]
-    assert '"error": str(exc)' in trecho
-    assert "rate_limit" not in trecho.casefold()
-    assert "csrf" not in trecho.casefold()
+    assert '"error": error' in trecho
+    assert "str(exc)" in trecho  # preservado somente no fluxo local legado
+    assert "login_csrf" in trecho
+    assert "remote_auth_per_minute" in trecho
 
 
 def test_login_substitui_sessao_e_logout_invalida_armazenamento_local():

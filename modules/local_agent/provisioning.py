@@ -46,8 +46,10 @@ def provision_values(
         raise ProvisioningError("A URL pública deve ser HTTPS e não conter credenciais.")
     if _is_true(current.get("NEXUS_LOCAL_AGENT_ENABLED")) or _is_true(
         current.get("NEXUS_LOCAL_AGENT_BOOTSTRAP_ENABLED")
-    ):
-        raise ProvisioningError("Desative as duas flags antes de provisionar ou rotacionar.")
+    ) or _is_true(current.get("NEXUS_SSW_REMOTE_AUTH_ENABLED")):
+        raise ProvisioningError(
+            "Desative Local Agent, bootstrap e autenticação remota antes de provisionar."
+        )
 
     try:
         tokens = json.loads(str(current.get("NEXUS_LOCAL_AGENT_TOKENS_JSON") or "{}"))
@@ -76,6 +78,12 @@ def provision_values(
         "NEXUS_LOCAL_AGENT_ENABLED": "false",
         "NEXUS_SSW_DELEGATION_ENABLED": "false",
         "NEXUS_SSW_DELEGATED_TASKS": "ssw.documentos_gce,ssw.metricas_op455",
+        "NEXUS_SSW_REMOTE_AUTH_ENABLED": "false",
+        "NEXUS_SSW_REMOTE_AUTH_AGENT_ID": agent_id,
+        "NEXUS_SSW_REMOTE_AUTH_TIMEOUT_SECONDS": "20",
+        "NEXUS_SSW_REMOTE_AUTH_REQUEST_TTL_SECONDS": "30",
+        "NEXUS_SSW_REMOTE_AUTH_PER_MINUTE": "5",
+        "NEXUS_SSW_REMOTE_AUTH_MAX_PENDING": "50",
         "NEXUS_LOCAL_AGENT_METRICS_HOMOLOGATION_ENABLED": "false",
         "NEXUS_LOCAL_AGENT_DB": "/var/lib/nexus/local-agent.sqlite3",
         "NEXUS_LOCAL_AGENT_TOKENS_JSON": json.dumps(tokens, separators=(",", ":")),
@@ -97,6 +105,7 @@ def provision_values(
         "NEXUS_LOCAL_AGENT_POLL_SECONDS": "5",
         "NEXUS_LOCAL_AGENT_REQUEST_TIMEOUT_SECONDS": "15",
         "NEXUS_LOCAL_AGENT_ALLOW_INSECURE_HTTP": "false",
+        "NEXUS_SSW_REMOTE_AUTH_ENABLED": "false",
         "NEXUS_LOCAL_AGENT_SSW_HANDLERS_ENABLED": "false",
         "NEXUS_LOCAL_AGENT_SSW_TASKS": "",
         "NEXUS_LOCAL_AGENT_RUNTIME_ENV_FILE": r"C:\ProgramData\Nexus\ssw-automation.env",
@@ -107,7 +116,7 @@ def provision_values(
 def merge_env(text: str, updates: dict[str, str]) -> str:
     remaining = dict(updates)
     lines: list[str] = []
-    pattern = re.compile(r"^(NEXUS_LOCAL_AGENT_[A-Z0-9_]+)=.*$")
+    pattern = re.compile(r"^(NEXUS_(?:LOCAL_AGENT|SSW)_[A-Z0-9_]+)=.*$")
     for line in text.splitlines():
         match = pattern.match(line)
         if match and match.group(1) in remaining:

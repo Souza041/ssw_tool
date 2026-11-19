@@ -27,6 +27,7 @@ from modules.local_agent.repository import (
     BootstrapReplayError,
     LocalAgentRepository,
 )
+from modules.local_agent.remote_auth import RemoteAuthConflict, broker
 from web.admin_access import is_admin
 from web.session_store import obter_client
 
@@ -63,6 +64,15 @@ class CompleteRequest(LeaseRequest):
     succeeded: bool
     result: dict[str, Any] = Field(default_factory=dict)
     error_message: str | None = Field(default=None, max_length=2048)
+
+
+class RemoteAuthCompleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(min_length=32, max_length=128)
+    lease_token: str = Field(min_length=32, max_length=128)
+    accepted: bool
+    identity_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    proof: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class EnqueueRequest(BaseModel):
@@ -291,6 +301,68 @@ def complete(
         error_message=body.error_message,
     ))
     return {"status": status}
+
+
+def _remote_auth_agent(
+    x_nexus_agent_id: str,
+    authorization: str,
+) -> tuple[ServerSettings, str, str]:
+    settings = _settings()
+    if not settings.remote_auth_enabled:
+        raise HTTPException(status_code=503, detail="Autenticação remota desativada.")
+    agent_id = _agent(settings, x_nexus_agent_id, authorization)
+    if agent_id != settings.remote_auth_agent_id:
+        raise HTTPException(status_code=403, detail="Agente não autorizado para autenticação.")
+    return settings, agent_id, settings.tokens[agent_id]
+
+
+def _remote_auth_claim_impl(
+    x_nexus_agent_id: str = Header("", alias="X-Nexus-Agent-Id"),
+    authorization: str = Header("", alias="Authorization"),
+):
+    _, agent_id, _ = _remote_auth_agent(x_nexus_agent_id, authorization)
+    return {"request": broker.claim(agent_id=agent_id)}
+
+
+@router.post("/api/local-agent/v1/remote-auth/claim")
+async def remote_auth_claim(
+    x_nexus_agent_id: str = Header("", alias="X-Nexus-Agent-Id"),
+    authorization: str = Header("", alias="Authorization"),
+):
+    return _remote_auth_claim_impl(x_nexus_agent_id, authorization)
+
+
+def _remote_auth_complete_impl(
+    body: RemoteAuthCompleteRequest,
+    x_nexus_agent_id: str = Header("", alias="X-Nexus-Agent-Id"),
+    authorization: str = Header("", alias="Authorization"),
+):
+    _, agent_id, secret = _remote_auth_agent(x_nexus_agent_id, authorization)
+    try:
+        broker.complete(
+            request_id=body.request_id,
+            lease_token=body.lease_token,
+            agent_id=agent_id,
+            accepted=body.accepted,
+            identity=body.identity_fingerprint,
+            proof=body.proof,
+            secret=secret,
+        )
+    except RemoteAuthConflict:
+        raise HTTPException(
+            status_code=409,
+            detail="Solicitação de autenticação inexistente, expirada ou consumida.",
+        ) from None
+    return {"accepted": True}
+
+
+@router.post("/api/local-agent/v1/remote-auth/complete")
+async def remote_auth_complete(
+    body: RemoteAuthCompleteRequest,
+    x_nexus_agent_id: str = Header("", alias="X-Nexus-Agent-Id"),
+    authorization: str = Header("", alias="Authorization"),
+):
+    return _remote_auth_complete_impl(body, x_nexus_agent_id, authorization)
 
 
 @router.post("/api/local-agent/v1/bootstrap/system-ping", status_code=202)

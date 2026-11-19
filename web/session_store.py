@@ -1,5 +1,7 @@
 import uuid
 import time
+from dataclasses import dataclass, field
+from typing import Any
 
 from fastapi import Request
 from fastapi.responses import RedirectResponse
@@ -7,19 +9,42 @@ from fastapi.responses import RedirectResponse
 from ssw.client import SSWClient
 
 
-CLIENTS: dict[str, SSWClient] = {}
+@dataclass(repr=False)
+class RemoteAuthenticatedClient:
+    """Identidade validada no Windows, sem senha ou cookie SSW na VPS."""
+
+    dominio: str
+    cpf: str = field(repr=False)
+    usuario: str
+    unidade: str
+    senha: str = field(default="", init=False, repr=False)
+    remote_authenticated: bool = field(default=True, init=False)
+
+    def _blocked(self, *_args, **_kwargs):
+        raise RuntimeError(
+            "Esta sessão foi autenticada remotamente; operação SSW direta na VPS indisponível."
+        )
+
+    login = _blocked
+    open_menu = _blocked
+    open_option = _blocked
+    get = _blocked
+    post = _blocked
+
+
+CLIENTS: dict[str, Any] = {}
 SESSOES_CRIADAS_EM: dict[str, float] = {}
 SESSION_MAX_AGE_SECONDS = 60 * 60 * 8
 
 
-def criar_sessao(client: SSWClient) -> str:
+def criar_sessao(client: Any) -> str:
     session_id = str(uuid.uuid4())
     CLIENTS[session_id] = client
     SESSOES_CRIADAS_EM[session_id] = time.monotonic()
     return session_id
 
 
-def obter_client(request: Request) -> SSWClient | None:
+def obter_client(request: Request) -> Any | None:
     session_id = request.session.get("ssw_session_id")
 
     if not session_id:
@@ -49,7 +74,7 @@ def remover_sessao(request: Request) -> None:
     request.session.clear()
 
 
-def exigir_client(request: Request) -> SSWClient:
+def exigir_client(request: Request) -> Any:
     client = obter_client(request)
 
     if not client:

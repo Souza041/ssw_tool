@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 import sys
 
@@ -26,6 +27,11 @@ def main() -> int:
     if not 1 <= args.port <= 65535 or not 1 <= args.workers <= 8:
         parser.error("Porta ou quantidade de workers inválida.")
     load_private_environment(args.env_file, project_root=PROJECT_ROOT)
+    remote_auth_enabled = os.getenv(
+        "NEXUS_SSW_REMOTE_AUTH_ENABLED", "false"
+    ).strip().casefold() in {"1", "true", "yes", "sim", "on"}
+    if remote_auth_enabled and args.workers != 1:
+        parser.error("Autenticação remota efêmera exige exatamente um worker.")
     import uvicorn
 
     uvicorn.run(

@@ -75,6 +75,25 @@ def test_manual_endpoint_starts_background_job_without_running_pipeline(
     assert lease.released is False
 
 
+def test_manual_endpoint_delegates_gce_without_notifications(web_request, monkeypatch):
+    calls = []
+    monkeypatch.setenv("NEXUS_SSW_DELEGATION_ENABLED", "true")
+    monkeypatch.setenv("NEXUS_SSW_DELEGATED_TASKS", "ssw.documentos_gce")
+    monkeypatch.setattr(
+        "modules.local_agent.delegation.enqueue_ssw_task",
+        lambda task, payload, **kwargs: calls.append((task, payload, kwargs)) or "remote-job",
+    )
+    monkeypatch.setattr(
+        documentos_web, "acquire_execution_lock",
+        lambda: pytest.fail("execução local não deve reservar trava"),
+    )
+    response = documentos_web.documentos_executar(web_request, "csrf-teste")
+    assert response["job_id"] == "remote-job"
+    assert calls[0][0] == "ssw.documentos_gce"
+    assert calls[0][1]["send_notifications"] is False
+    assert calls[0][1]["preview_notifications"] is False
+
+
 def test_manual_endpoint_reports_scheduled_or_manual_conflict(web_request, monkeypatch):
     def conflict():
         raise RuntimeError("ocupada")
