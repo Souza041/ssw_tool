@@ -36,7 +36,7 @@ def test_private_environment_must_be_outside_repository(tmp_path, monkeypatch):
     unrelated = tmp_path / "unrelated.env"
     unrelated.write_text("OCORRENCIA_73_ENABLED=true\n", encoding="utf-8")
     unrelated.chmod(0o600)
-    with pytest.raises(PrivateEnvironmentError, match="somente variáveis"):
+    with pytest.raises(PrivateEnvironmentError, match="fora da allowlist"):
         load_private_environment(unrelated, project_root=ROOT)
 
 
@@ -49,6 +49,7 @@ def test_deployment_templates_keep_both_gates_disabled():
         assert "NEXUS_LOCAL_AGENT_ENABLED=false" in content
         assert "NEXUS_LOCAL_AGENT_BOOTSTRAP_ENABLED=false" in content
         assert "NEXUS_LOCAL_AGENT_DB=/var/lib/nexus/local-agent.sqlite3" in content
+        assert "NEXUS_SSW_DELEGATION_ENABLED=false" in content
 
 
 def test_installers_do_not_restart_or_start_services_implicitly():

@@ -3,6 +3,7 @@ from modules.metricas.database import get_connection
 import json
 
 from pathlib import Path
+import os
 
 def execute(sql, params=None):
     conn = get_connection()
@@ -100,13 +101,23 @@ def obter_ultima_execucao_sucesso():
     """)
 
 def salvar_snapshot(run_id, payload):
+    serialized = json.dumps(payload, ensure_ascii=False, default=str)
+    storage = os.getenv("METRICAS_SNAPSHOT_STORAGE", "filesystem").strip().lower()
+    if storage == "database":
+        execute("""
+            INSERT INTO dashboard_snapshots (run_id, payload_json, payload_path)
+            VALUES (%s, %s, NULL)
+        """, (run_id, serialized))
+        return
+    if storage != "filesystem":
+        raise ValueError("METRICAS_SNAPSHOT_STORAGE deve ser database ou filesystem.")
     output_dir = Path("outputs/metricas_snapshots")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     file_path = output_dir / f"snapshot_{run_id}.json"
 
     file_path.write_text(
-        json.dumps(payload, ensure_ascii=False, default=str),
+        serialized,
         encoding="utf-8",
     )
 

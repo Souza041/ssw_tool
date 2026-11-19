@@ -30,6 +30,20 @@ def metricas_dashboard():
 @router.post("/api/metricas/refresh")
 def metricas_refresh(request: Request):
     try:
+        from modules.local_agent.delegation import delegation_enabled, enqueue_ssw_task
+        if delegation_enabled():
+            job_id = enqueue_ssw_task(
+                "ssw.metricas_op455",
+                {"origin": "manual", "days": 30},
+                idempotency_key=None,
+                concurrency_key="ssw.metricas_op455",
+                priority=70,
+                coalesce_active=True,
+            )
+            return JSONResponse(
+                status_code=202,
+                content={"success": True, "delegated": True, "job_id": job_id},
+            )
         service = MetricasService()
 
         result = service.atualizar_op455(

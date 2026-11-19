@@ -39,6 +39,16 @@ if ($values['NEXUS_LOCAL_AGENT_SERVER_URL'] -notmatch '^https://') { throw "A UR
 if ([string]::IsNullOrWhiteSpace($values['NEXUS_LOCAL_AGENT_ID'])) { throw "Identificador do agente ausente." }
 if (($values['NEXUS_LOCAL_AGENT_TOKEN']).Length -lt 32) { throw "Token do agente ausente ou curto." }
 if ($values['NEXUS_LOCAL_AGENT_ALLOW_INSECURE_HTTP'] -ne 'false') { throw "HTTP inseguro deve permanecer desativado." }
+$sswHandlers = $values['NEXUS_LOCAL_AGENT_SSW_HANDLERS_ENABLED'] -eq 'true'
+if ($sswHandlers) {
+    $runtimeEnvFile = $values['NEXUS_LOCAL_AGENT_RUNTIME_ENV_FILE']
+    if ([string]::IsNullOrWhiteSpace($runtimeEnvFile) -or -not (Test-Path -LiteralPath $runtimeEnvFile -PathType Leaf)) {
+        throw "Handlers SSW exigem arquivo privado de runtime existente."
+    }
+    if ($Apply) {
+        & icacls.exe $runtimeEnvFile /inheritance:r /grant:r "${administrators}:F" "${systemAccount}:F" "${localService}:R" | Out-Null
+    }
+}
 
 if ($RegisterTask -and -not $Apply) { throw "-RegisterTask exige -Apply." }
 if ($Apply -and $RegisterTask -and $PSCmdlet.ShouldProcess($TaskName, "Registrar tarefa automática")) {

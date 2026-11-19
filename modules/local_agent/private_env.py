@@ -13,7 +13,18 @@ class PrivateEnvironmentError(RuntimeError):
     pass
 
 
-def load_private_environment(path: Path, *, project_root: Path | None = None) -> Path:
+SSW_RUNTIME_PREFIXES = (
+    "SSW_", "DOCUMENTOS_", "GCE_", "AUTOMATION_DB_", "HEALTH_",
+    "METRICAS_", "OCORRENCIA_73_", "OC73_", "SMTP_",
+)
+
+
+def load_private_environment(
+    path: Path,
+    *,
+    project_root: Path | None = None,
+    allowed_prefixes: tuple[str, ...] = ("NEXUS_LOCAL_AGENT_", "NEXUS_SSW_"),
+) -> Path:
     resolved = Path(path).expanduser().resolve()
     if not resolved.is_absolute() or not resolved.is_file():
         raise PrivateEnvironmentError("Arquivo privado de ambiente não encontrado.")
@@ -40,9 +51,9 @@ def load_private_environment(path: Path, *, project_root: Path | None = None) ->
     values = dotenv_values(resolved)
     if not values:
         raise PrivateEnvironmentError("Arquivo privado de ambiente vazio ou inválido.")
-    if any(not str(key).startswith("NEXUS_LOCAL_AGENT_") for key in values):
+    if any(not str(key).startswith(allowed_prefixes) for key in values):
         raise PrivateEnvironmentError(
-            "O arquivo privado deve conter somente variáveis do Local Agent."
+            "O arquivo privado contém variáveis fora da allowlist permitida."
         )
     if not load_dotenv(resolved, override=True):
         raise PrivateEnvironmentError("Falha ao carregar o arquivo privado de ambiente.")

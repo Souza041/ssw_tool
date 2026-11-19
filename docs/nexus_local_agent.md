@@ -7,7 +7,14 @@ O Local Agent possui dois processos independentes:
 - **VPS Ubuntu:** FastAPI sob Supervisor, fila e auditoria em SQLite.
 - **Windows corporativo:** executor automático sob Agendador de Tarefas.
 
-O único handler compilado e autorizado nesta fase é `system.ping`. Não existe execução de shell, login alternativo, acesso SSW pelo agente ou handler para GCE, OC73, Health Center, e-mail ou banco operacional.
+O único handler habilitado e autorizado por padrão é `system.ping`. Não existe
+execução de shell ou login alternativo; handlers SSW adicionais exigem dois gates e
+allowlists explícitas.
+
+> O conjunto adicional de handlers SSW permanece opt-in e é documentado em
+> [nexus_ssw_windows_migration.md](nexus_ssw_windows_migration.md). Os exemplos
+> continuam oferecendo somente `system.ping`; nenhuma tarefa produtiva é habilitada
+> automaticamente.
 
 As duas chaves de ativação permanecem desligadas nos exemplos:
 

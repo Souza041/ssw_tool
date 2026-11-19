@@ -108,6 +108,37 @@ def _executar_ocorrencia_73_agendada_serializada(
         )
         return None
 
+    from modules.local_agent.delegation import (
+        delegation_enabled,
+        enqueue_ssw_task,
+        scheduled_key,
+    )
+    if delegation_enabled():
+        job_id = enqueue_ssw_task(
+            "ssw.ocorrencia_73",
+            {"flow": fluxo, "reference_date": data_referencia.isoformat()},
+            idempotency_key=scheduled_key(
+                "ssw.ocorrencia_73", fluxo, data_referencia.isoformat()
+            ),
+            concurrency_key="ssw.ocorrencia_73",
+            priority=50,
+        )
+        logger.info(
+            "[OCORRENCIA 73][%s] Delegada ao Windows; job_id=%s.", fluxo, job_id
+        )
+        return {"success": True, "delegated": True, "job_id": job_id, "flow": fluxo}
+
+    return executar_ocorrencia_73_local(
+        fluxo=fluxo, reference_date=data_referencia
+    )
+
+
+def executar_ocorrencia_73_local(
+    *, fluxo: str, reference_date: date, raise_on_error: bool = False
+) -> dict | None:
+    """Executa a regra existente no host atual, sem possibilidade de redelegação."""
+    data_referencia = reference_date
+
     logger.info(
         "[OCORRENCIA 73][%s] Iniciando execução agendada para %s.",
         fluxo,
@@ -163,10 +194,12 @@ def _executar_ocorrencia_73_agendada_serializada(
             "[OCORRENCIA 73][%s] Falha na execução agendada.",
             fluxo,
         )
+        if raise_on_error:
+            raise
         return None
 
 
-def executar_rechecagens_big():
+def executar_rechecagens_big_local(*, raise_on_error: bool = False):
     # A data é da pendência persistida; sexta 00h20 pode continuar a quinta.
     if not rechecagem_big_habilitada() or DRY_RUN:
         return []
@@ -181,7 +214,32 @@ def executar_rechecagens_big():
         )
     except Exception:
         logger.exception("[OC73] Falha na rodada de rechecagem BIG.")
+        if raise_on_error:
+            raise
         return []
+
+
+def executar_rechecagens_big():
+    from modules.local_agent.delegation import (
+        current_minute_key,
+        delegation_enabled,
+        enqueue_ssw_task,
+    )
+    if delegation_enabled():
+        now = datetime.now(TIMEZONE).replace(second=0, microsecond=0)
+        job_id = enqueue_ssw_task(
+            "ssw.ocorrencia_73.recheck_big",
+            {"scheduled_at": now.isoformat()},
+            idempotency_key=current_minute_key(
+                "ssw.ocorrencia_73.recheck_big", now
+            ),
+            concurrency_key="ssw.ocorrencia_73",
+            priority=60,
+            coalesce_active=True,
+        )
+        logger.info("[OC73][BIG] Rechecagem delegada; job_id=%s.", job_id)
+        return {"delegated": True, "job_id": job_id}
+    return executar_rechecagens_big_local()
 
 
 def iniciar_scheduler_ocorrencia_73() -> bool:
