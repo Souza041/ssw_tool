@@ -224,7 +224,7 @@ def _metrics(payload: dict[str, Any], context: ExecutionContext) -> dict[str, An
 def selected_ssw_tasks() -> frozenset[str]:
     raw = os.getenv("NEXUS_LOCAL_AGENT_SSW_TASKS", "")
     selected = frozenset(item.strip() for item in raw.split(",") if item.strip())
-    known = {TASK_DOCUMENTOS, TASK_METRICAS, TASK_OC73, TASK_OC73_RECHECK}
+    known = {TASK_DOCUMENTOS, TASK_METRICAS}
     unknown = selected - known
     if unknown:
         raise RuntimeError("Allowlist de handlers SSW contém tarefa desconhecida.")
@@ -240,8 +240,6 @@ def register_ssw_handlers(registry: HandlerRegistry) -> None:
     handlers = {
         TASK_DOCUMENTOS: _documents,
         TASK_METRICAS: _metrics,
-        TASK_OC73: _oc73,
-        TASK_OC73_RECHECK: _oc73_recheck,
     }
     for task in sorted(selected_ssw_tasks()):
         registry.register(task, handlers[task])

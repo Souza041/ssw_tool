@@ -31,7 +31,7 @@ def metricas_dashboard():
 def metricas_refresh(request: Request):
     try:
         from modules.local_agent.delegation import delegation_enabled, enqueue_ssw_task
-        if delegation_enabled():
+        if delegation_enabled("ssw.metricas_op455"):
             job_id = enqueue_ssw_task(
                 "ssw.metricas_op455",
                 {"origin": "manual", "days": 30},

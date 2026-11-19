@@ -75,6 +75,7 @@ def provision_values(
     server = {
         "NEXUS_LOCAL_AGENT_ENABLED": "false",
         "NEXUS_SSW_DELEGATION_ENABLED": "false",
+        "NEXUS_SSW_DELEGATED_TASKS": "ssw.documentos_gce,ssw.metricas_op455",
         "NEXUS_LOCAL_AGENT_METRICS_HOMOLOGATION_ENABLED": "false",
         "NEXUS_LOCAL_AGENT_DB": "/var/lib/nexus/local-agent.sqlite3",
         "NEXUS_LOCAL_AGENT_TOKENS_JSON": json.dumps(tokens, separators=(",", ":")),

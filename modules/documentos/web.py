@@ -116,11 +116,15 @@ def documentos_executar(
         raise HTTPException(status_code=403, detail="Token CSRF inválido. Recarregue a página.")
 
     from modules.local_agent.delegation import delegation_enabled, enqueue_ssw_task
-    if delegation_enabled():
+    if delegation_enabled("ssw.documentos_gce"):
         try:
             job_id = enqueue_ssw_task(
                 "ssw.documentos_gce",
-                {"origin": "MANUAL"},
+                {
+                    "origin": "MANUAL",
+                    "send_notifications": False,
+                    "preview_notifications": False,
+                },
                 idempotency_key=None,
                 concurrency_key="ssw.documentos_gce",
                 priority=50,
@@ -172,7 +176,8 @@ def documentos_execution_status(request: Request, job_id: str = ""):
     selected_id = job_id or _latest_manual_job_id or ""
     from modules.local_agent.delegation import delegation_enabled
     if selected_id and (
-        selected_id in _manual_remote_job_ids or delegation_enabled()
+        selected_id in _manual_remote_job_ids
+        or delegation_enabled("ssw.documentos_gce")
     ):
         from modules.local_agent.config import load_server_settings
         from modules.local_agent.repository import LocalAgentRepository

@@ -60,7 +60,7 @@ def main() -> None:
     if (args.data_inicial is None) != (args.data_final is None):
         parser.error("Use --data-inicial e --data-final juntas.")
 
-    if delegation_enabled():
+    if delegation_enabled("ssw.documentos_gce"):
         reference = args.data_referencia or datetime.now(
             ZoneInfo("America/Sao_Paulo")
         ).date()

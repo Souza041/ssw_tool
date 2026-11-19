@@ -14,15 +14,27 @@ from modules.local_agent.ssw_tasks import validate_ssw_payload
 SSW_TASKS = frozenset({
     "ssw.documentos_gce",
     "ssw.metricas_op455",
-    "ssw.ocorrencia_73",
-    "ssw.ocorrencia_73.recheck_big",
 })
 
 
-def delegation_enabled() -> bool:
-    return os.getenv("NEXUS_SSW_DELEGATION_ENABLED", "false").strip().casefold() in {
+def delegated_tasks() -> frozenset[str]:
+    raw = os.getenv("NEXUS_SSW_DELEGATED_TASKS", "")
+    tasks = frozenset(item.strip() for item in raw.split(",") if item.strip())
+    unsupported = tasks - SSW_TASKS
+    if unsupported:
+        raise RuntimeError("Allowlist de delegação contém tarefa não autorizada nesta fase.")
+    return tasks
+
+
+def delegation_enabled(task: str | None = None) -> bool:
+    global_enabled = os.getenv(
+        "NEXUS_SSW_DELEGATION_ENABLED", "false"
+    ).strip().casefold() in {
         "1", "true", "yes", "sim", "on",
     }
+    if not global_enabled or task is None:
+        return global_enabled
+    return task in delegated_tasks()
 
 
 def enqueue_ssw_task(
@@ -36,6 +48,8 @@ def enqueue_ssw_task(
 ) -> str:
     if task not in SSW_TASKS:
         raise ValueError("Tarefa SSW não reconhecida para delegação.")
+    if not delegation_enabled(task):
+        raise RuntimeError("Delegação da tarefa SSW está desativada ou não autorizada.")
     clean_payload = validate_ssw_payload(task, payload)
     settings = load_server_settings()
     if not settings.enabled:
