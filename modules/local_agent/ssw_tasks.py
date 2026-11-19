@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 import os
 from typing import Any
+import re
 
 from modules.local_agent.executor import ExecutionContext, HandlerRegistry
 
@@ -51,14 +52,30 @@ def validate_ssw_payload(task: str, payload: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("Instante da rechecagem inválido.")
         return {"scheduled_at": scheduled_at}
     if task == TASK_METRICAS:
-        _exact(payload, {"days", "origin"})
+        _exact(payload, {"days", "origin", "mode", "correlation_id"})
         days = payload.get("days", 30)
         if type(days) is not int or not 1 <= days <= 365:
             raise ValueError("Período de métricas inválido.")
         origin = str(payload.get("origin") or "manual").strip().lower()
-        if origin not in {"manual", "scheduler"}:
+        if origin not in {"manual", "scheduler", "homologation"}:
             raise ValueError("Origem de métricas inválida.")
-        return {"days": days, "origin": origin}
+        mode = str(payload.get("mode") or "production").strip().lower()
+        if mode not in {"production", "validate_only"}:
+            raise ValueError("Modo de métricas inválido.")
+        correlation_id = str(payload.get("correlation_id") or "").strip()
+        if mode == "validate_only":
+            if origin != "homologation" or not re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9._-]{7,63}", correlation_id
+            ):
+                raise ValueError("Correlação de homologação inválida.")
+            if days > 30:
+                raise ValueError("Homologação OP455 limitada a 30 dias.")
+        elif correlation_id:
+            raise ValueError("Correlação só é aceita na homologação.")
+        return {
+            "days": days, "origin": origin, "mode": mode,
+            "correlation_id": correlation_id or None,
+        }
     if task == TASK_DOCUMENTOS:
         _exact(payload, {
             "origin", "reference_date", "period_start", "period_end",
@@ -168,9 +185,21 @@ def _oc73_recheck(payload: dict[str, Any], context: ExecutionContext) -> dict[st
 
 def _metrics(payload: dict[str, Any], context: ExecutionContext) -> dict[str, Any]:
     clean = validate_ssw_payload(TASK_METRICAS, payload)
+    from modules.metricas.service import MetricasService
+    if clean["mode"] == "validate_only":
+        context.set_progress(0, 3)
+        context.log(
+            f"Homologação OP455 iniciada; correlação={clean['correlation_id']}; sem escrita MySQL."
+        )
+        context.set_progress(1, 3)
+        result = MetricasService().homologar_op455(dias=clean["days"])
+        context.raise_if_cancelled()
+        context.set_progress(3, 3)
+        context.log("Homologação OP455 concluída; arquivo temporário removido.")
+        return {**result, "correlation_id": clean["correlation_id"]}
+
     if os.getenv("METRICAS_SNAPSHOT_STORAGE", "").strip().lower() != "database":
         raise RuntimeError("Métricas remotas exigem snapshot central no banco.")
-    from modules.metricas.service import MetricasService
     from modules.metricas.health import BOT, classify_result
     from modules.health_center.monitor import run_monitored
 
@@ -192,41 +221,82 @@ def _metrics(payload: dict[str, Any], context: ExecutionContext) -> dict[str, An
     return _summary(result, ("success", "run_id", "file", "total"))
 
 
+def selected_ssw_tasks() -> frozenset[str]:
+    raw = os.getenv("NEXUS_LOCAL_AGENT_SSW_TASKS", "")
+    selected = frozenset(item.strip() for item in raw.split(",") if item.strip())
+    known = {TASK_DOCUMENTOS, TASK_METRICAS, TASK_OC73, TASK_OC73_RECHECK}
+    unknown = selected - known
+    if unknown:
+        raise RuntimeError("Allowlist de handlers SSW contém tarefa desconhecida.")
+    return selected
+
+
 def register_ssw_handlers(registry: HandlerRegistry) -> None:
     enabled = os.getenv(
         "NEXUS_LOCAL_AGENT_SSW_HANDLERS_ENABLED", "false"
     ).strip().casefold() in {"1", "true", "yes", "sim", "on"}
     if not enabled:
         return
-    registry.register(TASK_DOCUMENTOS, _documents)
-    registry.register(TASK_METRICAS, _metrics)
-    registry.register(TASK_OC73, _oc73)
-    registry.register(TASK_OC73_RECHECK, _oc73_recheck)
+    handlers = {
+        TASK_DOCUMENTOS: _documents,
+        TASK_METRICAS: _metrics,
+        TASK_OC73: _oc73,
+        TASK_OC73_RECHECK: _oc73_recheck,
+    }
+    for task in sorted(selected_ssw_tasks()):
+        registry.register(task, handlers[task])
 
 
-def validate_ssw_runtime_environment() -> None:
+def validate_ssw_runtime_environment(tasks: frozenset[str] | None = None) -> None:
     """Valida somente configuração local; não abre banco, portal ou SSW."""
-    required = (
+    selected = tasks if tasks is not None else selected_ssw_tasks()
+    required: set[str] = set()
+    if TASK_DOCUMENTOS in selected:
+        required.update((
         "DOCUMENTOS_SSW_DOMINIO", "DOCUMENTOS_SSW_CPF",
         "DOCUMENTOS_SSW_USUARIO", "DOCUMENTOS_SSW_SENHA",
         "GCE_LOGIN", "GCE_PASSWORD",
         "DOCUMENTOS_DB_HOST", "DOCUMENTOS_DB_USER",
         "DOCUMENTOS_DB_PASSWORD", "DOCUMENTOS_DB_NAME",
+        ))
+    if TASK_METRICAS in selected:
+        required.update((
         "METRICAS_SSW_DOMINIO", "METRICAS_SSW_CPF",
         "METRICAS_SSW_USUARIO", "METRICAS_SSW_SENHA",
         "METRICAS_DB_HOST", "METRICAS_DB_USER",
         "METRICAS_DB_PASSWORD", "METRICAS_DB_NAME",
+        ))
+    if selected & {TASK_OC73, TASK_OC73_RECHECK}:
+        required.update((
         "OCORRENCIA_73_SSW_DOMINIO", "OCORRENCIA_73_SSW_CPF",
         "OCORRENCIA_73_SSW_USUARIO", "OCORRENCIA_73_SSW_SENHA",
         "AUTOMATION_DB_HOST", "AUTOMATION_DB_USER",
         "AUTOMATION_DB_PASSWORD", "AUTOMATION_DB_NAME",
-    )
+        ))
+    if os.getenv("HEALTH_CENTER_ENABLED", "false").strip().lower() in {
+        "1", "true", "yes", "sim", "on",
+    }:
+        required.update((
+            "AUTOMATION_DB_HOST", "AUTOMATION_DB_USER",
+            "AUTOMATION_DB_PASSWORD", "AUTOMATION_DB_NAME",
+        ))
     missing = [name for name in required if not os.getenv(name, "").strip()]
     if missing:
         raise RuntimeError("Configuração SSW Windows incompleta: " + ", ".join(missing))
-    if os.getenv("METRICAS_SNAPSHOT_STORAGE", "").strip().lower() != "database":
+    if TASK_METRICAS in selected and os.getenv(
+        "METRICAS_SNAPSHOT_STORAGE", ""
+    ).strip().lower() != "database":
         raise RuntimeError("METRICAS_SNAPSHOT_STORAGE deve ser database no Windows.")
-    for port_name in ("AUTOMATION_DB_PORT", "DOCUMENTOS_DB_PORT", "METRICAS_DB_PORT"):
+    port_names = set()
+    if TASK_DOCUMENTOS in selected:
+        port_names.add("DOCUMENTOS_DB_PORT")
+    if TASK_METRICAS in selected:
+        port_names.add("METRICAS_DB_PORT")
+    if selected & {TASK_OC73, TASK_OC73_RECHECK} or os.getenv(
+        "HEALTH_CENTER_ENABLED", "false"
+    ).strip().lower() in {"1", "true", "yes", "sim", "on"}:
+        port_names.add("AUTOMATION_DB_PORT")
+    for port_name in port_names:
         try:
             port = int(os.getenv(port_name, "3306"))
         except ValueError:

@@ -1,4 +1,5 @@
 from datetime import date, datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -34,23 +35,14 @@ def test_operational_logs_redact_environment_secrets(monkeypatch):
 
 
 def test_runtime_preflight_requires_central_snapshot_and_credentials(monkeypatch):
+    monkeypatch.setenv("NEXUS_LOCAL_AGENT_SSW_TASKS", TASK_METRICAS)
     names = (
-        "DOCUMENTOS_SSW_DOMINIO", "DOCUMENTOS_SSW_CPF", "DOCUMENTOS_SSW_USUARIO",
-        "DOCUMENTOS_SSW_SENHA", "GCE_LOGIN", "GCE_PASSWORD",
-        "DOCUMENTOS_DB_HOST", "DOCUMENTOS_DB_USER", "DOCUMENTOS_DB_PASSWORD",
-        "DOCUMENTOS_DB_NAME",
         "METRICAS_SSW_DOMINIO", "METRICAS_SSW_CPF", "METRICAS_SSW_USUARIO",
         "METRICAS_SSW_SENHA", "METRICAS_DB_HOST", "METRICAS_DB_USER",
         "METRICAS_DB_PASSWORD", "METRICAS_DB_NAME",
-        "OCORRENCIA_73_SSW_DOMINIO", "OCORRENCIA_73_SSW_CPF",
-        "OCORRENCIA_73_SSW_USUARIO", "OCORRENCIA_73_SSW_SENHA",
-        "AUTOMATION_DB_HOST", "AUTOMATION_DB_USER",
-        "AUTOMATION_DB_PASSWORD", "AUTOMATION_DB_NAME",
     )
     for name in names:
         monkeypatch.setenv(name, "synthetic-test-value")
-    monkeypatch.setenv("AUTOMATION_DB_PORT", "3306")
-    monkeypatch.setenv("DOCUMENTOS_DB_PORT", "3306")
     monkeypatch.setenv("METRICAS_DB_PORT", "3306")
     monkeypatch.setenv("METRICAS_SNAPSHOT_STORAGE", "database")
     validate_ssw_runtime_environment()
@@ -61,6 +53,10 @@ def test_runtime_preflight_requires_central_snapshot_and_credentials(monkeypatch
 
 def test_ssw_handler_allowlist_is_fixed_and_explicit(monkeypatch):
     monkeypatch.setenv("NEXUS_LOCAL_AGENT_SSW_HANDLERS_ENABLED", "true")
+    monkeypatch.setenv(
+        "NEXUS_LOCAL_AGENT_SSW_TASKS",
+        ",".join((TASK_DOCUMENTOS, TASK_METRICAS, TASK_OC73, "ssw.ocorrencia_73.recheck_big")),
+    )
     registry = HandlerRegistry()
     register_ssw_handlers(registry)
     assert registry.capabilities() == [
@@ -69,6 +65,14 @@ def test_ssw_handler_allowlist_is_fixed_and_explicit(monkeypatch):
         "ssw.ocorrencia_73",
         "ssw.ocorrencia_73.recheck_big",
     ]
+
+
+def test_metrics_can_be_the_only_registered_ssw_handler(monkeypatch):
+    monkeypatch.setenv("NEXUS_LOCAL_AGENT_SSW_HANDLERS_ENABLED", "true")
+    monkeypatch.setenv("NEXUS_LOCAL_AGENT_SSW_TASKS", TASK_METRICAS)
+    registry = HandlerRegistry()
+    register_ssw_handlers(registry)
+    assert registry.capabilities() == [TASK_METRICAS]
 
 
 def test_vps_blocks_only_direct_interactive_posts_when_delegation_is_enabled(monkeypatch):
@@ -88,6 +92,8 @@ def test_vps_blocks_only_direct_interactive_posts_when_delegation_is_enabled(mon
     [
         (TASK_OC73, {"flow": "CWB", "reference_date": "2026-11-19", "extra": 1}),
         (TASK_METRICAS, {"days": 0, "origin": "manual"}),
+        (TASK_METRICAS, {"days": 31, "origin": "homologation", "mode": "validate_only", "correlation_id": "HML-20261119"}),
+        (TASK_METRICAS, {"days": 1, "origin": "homologation", "mode": "validate_only", "correlation_id": "curto"}),
         (TASK_DOCUMENTOS, {"origin": "SCHEDULED", "period_start": "2026-11-20", "period_end": "2026-11-19"}),
         (TASK_DOCUMENTOS, {"origin": "SCHEDULED", "send_notifications": True, "preview_notifications": True}),
     ],
@@ -179,6 +185,7 @@ def test_expired_operational_lease_is_not_retried(tmp_path):
 
 def test_metrics_handler_reuses_service_without_real_ssw(monkeypatch):
     monkeypatch.setenv("NEXUS_LOCAL_AGENT_SSW_HANDLERS_ENABLED", "true")
+    monkeypatch.setenv("NEXUS_LOCAL_AGENT_SSW_TASKS", TASK_METRICAS)
     monkeypatch.setenv("HEALTH_CENTER_ENABLED", "false")
     monkeypatch.setenv("METRICAS_SNAPSHOT_STORAGE", "database")
     calls = []
@@ -201,6 +208,74 @@ def test_metrics_handler_reuses_service_without_real_ssw(monkeypatch):
     assert context.progress_snapshot().current == 1
 
 
+def test_metrics_homologation_uses_validate_only_without_database(monkeypatch, tmp_path):
+    from modules.metricas.service import MetricasService
+
+    monkeypatch.setenv("NEXUS_LOCAL_AGENT_SSW_HANDLERS_ENABLED", "true")
+    monkeypatch.setenv("NEXUS_LOCAL_AGENT_SSW_TASKS", TASK_METRICAS)
+    database_calls = []
+    monkeypatch.setattr("modules.metricas.repository.criar_execucao", lambda *a, **k: database_calls.append("create"))
+
+    def fake_collect(self, *, dias, output_dir):
+        path = output_dir / "op455-test.sswweb"
+        path.write_bytes(b"fixture-op455")
+        return path, {"meta": {"total": 3}, "DATA": []}
+
+    monkeypatch.setattr(MetricasService, "_coletar_op455", fake_collect)
+    registry = HandlerRegistry()
+    register_ssw_handlers(registry)
+    result = registry.get(TASK_METRICAS)({
+        "days": 1,
+        "origin": "homologation",
+        "mode": "validate_only",
+        "correlation_id": "HML-20261119-01",
+    }, ExecutionContext(lambda *_: None))
+    assert result["mode"] == "validate_only"
+    assert result["total"] == 3
+    assert result["database_writes"] == 0
+    assert len(result["sha256"]) == 64
+    assert database_calls == []
+
+
+def test_metrics_production_refactor_preserves_persistence_contract(monkeypatch, tmp_path):
+    from modules.metricas.service import MetricasService
+
+    calls = []
+    monkeypatch.setattr("modules.metricas.repository.criar_execucao", lambda **kwargs: calls.append(("start", kwargs)) or 41)
+    monkeypatch.setattr("modules.metricas.repository.salvar_snapshot", lambda run_id, payload: calls.append(("snapshot", run_id, payload)))
+    monkeypatch.setattr("modules.metricas.repository.finalizar_execucao_sucesso", lambda **kwargs: calls.append(("success", kwargs)))
+
+    def fake_collect(self, *, dias, output_dir):
+        path = tmp_path / "op455.sswweb"
+        path.write_bytes(b"fixture")
+        return path, {"meta": {"total": 2}, "DATA": []}
+
+    monkeypatch.setattr(MetricasService, "_coletar_op455", fake_collect)
+    service = MetricasService()
+    service.output_dir = tmp_path
+    result = service.atualizar_op455(triggered_by="manual", dias=7)
+    assert result == {"success": True, "run_id": 41, "file": "op455.sswweb", "total": 2}
+    assert [item[0] for item in calls] == ["start", "snapshot", "success"]
+
+
+def test_metrics_production_error_does_not_persist_secret(monkeypatch, tmp_path):
+    from modules.metricas.service import MetricasService
+
+    errors = []
+    monkeypatch.setattr("modules.metricas.repository.criar_execucao", lambda **kwargs: 42)
+    monkeypatch.setattr("modules.metricas.repository.finalizar_execucao_erro", lambda run_id, error: errors.append(str(error)))
+    monkeypatch.setattr(
+        MetricasService, "_coletar_op455",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("senha-super-secreta")),
+    )
+    service = MetricasService()
+    service.output_dir = tmp_path
+    result = service.atualizar_op455()
+    assert result["success"] is False
+    assert "senha-super-secreta" not in result["error"]
+    assert "senha-super-secreta" not in errors[0]
+
+
 def test_metrics_remote_snapshot_is_persisted_in_central_database(monkeypatch):
     from modules.metricas import repository
 
@@ -212,6 +287,44 @@ def test_metrics_remote_snapshot_is_persisted_in_central_database(monkeypatch):
     assert "payload_json" in calls[0][0]
     assert calls[0][1][0] == 9
     assert '"total": 2' in calls[0][1][1]
+
+
+def test_isolated_metrics_cli_enqueues_validate_only_once(monkeypatch, capsys):
+    from scripts import nexus_local_agent_metrics_homologation as cli
+
+    calls = []
+
+    class FakeRepository:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def enqueue(self, **kwargs):
+            calls.append(kwargs)
+            return "11111111-1111-1111-1111-111111111111"
+
+    settings = SimpleNamespace(
+        enabled=True,
+        allowed_tasks=frozenset({TASK_METRICAS}),
+        agent_tasks={"windows-agent": frozenset({TASK_METRICAS})},
+        database_path="ignored.sqlite3",
+        max_payload_bytes=65536,
+        max_result_bytes=65536,
+        max_log_bytes=4096,
+    )
+    monkeypatch.setenv("NEXUS_LOCAL_AGENT_METRICS_HOMOLOGATION_ENABLED", "true")
+    monkeypatch.setattr(cli, "load_private_environment", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "delegation_enabled", lambda: False)
+    monkeypatch.setattr(cli, "load_server_settings", lambda: settings)
+    monkeypatch.setattr(cli, "LocalAgentRepository", FakeRepository)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["metrics-hml", "enqueue", "--days", "1", "--correlation-id", "HML-OP455-20261119"],
+    )
+    assert cli.main() == 0
+    assert calls[0]["max_attempts"] == 1
+    assert calls[0]["idempotency_key"] == "metrics-hml:HML-OP455-20261119"
+    assert calls[0]["payload"]["mode"] == "validate_only"
+    assert "nenhum segredo" in capsys.readouterr().out
 
 
 def test_oc73_scheduler_delegates_without_constructing_service(monkeypatch):
