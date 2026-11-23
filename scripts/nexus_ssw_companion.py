@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import sys
+from dotenv import dotenv_values
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -49,9 +50,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         contract = CompanionContract.from_file(args.contract)
         proxy = load_companion_proxy(args.env_file)
-        expected_domain = input("Informe seu domínio SSW esperado: ").strip()
-        expected_identity = input("Informe seu usuário SSW esperado: ").strip()
-        expected_unit = input("Informe sua unidade SSW esperada: ").strip()
+        values = dotenv_values(args.env_file, encoding="utf-8-sig", interpolate=False)
+        expected_domain = str(values.get("NEXUS_SSW_EXPECTED_DOMAIN") or "").strip() or input("Informe seu domínio SSW esperado: ").strip()
+        expected_identity = str(values.get("NEXUS_SSW_EXPECTED_USER") or "").strip() or input("Informe seu usuário SSW esperado: ").strip()
+        expected_unit = str(values.get("NEXUS_SSW_EXPECTED_UNIT") or "").strip() or input("Informe sua unidade SSW esperada: ").strip()
         print("O Companion abrirá somente a origem HTTPS oficial do SSW.")
         from playwright.sync_api import sync_playwright
         result = run_interactive_homologation(

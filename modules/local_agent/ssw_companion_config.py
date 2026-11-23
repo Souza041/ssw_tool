@@ -20,6 +20,7 @@ from typing import Callable
 from urllib.parse import urlsplit
 
 from modules.local_agent.ssw_companion import (
+    await_human_login,
     CompanionContract,
     CompanionError,
     KNOWN_LOGIN_CPF_SELECTOR,
@@ -435,44 +436,21 @@ def run_configuration_wizard(
         except Exception:
             raise
         ensure_official_main_frame(page)
-        wait_for_official_dom(
-            page, timeout_ms=navigation_timeout_ms, logger=logger,
-        )
-        ensure_official_main_frame(page)
-        logger.info("navegacao fase=estabilizacao_iniciada timeout_ms=%d", 10_000)
-        page.wait_for_timeout(10_000)
-        ensure_official_main_frame(page)
-        logger.info("navegacao fase=estabilizacao_concluida")
-        input_fn = monitored_input
-        contract = CompanionContract.from_mapping(automatic_contract_data())
-        state = wait_for_known_login(page)
-        if state == "login":
-            logger.info(
-                "autenticacao estado=AGUARDANDO_LOGIN_HUMANO timeout_s=%d",
-                max(30, min(int(human_login_timeout_seconds), 900)),
-            )
-            output_fn(
-                "Formulário oficial reconhecido. Digite as credenciais no navegador, "
-                "resolva manualmente o reCAPTCHA e conclua o login."
-            )
-            wait_for_authenticated_menu(
-                page,
-                contract=contract,
-                expected_domain=expected_domain,
-                expected_identity=expected_identity,
-                expected_unit=expected_unit,
-                login_url=login_url,
-                timeout_seconds=human_login_timeout_seconds,
-            )
-        else:
-            raise CompanionError(
-                "O contexto temporário iniciou autenticado sem vínculo com o operador."
-            )
-        output_fn("Menu Principal reconhecido automaticamente.")
         origin_monitor = attach_official_navigation_monitor(
             page, on_violation=discard_context, logger=logger,
         )
         origin_monitor.ensure_allowed()
+        input_fn = monitored_input
+        contract = CompanionContract.from_mapping(automatic_contract_data())
+        output_fn("Digite as credenciais e conclua o CAPTCHA manualmente. "
+                  "O menu será reconhecido automaticamente; nenhuma recarga será feita.")
+        await_human_login(
+            page, contract, login_url=login_url,
+            expected_domain=expected_domain, expected_identity=expected_identity,
+            expected_unit=expected_unit, timeout_seconds=human_login_timeout_seconds,
+        )
+        origin_monitor.ensure_allowed()
+        output_fn("Menu Principal reconhecido automaticamente.")
         data = automatic_contract_data()
 
         secure_write_contract(

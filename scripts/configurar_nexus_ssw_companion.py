@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import sys
+from dotenv import dotenv_values
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -45,9 +46,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     logger = configure_sanitized_log(args.log_file)
     try:
-        expected_domain = input("Informe seu domínio SSW esperado: ").strip()
-        expected_identity = input("Informe seu usuário SSW esperado: ").strip()
-        expected_unit = input("Informe sua unidade SSW esperada: ").strip()
+        values = dotenv_values(args.env_file, encoding="utf-8-sig", interpolate=False)
+        expected_domain = str(values.get("NEXUS_SSW_EXPECTED_DOMAIN") or "").strip() or input("Informe seu domínio SSW esperado: ").strip()
+        expected_identity = str(values.get("NEXUS_SSW_EXPECTED_USER") or "").strip() or input("Informe seu usuário SSW esperado: ").strip()
+        expected_unit = str(values.get("NEXUS_SSW_EXPECTED_UNIT") or "").strip() or input("Informe sua unidade SSW esperada: ").strip()
         from playwright.sync_api import sync_playwright
         proxy = load_companion_proxy(args.env_file)
         output = run_configuration_wizard(

@@ -275,14 +275,19 @@ def capture_known_login_identity(
     page: PageLike, contract: CompanionContract,
 ) -> tuple[str, str] | None:
     """Lê somente domínio e usuário; nunca consulta CPF ou senha."""
-    if getattr(contract, "version", 1) != 2 or not _visible(
-        page, contract.login_form_selector
-    ):
+    if getattr(contract, "version", 1) != 2:
         return None
     try:
+        if not _official_https_navigation(page.url):
+            return None
+        if urlsplit(page.url).path.rstrip("/") != LOGIN_PATH:
+            return None
+        if page.locator(contract.login_form_selector).count() != 1:
+            return None
         domain = page.locator(contract.login_domain_selector)
         identity = page.locator(contract.login_identity_selector)
-        if domain.count() != 1 or identity.count() != 1:
+        if (domain.count() != 1 or identity.count() != 1
+                or not domain.is_visible() or not identity.is_visible()):
             return None
         domain_value = domain.input_value(timeout=1_000).strip()
         identity_value = identity.input_value(timeout=1_000).strip()
@@ -406,6 +411,37 @@ def ensure_official_main_frame(page: PageLike) -> None:
         raise CompanionError("A página principal saiu da origem oficial.")
 
 
+def await_human_login(
+    page, contract: CompanionContract, *, login_url: str,
+    expected_identity: str, expected_unit: str, expected_domain: str | None,
+    timeout_seconds: int = 900, cancel: Callable[[], None] = lambda: None,
+) -> tuple[str, str]:
+    """One passive wait, beginning immediately after the navigation commit."""
+    deadline = time.monotonic() + max(30, min(int(timeout_seconds), 900))
+    observed_domain = observed_identity = ""
+    while time.monotonic() < deadline:
+        cancel()
+        ensure_official_main_frame(page)
+        captured = capture_known_login_identity(page, contract)
+        if captured is not None:
+            observed_domain, observed_identity = captured
+        if known_authenticated_menu_present(page, contract):
+            if contract.version == 2 and not observed_identity:
+                raise CompanionError(
+                    "Menu encontrado, mas o domínio/usuário do formulário não foram "
+                    "observados antes da transição; sessão rejeitada."
+                )
+            validate_authenticated_context(
+                page, contract, login_url=login_url,
+                expected_identity=expected_identity, expected_unit=expected_unit,
+                expected_domain=expected_domain, observed_domain=observed_domain or None,
+                observed_identity=observed_identity or None,
+            )
+            return observed_domain, observed_identity
+        page.wait_for_timeout(250)
+    raise CompanionError("O prazo do login humano expirou; nenhuma recarga foi executada.")
+
+
 def run_interactive_homologation(
     *,
     base_url: str,
@@ -456,40 +492,17 @@ def run_interactive_homologation(
         except Exception:
             raise
         ensure_official_main_frame(page)
-        wait_for_official_dom(
-            page, timeout_ms=navigation_timeout_ms, logger=logger,
+        origin_monitor = attach_official_navigation_monitor(
+            page, on_violation=discard_context, logger=logger,
         )
-        page.wait_for_timeout(10_000)
-        ensure_official_main_frame(page)
+        origin_monitor.ensure_allowed()
         logger.info("login_oficial_aberto")
-        observed_domain = observed_identity = ""
         if contract.version == 2:
-            human_timeout = max(30, min(int(human_login_timeout_seconds), 900))
-            logger.info(
-                "autenticacao estado=AGUARDANDO_LOGIN_HUMANO timeout_s=%d",
-                human_timeout,
+            await_human_login(
+                page, contract, login_url=login_url,
+                expected_identity=expected_identity, expected_unit=expected_unit,
+                expected_domain=expected_domain, timeout_seconds=human_login_timeout_seconds,
             )
-            deadline = time.monotonic() + human_timeout
-            while time.monotonic() < deadline:
-                ensure_official_main_frame(page)
-                captured = capture_known_login_identity(page, contract)
-                if captured is not None:
-                    observed_domain, observed_identity = captured
-                if known_authenticated_menu_present(page, contract):
-                    validate_authenticated_context(
-                        page, contract, login_url=login_url,
-                        expected_identity=expected_identity, expected_unit=expected_unit,
-                        observed_identity=observed_identity or None,
-                        expected_domain=expected_domain,
-                        observed_domain=observed_domain or None,
-                    )
-                    break
-                page.wait_for_timeout(500)
-            else:
-                raise CompanionError(
-                    "O prazo do login humano expirou; a sessão foi encerrada "
-                    "sem recarregar a página."
-                )
         else:
             if not confirmation():
                 raise CompanionError("Confirmação explícita do operador não recebida.")
@@ -498,9 +511,6 @@ def run_interactive_homologation(
                 page, contract, login_url=login_url,
                 expected_identity=expected_identity, expected_unit=expected_unit,
             )
-        origin_monitor = attach_official_navigation_monitor(
-            page, on_violation=discard_context, logger=logger,
-        )
         origin_monitor.ensure_allowed()
         logger.info("identidade_autenticada_confirmada")
         probe_status = "nao_solicitada"

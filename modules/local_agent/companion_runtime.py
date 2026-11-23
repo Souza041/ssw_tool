@@ -7,6 +7,7 @@ import time
 from typing import Callable
 
 from modules.local_agent.ssw_companion import (
+    await_human_login,
     CompanionContract,
     CompanionError,
     attach_official_navigation_monitor,
@@ -78,9 +79,10 @@ class InteractiveSSWSession:
                 self.page, login_url, timeout_ms=60_000, logger=self.logger,
             )
             ensure_official_main_frame(self.page)
-            wait_for_official_dom(self.page, timeout_ms=60_000, logger=self.logger)
-            self.page.wait_for_timeout(10_000)
-            ensure_official_main_frame(self.page)
+            self.origin_monitor = attach_official_navigation_monitor(
+                self.page, on_violation=self._discard_context, logger=self.logger,
+            )
+            self.origin_monitor.ensure_allowed()
         except BaseException:
             self._discard_context()
             raise
@@ -146,38 +148,33 @@ class InteractiveSSWSession:
         try:
             self._new_login_context()
             self.logger.info("Autenticação humana necessária na janela Chromium.")
-            human_timeout = max(30, min(timeout_seconds, 900))
-            self.logger.info(
-                "autenticacao estado=AGUARDANDO_LOGIN_HUMANO timeout_s=%d",
-                human_timeout,
+            self.observed_domain, self.observed_identity = await_human_login(
+                self.page, self.contract, login_url=official_login_url(self.base_url),
+                expected_identity=usuario, expected_unit=unidade, expected_domain=dominio,
+                timeout_seconds=timeout_seconds, cancel=cancel,
             )
-            deadline = time.monotonic() + human_timeout
-            while time.monotonic() < deadline:
-                cancel()
-                self._capture_known_login_identity()
-                if self._valid(usuario, unidade, dominio):
-                    self.identity = CompanionIdentity(usuario, unidade)
-                    self.logger.info("Sessão SSW confirmada estruturalmente.")
-                    return self.identity
-                time.sleep(1)
+            self.origin_monitor.ensure_allowed()
+            self.identity = CompanionIdentity(usuario, unidade)
+            self.logger.info("Sessão SSW confirmada estruturalmente.")
+            return self.identity
         except BaseException:
             self._discard_context()
             raise
-        self._discard_context()
-        raise CompanionError(
-            "O prazo do login humano expirou; a sessão foi encerrada sem recarregar a página."
-        )
 
     def client(self, *, usuario: str, unidade: str, cancel=None) -> BrowserSSWClient:
         if not self._valid(usuario, unidade):
             self.identity = None
             raise CompanionError("Sessão SSW ausente, expirada ou divergente.")
+        def validate():
+            if not self._valid(usuario, unidade):
+                raise CompanionError("Sessão SSW ausente, expirada ou divergente.")
         return BrowserSSWClient(
             self.page,
             base_url=self.base_url,
             usuario=usuario,
             unidade=unidade,
             cancel=cancel,
+            validate=validate,
         )
 
     def close(self) -> None:
