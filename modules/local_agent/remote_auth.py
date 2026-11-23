@@ -16,7 +16,7 @@ import threading
 import time
 import unicodedata
 import re
-from typing import Any
+from typing import Any, Callable
 
 
 class RemoteAuthError(RuntimeError):
@@ -32,6 +32,14 @@ class RemoteAuthRateLimited(RemoteAuthError):
 
 
 class RemoteAuthConflict(RemoteAuthError):
+    pass
+
+
+class RemoteAuthHumanVerificationRequired(RemoteAuthError):
+    pass
+
+
+class RemoteAuthSSWUnavailable(RemoteAuthError):
     pass
 
 
@@ -56,6 +64,7 @@ class RemoteCredentials:
 @dataclass(frozen=True)
 class RemoteAuthResult:
     accepted: bool
+    outcome: str
     dominio: str
     cpf: str = field(repr=False)
     usuario: str
@@ -80,6 +89,15 @@ class _PendingRequest:
     agent_id: str | None = None
     lease_token: str | None = field(default=None, repr=False)
     accepted: bool | None = None
+    outcome: str | None = None
+
+
+REMOTE_AUTH_OUTCOMES = frozenset({
+    "authenticated",
+    "invalid_credentials",
+    "human_verification_required",
+    "ssw_unavailable",
+})
 
 
 def _normalized(value: str) -> str:
@@ -263,7 +281,16 @@ class RemoteAuthBroker:
         identity: str,
         proof: str,
         secret: str,
+        outcome: str | None = None,
     ) -> None:
+        normalized_outcome = str(
+            outcome or ("authenticated" if accepted else "invalid_credentials")
+        ).strip().lower()
+        if (
+            normalized_outcome not in REMOTE_AUTH_OUTCOMES
+            or accepted != (normalized_outcome == "authenticated")
+        ):
+            raise RemoteAuthConflict("Resultado de autenticação inconsistente.")
         now = time.monotonic()
         with self._lock:
             self._cleanup(now)
@@ -289,6 +316,7 @@ class RemoteAuthBroker:
                 raise RemoteAuthConflict("Confirmação criptográfica inválida.")
             pending.lease_token = None
             pending.accepted = accepted
+            pending.outcome = normalized_outcome
             pending.state = "COMPLETED"
             pending.event.set()
 
@@ -318,6 +346,7 @@ class RemoteAuthBroker:
                 raise RemoteAuthUnavailable("Executor de autenticação indisponível.")
             return RemoteAuthResult(
                 accepted=pending.accepted is True,
+                outcome=str(pending.outcome or "ssw_unavailable"),
                 dominio=pending.dominio,
                 cpf=pending.cpf,
                 usuario=pending.usuario,
@@ -328,8 +357,13 @@ class RemoteAuthBroker:
 class WindowsRemoteAuthExecutor:
     """Executa somente o login SSW efêmero; não recebe tarefas arbitrárias."""
 
-    def __init__(self, client: Any) -> None:
+    def __init__(
+        self,
+        client: Any,
+        outcome_callback: Callable[[str], None] | None = None,
+    ) -> None:
         self.client = client
+        self.outcome_callback = outcome_callback
 
     def run_once(self) -> bool:
         response = self.client.remote_auth_claim()
@@ -367,6 +401,7 @@ class WindowsRemoteAuthExecutor:
             raise RemoteAuthError("Vínculo de identidade inválido.")
 
         accepted = False
+        outcome = "ssw_unavailable"
         ssw_client = None
         login_response = None
         menu_response = None
@@ -396,8 +431,18 @@ class WindowsRemoteAuthExecutor:
             if not login_confirmed or not menu_confirmed:
                 raise PermissionError("Resposta SSW não confirmou a identidade.")
             accepted = True
-        except Exception:
-            # Nunca propagar texto do SSW: ele pode conter URL, cookie ou credencial.
+            outcome = "authenticated"
+        except PermissionError:
+            outcome = "invalid_credentials"
+            accepted = False
+        except Exception as exc:
+            from ssw.authentication import SSWHumanVerificationRequired
+
+            if isinstance(exc, SSWHumanVerificationRequired):
+                outcome = "human_verification_required"
+            else:
+                # Nunca propagar texto do SSW: pode conter URL, cookie ou credencial.
+                outcome = "ssw_unavailable"
             accepted = False
         finally:
             credentials.clear()
@@ -416,7 +461,10 @@ class WindowsRemoteAuthExecutor:
             challenge=challenge,
             identity_fingerprint=expected_identity,
             accepted=accepted,
+            outcome=outcome,
         )
+        if self.outcome_callback is not None:
+            self.outcome_callback(outcome)
         return True
 
 

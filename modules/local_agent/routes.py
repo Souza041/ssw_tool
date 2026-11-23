@@ -71,6 +71,13 @@ class RemoteAuthCompleteRequest(BaseModel):
     request_id: str = Field(min_length=32, max_length=128)
     lease_token: str = Field(min_length=32, max_length=128)
     accepted: bool
+    outcome: str | None = Field(
+        default=None,
+        pattern=(
+            r"^(authenticated|invalid_credentials|"
+            r"human_verification_required|ssw_unavailable)$"
+        ),
+    )
     identity_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     proof: str = Field(pattern=r"^[0-9a-f]{64}$")
 
@@ -344,6 +351,7 @@ def _remote_auth_complete_impl(
             lease_token=body.lease_token,
             agent_id=agent_id,
             accepted=body.accepted,
+            outcome=body.outcome,
             identity=body.identity_fingerprint,
             proof=body.proof,
             secret=secret,

@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -107,6 +108,7 @@ class LocalAgentRepository:
                     max_attempts INTEGER NOT NULL DEFAULT 3,
                     agent_id TEXT,
                     lease_token TEXT,
+                    completion_token_hash TEXT,
                     lease_expires_at TEXT,
                     cancellation_requested INTEGER NOT NULL DEFAULT 0,
                     progress_current INTEGER NOT NULL DEFAULT 0,
@@ -161,6 +163,10 @@ class LocalAgentRepository:
                 db.execute("ALTER TABLE local_agent_jobs ADD COLUMN idempotency_key TEXT")
             if "concurrency_key" not in columns:
                 db.execute("ALTER TABLE local_agent_jobs ADD COLUMN concurrency_key TEXT")
+            if "completion_token_hash" not in columns:
+                db.execute(
+                    "ALTER TABLE local_agent_jobs ADD COLUMN completion_token_hash TEXT"
+                )
             db.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_local_agent_jobs_idempotency
                 ON local_agent_jobs(idempotency_key)
@@ -405,6 +411,9 @@ class LocalAgentRepository:
         job_id = str(uuid.uuid4())
         timestamp = utc_text(now or utc_now())
         with self._transaction(immediate=True) as db:
+            # Um lease vencido não pode bloquear/coalescer indefinidamente um
+            # novo disparo do cron ou do painel.
+            self._recover_expired(db, timestamp)
             if concurrency_key and coalesce_active:
                 active = db.execute("""
                     SELECT id FROM local_agent_jobs
@@ -456,7 +465,15 @@ class LocalAgentRepository:
                     WHEN cancellation_requested = 1 OR attempts >= max_attempts THEN ?
                     ELSE NULL
                 END,
-                agent_id = NULL, lease_token = NULL, lease_expires_at = NULL,
+                agent_id = CASE
+                    WHEN cancellation_requested = 1 OR attempts >= max_attempts
+                    THEN agent_id ELSE NULL
+                END,
+                completion_token_hash = CASE
+                    WHEN cancellation_requested = 1 OR attempts >= max_attempts
+                    THEN completion_token_hash ELSE NULL
+                END,
+                lease_token = NULL, lease_expires_at = NULL,
                 updated_at = ?
             WHERE status = 'LEASED' AND lease_expires_at < ?
         """, (now_text, now_text, now_text))
@@ -510,9 +527,14 @@ class LocalAgentRepository:
             updated = db.execute("""
                 UPDATE local_agent_jobs
                 SET status='LEASED', agent_id=?, lease_token=?, lease_expires_at=?,
-                    attempts=attempts+1, started_at=COALESCE(started_at, ?), updated_at=?
+                    completion_token_hash=?, attempts=attempts+1,
+                    started_at=COALESCE(started_at, ?), updated_at=?
                 WHERE id=? AND status='QUEUED'
-            """, (agent_id, lease_token, expires_text, now_text, now_text, row["id"]))
+            """, (
+                agent_id, lease_token, expires_text,
+                hashlib.sha256(lease_token.encode("utf-8")).hexdigest(),
+                now_text, now_text, row["id"],
+            ))
             if updated.rowcount != 1:
                 return None
             db.execute(
@@ -627,28 +649,85 @@ class LocalAgentRepository:
             )
         timestamp = utc_text(now or utc_now())
         with self._transaction(immediate=True) as db:
+            self._recover_expired(db, timestamp)
             row = db.execute("""
-                SELECT cancellation_requested FROM local_agent_jobs
-                WHERE id=? AND status='LEASED' AND agent_id=? AND lease_token=?
-                  AND lease_expires_at >= ?
-            """, (job_id, agent_id, lease_token, timestamp)).fetchone()
+                SELECT status, cancellation_requested, agent_id, lease_token,
+                       completion_token_hash, result_json, error_message,
+                       concurrency_key, created_at
+                FROM local_agent_jobs WHERE id=?
+            """, (job_id,)).fetchone()
             if row is None:
+                raise LookupError("Lease inválido para conclusão.")
+            supplied_hash = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
+            stored_hash = str(row["completion_token_hash"] or "")
+            active_lease = (
+                row["status"] == "LEASED"
+                and row["lease_token"] is not None
+                and row["agent_id"] == agent_id
+                and hmac.compare_digest(str(row["lease_token"]), lease_token)
+            )
+            authenticated_completion = active_lease or (
+                row["agent_id"] == agent_id
+                and bool(stored_hash)
+                and hmac.compare_digest(stored_hash, supplied_hash)
+            )
+            if not authenticated_completion or (
+                row["status"] == "LEASED" and not active_lease
+            ):
                 raise LookupError("Lease inválido para conclusão.")
             status = (
                 "CANCELLED" if row["cancellation_requested"]
                 else "SUCCEEDED" if succeeded else "FAILED"
             )
+            if row["status"] in {"SUCCEEDED", "FAILED", "CANCELLED"}:
+                if row["status"] == "CANCELLED" and row["cancellation_requested"]:
+                    return "CANCELLED"
+                same_result = (
+                    decoded_object(row["result_json"] or "{}")
+                    == decoded_object(result_json)
+                )
+                same_error = (row["error_message"] or None) == safe_error
+                if row["status"] == status and same_result and same_error:
+                    return str(row["status"])
+                late_after_expiry = (
+                    row["status"] == "FAILED"
+                    and str(row["error_message"] or "").startswith("Lease expirado;")
+                )
+                if not late_after_expiry:
+                    raise LookupError("Conclusão já registrada com conteúdo diferente.")
+                if row["concurrency_key"]:
+                    active = db.execute("""
+                        SELECT 1 FROM local_agent_jobs
+                        WHERE id<>? AND concurrency_key=?
+                          AND created_at>?
+                        LIMIT 1
+                    """, (
+                        job_id, row["concurrency_key"], row["created_at"],
+                    )).fetchone()
+                    if active is not None:
+                        raise LookupError(
+                            "Conclusão tardia exige reconciliação manual; existe execução posterior."
+                        )
             db.execute("""
                 UPDATE local_agent_jobs
                 SET status=?, result_json=?, error_message=?, finished_at=?, updated_at=?,
+                    completion_token_hash=COALESCE(completion_token_hash, ?),
                     lease_token=NULL, lease_expires_at=NULL
                 WHERE id=?
-            """, (status, result_json, safe_error, timestamp, timestamp, job_id))
+            """, (
+                status, result_json, safe_error, timestamp, timestamp,
+                supplied_hash, job_id,
+            ))
             db.execute(
                 "UPDATE local_agent_agents SET current_job_id=NULL, last_seen_at=? WHERE agent_id=?",
                 (timestamp, agent_id),
             )
         return status
+
+    def reconcile_expired_leases(self, *, now: datetime | None = None) -> None:
+        timestamp = utc_text(now or utc_now())
+        with self._transaction(immediate=True) as db:
+            self._recover_expired(db, timestamp)
 
     def request_cancel(self, job_id: str, *, now: datetime | None = None) -> str:
         timestamp = utc_text(now or utc_now())
@@ -689,6 +768,40 @@ class LocalAgentRepository:
         result["result"] = decoded_object(result.pop("result_json")) if result["result_json"] else None
         result["logs"] = [dict(item) for item in reversed(logs)]
         result.pop("lease_token", None)
+        result.pop("completion_token_hash", None)
+        return result
+
+    def get_latest_job(
+        self,
+        *,
+        task: str,
+        log_limit: int = 200,
+        now: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        checked = checked_task(task)
+        timestamp = utc_text(now or utc_now())
+        with self._transaction(immediate=True) as db:
+            self._recover_expired(db, timestamp)
+            row = db.execute(
+                """SELECT * FROM local_agent_jobs
+                   WHERE task=? ORDER BY created_at DESC, rowid DESC LIMIT 1""",
+                (checked,),
+            ).fetchone()
+            if row is None:
+                return None
+            logs = db.execute("""
+                SELECT created_at, level, message FROM local_agent_logs
+                WHERE job_id=? ORDER BY id DESC LIMIT ?
+            """, (row["id"], max(1, min(log_limit, 1000)))).fetchall()
+        result = dict(row)
+        result["payload"] = decoded_object(result.pop("payload_json"))
+        result["result"] = (
+            decoded_object(result.pop("result_json"))
+            if result["result_json"] else None
+        )
+        result["logs"] = [dict(item) for item in reversed(logs)]
+        result.pop("lease_token", None)
+        result.pop("completion_token_hash", None)
         return result
 
     def list_jobs(self, *, limit: int = 50) -> list[dict[str, Any]]:

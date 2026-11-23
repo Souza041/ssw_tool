@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+import os
+from pathlib import Path
 import platform
 import threading
 import time
@@ -19,6 +22,69 @@ Handler = Callable[[dict[str, Any], "ExecutionContext"], dict[str, Any]]
 
 class AgentProtocolError(RuntimeError):
     pass
+
+
+class CompletionOutbox:
+    """Guarda somente a confirmação operacional; nunca credenciais de login."""
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+
+    def load(self) -> dict[str, Any] | None:
+        if not self.path.is_file():
+            return None
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise AgentProtocolError("Confirmação pendente local inválida.") from exc
+        required = {
+            "job_id", "lease_token", "succeeded", "result", "error_message",
+        }
+        if (
+            not isinstance(data, dict)
+            or set(data) != required
+            or not isinstance(data.get("job_id"), str)
+            or not isinstance(data.get("lease_token"), str)
+            or len(data["lease_token"]) < 32
+            or type(data.get("succeeded")) is not bool
+            or not isinstance(data.get("result"), dict)
+            or data.get("error_message") is not None
+            and not isinstance(data.get("error_message"), str)
+        ):
+            raise AgentProtocolError("Contrato da confirmação pendente local inválido.")
+        return data
+
+    def save(self, value: dict[str, Any]) -> None:
+        encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        if len(encoded.encode("utf-8")) > 1024 * 1024:
+            raise AgentProtocolError("Confirmação pendente excede o limite local.")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
+        try:
+            descriptor = os.open(
+                temporary,
+                os.O_CREAT | os.O_TRUNC | os.O_WRONLY,
+                0o600,
+            )
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                stream.write(encoded)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, self.path)
+            if os.name != "nt":
+                os.chmod(self.path, 0o600)
+        except OSError as exc:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise AgentProtocolError("Não foi possível persistir a confirmação pendente.") from exc
+
+    def clear(self) -> None:
+        try:
+            self.path.unlink(missing_ok=True)
+        except OSError as exc:
+            raise AgentProtocolError("Não foi possível remover a confirmação já entregue.") from exc
 
 
 class AgentClient:
@@ -138,6 +204,7 @@ class AgentClient:
         challenge: str,
         identity_fingerprint: str,
         accepted: bool,
+        outcome: str | None = None,
     ) -> dict[str, Any]:
         proof = response_proof(
             self.settings.token,
@@ -147,13 +214,27 @@ class AgentClient:
             agent_id=self.settings.agent_id,
             accepted=accepted,
         )
-        return self._post("/api/local-agent/v1/remote-auth/complete", {
+        payload = {
             "request_id": request_id,
             "lease_token": lease_token,
             "accepted": accepted,
+            "outcome": outcome or (
+                "authenticated" if accepted else "invalid_credentials"
+            ),
             "identity_fingerprint": identity_fingerprint,
             "proof": proof,
-        })
+        }
+        for attempt in range(3):
+            try:
+                return self._post("/api/local-agent/v1/remote-auth/complete", payload)
+            except AgentProtocolError as exc:
+                transient = isinstance(
+                    exc.__cause__, (requests.Timeout, requests.ConnectionError)
+                )
+                if not transient or attempt == 2:
+                    raise
+                time.sleep(0.2 * (attempt + 1))
+        raise AgentProtocolError("Falha ao confirmar autenticação remota.")
 
 
 class HandlerRegistry:
@@ -257,11 +338,41 @@ class _Heartbeat:
 
 
 class LocalAgentExecutor:
-    def __init__(self, client: AgentClient, registry: HandlerRegistry):
+    def __init__(
+        self,
+        client: AgentClient,
+        registry: HandlerRegistry,
+        completion_outbox: CompletionOutbox | None = None,
+    ):
         self.client = client
         self.registry = registry
+        self.completion_outbox = completion_outbox
+        self._pending_completion: dict[str, Any] | None = None
+
+    def _pending(self) -> dict[str, Any] | None:
+        if self._pending_completion is None and self.completion_outbox is not None:
+            self._pending_completion = self.completion_outbox.load()
+        return self._pending_completion
+
+    def _deliver_pending(self) -> bool:
+        pending = self._pending()
+        if pending is None:
+            return False
+        self.client.complete(
+            pending["job_id"],
+            pending["lease_token"],
+            succeeded=pending["succeeded"],
+            result=pending["result"],
+            error_message=pending["error_message"],
+        )
+        if self.completion_outbox is not None:
+            self.completion_outbox.clear()
+        self._pending_completion = None
+        return True
 
     def run_once(self) -> bool:
+        if self._deliver_pending():
+            return True
         response = self.client.claim(self.registry.capabilities())
         job = response.get("job")
         if job is None:
@@ -332,13 +443,16 @@ class LocalAgentExecutor:
                 self.client.logs(job_id, lease_token, buffered_logs)
             except AgentProtocolError:
                 pass
-        self.client.complete(
-            job_id,
-            lease_token,
-            succeeded=succeeded,
-            result=result if succeeded else {},
-            error_message=error_message,
-        )
+        self._pending_completion = {
+            "job_id": job_id,
+            "lease_token": lease_token,
+            "succeeded": succeeded,
+            "result": result if succeeded else {},
+            "error_message": error_message,
+        }
+        if self.completion_outbox is not None:
+            self.completion_outbox.save(self._pending_completion)
+        self._deliver_pending()
         return True
 
     def run_forever(self, *, poll_seconds: int, stop_event: threading.Event) -> None:
