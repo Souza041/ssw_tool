@@ -21,6 +21,7 @@ from operations.op001.coleta import OP001Coleta
 from operations.op001.batch import processar_planilha_nfd
 from operations.op535.workflow import executar_op535
 from ssw.client import SSWClient
+from ssw.settings import settings as ssw_settings
 
 from operations.op001.batch_transporte import processar_planilha_transporte
 
@@ -168,21 +169,24 @@ def executar_op488_job(
 
 @router.get("/login", response_class=HTMLResponse)
 def login_form(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
+    return templates.TemplateResponse(
+        "login.html",
+        {"request": request, "browser_auth": ssw_settings.auth_mode == "browser"},
+    )
 
 
 @router.post("/login")
 def login_run(
     request: Request,
     dominio: str = Form(...),
-    cpf: str = Form(...),
+    cpf: str = Form(""),
     usuario: str = Form(...),
-    senha: str = Form(...),
+    senha: str = Form(""),
     unidade: str = Form(...),
 ):
     try:
         cpf = "".join(ch for ch in cpf if ch.isdigit())
-        if len(cpf) != 11:
+        if ssw_settings.auth_mode != "browser" and len(cpf) != 11:
             raise ValueError("Informe um CPF com 11 dígitos.")
 
         client = SSWClient(
@@ -211,6 +215,7 @@ def login_run(
             {
                 "request": request,
                 "error": str(exc),
+                "browser_auth": ssw_settings.auth_mode == "browser",
             },
         )
 

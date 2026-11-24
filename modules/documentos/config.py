@@ -55,11 +55,14 @@ class DocumentosSettings:
     def validate_ssw(self) -> None:
         required = {
             "DOCUMENTOS_SSW_DOMINIO": self.ssw_dominio,
-            "DOCUMENTOS_SSW_CPF": self.ssw_cpf,
             "DOCUMENTOS_SSW_USUARIO": self.ssw_usuario,
-            "DOCUMENTOS_SSW_SENHA": self.ssw_senha,
             "DOCUMENTOS_SSW_UNIDADE": self.ssw_unidade,
         }
+        if os.getenv("SSW_AUTH_MODE", "browser").strip().lower() == "http":
+            required.update({
+                "DOCUMENTOS_SSW_CPF": self.ssw_cpf,
+                "DOCUMENTOS_SSW_SENHA": self.ssw_senha,
+            })
 
         missing = [
             name

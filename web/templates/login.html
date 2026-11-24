@@ -2,21 +2,22 @@
 {% block content %}
 <section class="nexus-auth">
   <div class="auth-story"><div class="story-pill">NEXUS / AUTOMATION HUB</div><h1>Automações mais inteligentes.<br><em>Operações mais simples.</em></h1><p>Uma central para executar, acompanhar e gerenciar suas rotinas SSW.</p><div class="story-footer">RODOBRAS · TECNOLOGIA & AUTOMAÇÃO</div></div>
-  <div class="auth-panel"><div class="auth-eyebrow">ACESSO CORPORATIVO</div><h2>Bem-vindo de volta</h2><p>Entre com suas credenciais do SSW para continuar.</p>
+  <div class="auth-panel"><div class="auth-eyebrow">ACESSO CORPORATIVO</div><h2>Bem-vindo de volta</h2><p>{% if browser_auth %}Informe a identidade esperada. O login e o CAPTCHA serão concluídos por você na janela oficial do SSW.{% else %}Entre com suas credenciais do SSW para continuar.{% endif %}</p>
   {% if error %}<div class="nexus-error" role="alert">{{ error }}</div>{% endif %}
   <form method="post" id="ssw-login-form" autocomplete="on">
   <div class="auth-fields"><div><label for="dominio">Domínio</label><input id="dominio" name="dominio" value="ROD" required></div><div><label for="unidade">Unidade</label><input id="unidade" name="unidade" value="CWB" required></div></div>
-  <label for="cpf">CPF</label><input id="cpf" name="cpf" inputmode="numeric" maxlength="14" placeholder="000.000.000-00" autocomplete="off" required>
+  {% if not browser_auth %}<label for="cpf">CPF</label><input id="cpf" name="cpf" inputmode="numeric" maxlength="14" placeholder="000.000.000-00" autocomplete="off" required>{% endif %}
   <label for="usuario">Usuário</label><input id="usuario" name="usuario" autocomplete="username" required placeholder="Seu usuário SSW">
-  <label for="senha">Senha</label><div class="password-wrap"><input id="senha" name="senha" type="password" autocomplete="current-password" required placeholder="Sua senha"><button class="show-password" type="button" id="show-password" aria-label="Mostrar senha">Mostrar</button></div>
-  <button class="auth-submit" type="submit" id="submit-login">Entrar no ambiente <span>→</span></button>
+  {% if not browser_auth %}<label for="senha">Senha</label><div class="password-wrap"><input id="senha" name="senha" type="password" autocomplete="current-password" required placeholder="Sua senha"><button class="show-password" type="button" id="show-password" aria-label="Mostrar senha">Mostrar</button></div>{% endif %}
+  <button class="auth-submit" type="submit" id="submit-login">{% if browser_auth %}Abrir login oficial{% else %}Entrar no ambiente{% endif %} <span>→</span></button>
   </form><div class="auth-footnote">Acesso restrito a usuários autorizados.</div></div>
 </section>
 <script>
 (function(){const cpf=document.getElementById('cpf'),form=document.getElementById('ssw-login-form'),btn=document.getElementById('submit-login'),show=document.getElementById('show-password'),senha=document.getElementById('senha');
 function mask(v){const d=v.replace(/\D/g,'').slice(0,11);return d.replace(/^(\d{3})(\d)/,'$1.$2').replace(/^(\d{3})\.(\d{3})(\d)/,'$1.$2.$3').replace(/\.(\d{3})(\d)/,'.$1-$2')}
-cpf.addEventListener('input',()=>cpf.value=mask(cpf.value));show.addEventListener('click',()=>{senha.type=senha.type==='password'?'text':'password';show.textContent=senha.type==='password'?'Mostrar':'Ocultar'});
-form.addEventListener('submit',e=>{const digits=cpf.value.replace(/\D/g,'');if(digits.length!==11){e.preventDefault();cpf.setCustomValidity('Informe um CPF com 11 dígitos.');cpf.reportValidity();return}cpf.setCustomValidity('');cpf.value=digits;btn.disabled=true;btn.textContent='Conectando ao SSW...'});cpf.addEventListener('input',()=>cpf.setCustomValidity(''));
+if(cpf){cpf.addEventListener('input',()=>cpf.value=mask(cpf.value));cpf.addEventListener('input',()=>cpf.setCustomValidity(''));}
+if(show){show.addEventListener('click',()=>{senha.type=senha.type==='password'?'text':'password';show.textContent=senha.type==='password'?'Mostrar':'Ocultar'});}
+form.addEventListener('submit',e=>{if(cpf){const digits=cpf.value.replace(/\D/g,'');if(digits.length!==11){e.preventDefault();cpf.setCustomValidity('Informe um CPF com 11 dígitos.');cpf.reportValidity();return}cpf.setCustomValidity('');cpf.value=digits;}btn.disabled=true;btn.textContent='Aguardando autenticação no Chromium...'});
 })();
 </script>
 {% endblock %}

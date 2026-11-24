@@ -12,6 +12,14 @@ SESSOES_CRIADAS_EM: dict[str, float] = {}
 SESSION_MAX_AGE_SECONDS = 60 * 60 * 8
 
 
+def _fechar_client(client: SSWClient | None) -> None:
+    if client is None:
+        return
+    close = getattr(client, "close", None)
+    if callable(close):
+        close()
+
+
 def criar_sessao(client: SSWClient) -> str:
     session_id = str(uuid.uuid4())
     CLIENTS[session_id] = client
@@ -32,7 +40,7 @@ def obter_client(request: Request) -> SSWClient | None:
         or time.monotonic() - criada_em > SESSION_MAX_AGE_SECONDS
     )
     if client is None or expirada:
-        CLIENTS.pop(session_id, None)
+        _fechar_client(CLIENTS.pop(session_id, None))
         SESSOES_CRIADAS_EM.pop(session_id, None)
         request.session.clear()
         return None
@@ -43,7 +51,7 @@ def remover_sessao(request: Request) -> None:
     session_id = request.session.get("ssw_session_id")
 
     if session_id:
-        CLIENTS.pop(session_id, None)
+        _fechar_client(CLIENTS.pop(session_id, None))
         SESSOES_CRIADAS_EM.pop(session_id, None)
 
     request.session.clear()

@@ -14,18 +14,25 @@ class SSWClient:
         usuario: str | None = None,
         senha: str | None = None,
         unidade: str | None = None,
+        auth_mode: str | None = None,
     ) -> None:
         settings.validate(required_login=False)
 
         self.base_url = normalizar_base_url(settings.base_url)
         self.timeout = settings.timeout
         self.session = requests.Session()
+        self.auth_mode = str(auth_mode or settings.auth_mode).strip().lower()
 
         self.dominio = dominio or settings.dominio
-        self.cpf = cpf or settings.cpf
         self.usuario = usuario or settings.usuario
-        self.senha = senha or settings.senha
         self.unidade = unidade or settings.unidade
+        if self.auth_mode == "browser":
+            # Credenciais sao informadas somente na pagina oficial do SSW.
+            self.cpf = ""
+            self.senha = ""
+        else:
+            self.cpf = cpf or settings.cpf
+            self.senha = senha or settings.senha
 
         self.session.headers.update({
             "User-Agent": (
@@ -94,6 +101,19 @@ class SSWClient:
         raise last_error
 
     def login(self) -> None:
+        if self.auth_mode == "browser":
+            from ssw.browser_transport import authenticated_browser_transport
+
+            self.session = authenticated_browser_transport(
+                domain=self.dominio,
+                user=self.usuario,
+                unit=self.unidade,
+                base_url=self.base_url,
+                timeout_seconds=settings.human_login_timeout,
+            )
+            self.authenticated_unit = self.session.observed_unit
+            return None
+
         payload = {
             "act": "L",
             "f1": self.dominio,
@@ -105,6 +125,14 @@ class SSWClient:
         }
 
         self.post("/bin/ssw0422", payload)
+
+    def close(self) -> None:
+        from ssw.browser_transport import BrowserSessionTransport, discard_browser_transport
+
+        if isinstance(self.session, BrowserSessionTransport):
+            discard_browser_transport(self.session)
+        else:
+            self.session.close()
 
     def open_menu(self) -> None:
         self.post("/bin/menu01", {"act": ""})

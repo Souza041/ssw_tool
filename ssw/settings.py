@@ -37,6 +37,8 @@ class SSWSettings:
     senha: str = os.getenv("SSW_SENHA", "")
     unidade: str = os.getenv("SSW_UNIDADE", "CWB")
     timeout: int = int(os.getenv("SSW_TIMEOUT", "60"))
+    auth_mode: str = os.getenv("SSW_AUTH_MODE", "browser").strip().lower()
+    human_login_timeout: int = int(os.getenv("SSW_HUMAN_LOGIN_TIMEOUT", "900"))
 
     def validate(self, required_login, bool = True) -> None:
         required = {
@@ -56,6 +58,9 @@ class SSWSettings:
 
         if missing:
             raise ValueError(f"Variáveis obrigatórias ausentes: {', '.join(missing)}")
+
+        if self.auth_mode not in {"browser", "http"}:
+            raise ValueError("SSW_AUTH_MODE deve ser 'browser' ou 'http'.")
 
 
 settings = SSWSettings()
