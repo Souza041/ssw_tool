@@ -11,6 +11,7 @@ from __future__ import annotations
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 import atexit
+import os
 from pathlib import Path
 import queue
 import re
@@ -137,15 +138,20 @@ def _checked_requested_unit(unit: str) -> str:
 
 def _load_playwright_proxy(env_file: Path | None = None) -> dict[str, str] | None:
     """Recupera a configuracao homologada sem registrar valores sensiveis."""
-    path = Path(env_file or Path(__file__).resolve().parents[1] / ".env")
-    if not path.is_file():
-        return None
-    try:
-        values = dotenv_values(path, encoding="utf-8", interpolate=False)
-    except (OSError, UnicodeError) as exc:
-        raise SSWBrowserAuthenticationError(
-            "Nao foi possivel ler a configuracao local do proxy."
-        ) from exc
+    if env_file is None and any(
+        name in os.environ for name in ("PROXY_SERVER", "PROXY_USER", "PROXY_PASS")
+    ):
+        values = {name: os.getenv(name, "") for name in ("PROXY_SERVER", "PROXY_USER", "PROXY_PASS")}
+    else:
+        path = Path(env_file or Path(__file__).resolve().parents[1] / ".env")
+        if not path.is_file():
+            return None
+        try:
+            values = dotenv_values(path, encoding="utf-8", interpolate=False)
+        except (OSError, UnicodeError) as exc:
+            raise SSWBrowserAuthenticationError(
+                "Nao foi possivel ler a configuracao local do proxy."
+            ) from exc
     server = str(values.get("PROXY_SERVER") or "").strip().rstrip("/")
     username = str(values.get("PROXY_USER") or "").strip()
     password = str(values.get("PROXY_PASS") or "")
@@ -569,6 +575,25 @@ class BrowserSessionTransport:
 
 _registry: dict[BrowserIdentity, BrowserSessionTransport] = {}
 _registry_lock = threading.RLock()
+
+
+def browser_session_snapshot() -> list[dict[str, str]]:
+    """Publica somente estado e vínculo opaco; nunca cookies ou credenciais."""
+    with _registry_lock:
+        transports = list(_registry.values())
+    result: list[dict[str, str]] = []
+    for transport in transports:
+        binding = transport.identity.session_binding
+        if len(binding) < 32:
+            continue
+        status = transport.session_status()
+        result.append({
+            "session_binding": binding,
+            "state": str(status.get("state") or "reauthentication_required"),
+            "operation": str(status.get("operation") or "")[:120],
+            "observed_unit": str(status.get("observed_unit") or "")[:16],
+        })
+    return result
 
 
 def authenticated_browser_transport(

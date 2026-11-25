@@ -82,3 +82,7 @@ data/nexus_automation_metrics.sqlite3-wal
 data/nexus_local_agent.sqlite3
 data/nexus_local_agent.sqlite3-shm
 data/nexus_local_agent.sqlite3-wal
+
+# Nexus Agent build artifacts
+/build/
+/dist/

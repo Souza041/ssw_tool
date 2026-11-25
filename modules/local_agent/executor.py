@@ -48,7 +48,12 @@ class AgentClient:
         return data
 
     def claim(self, capabilities: list[str]) -> dict[str, Any]:
-        return self._post("/api/local-agent/v1/claim", {"capabilities": capabilities})
+        from ssw.browser_transport import browser_session_snapshot
+
+        return self._post("/api/local-agent/v1/claim", {
+            "capabilities": capabilities,
+            "sessions": browser_session_snapshot(),
+        })
 
     def heartbeat(
         self, job_id: str, lease_token: str, current: int, total: int

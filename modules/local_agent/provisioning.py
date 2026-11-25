@@ -80,6 +80,7 @@ def provision_values(
         "NEXUS_SSW_DELEGATED_TASKS": "ssw.documentos_gce,ssw.metricas_op455",
         "NEXUS_SSW_REMOTE_AUTH_ENABLED": "false",
         "NEXUS_SSW_REMOTE_AUTH_AGENT_ID": agent_id,
+        "NEXUS_SSW_REMOTE_AUTH_BINDINGS_JSON": "{}",
         "NEXUS_SSW_REMOTE_AUTH_TIMEOUT_SECONDS": "20",
         "NEXUS_SSW_REMOTE_AUTH_REQUEST_TTL_SECONDS": "30",
         "NEXUS_SSW_REMOTE_AUTH_PER_MINUTE": "5",
@@ -91,6 +92,10 @@ def provision_values(
         "NEXUS_LOCAL_AGENT_AGENT_TASKS_JSON": json.dumps(
             {key: ["system.ping"] for key in tokens}, separators=(",", ":")
         ),
+        "NEXUS_LOCAL_AGENT_OFFLINE_SECONDS": "30",
+        "NEXUS_LOCAL_AGENT_PAIRING_ENABLED": "false",
+        "NEXUS_LOCAL_AGENT_PAIRING_TTL_SECONDS": "600",
+        "NEXUS_LOCAL_AGENT_PAIRED_TASKS": "system.ping,ssw.documentos_gce,ssw.op001.nfd,ssw.op001.transporte,ssw.session.close",
         "NEXUS_LOCAL_AGENT_BOOTSTRAP_ENABLED": "false",
         "NEXUS_LOCAL_AGENT_BOOTSTRAP_KEY_ID": str(
             current.get("NEXUS_LOCAL_AGENT_BOOTSTRAP_KEY_ID") or "homologacao-admin"

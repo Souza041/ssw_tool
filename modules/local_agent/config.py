@@ -95,6 +95,38 @@ def _agent_tasks(
     return result
 
 
+def _remote_auth_bindings(value: str, *, known_agents: set[str]) -> dict[str, str]:
+    """Mapa fechado DOMINIO/USUARIO -> agente; nunca recebe escolha do frontend."""
+    try:
+        raw = json.loads(value or "{}")
+    except json.JSONDecodeError as exc:
+        raise LocalAgentConfigurationError(
+            "NEXUS_SSW_REMOTE_AUTH_BINDINGS_JSON inválido."
+        ) from exc
+    if not isinstance(raw, dict):
+        raise LocalAgentConfigurationError(
+            "Vínculos de autenticação remota devem ser um objeto."
+        )
+    result: dict[str, str] = {}
+    for identity, agent_id in raw.items():
+        if not isinstance(identity, str) or identity != identity.strip():
+            raise LocalAgentConfigurationError("Identidade remota inválida.")
+        parts = identity.split("/", 1)
+        if (
+            len(parts) != 2
+            or not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", parts[0])
+            or not re.fullmatch(r"[A-Za-z0-9._-]{1,80}", parts[1])
+            or not isinstance(agent_id, str)
+            or agent_id not in known_agents
+        ):
+            raise LocalAgentConfigurationError("Vínculo de autenticação remota inválido.")
+        key = f"{parts[0].strip().casefold()}/{parts[1].strip().casefold()}"
+        if key in result:
+            raise LocalAgentConfigurationError("Vínculo de autenticação remota duplicado.")
+        result[key] = agent_id
+    return result
+
+
 @dataclass(frozen=True)
 class ServerSettings:
     enabled: bool
@@ -114,6 +146,11 @@ class ServerSettings:
     bootstrap_per_hour: int
     remote_auth_enabled: bool
     remote_auth_agent_id: str
+    remote_auth_bindings: dict[str, str]
+    agent_offline_seconds: int
+    pairing_enabled: bool
+    pairing_ttl_seconds: int
+    paired_tasks: frozenset[str]
     remote_auth_timeout_seconds: int
     remote_auth_request_ttl_seconds: int
     remote_auth_per_minute: int
@@ -138,6 +175,10 @@ def load_server_settings() -> ServerSettings:
     remote_auth_agent_id = os.getenv(
         "NEXUS_SSW_REMOTE_AUTH_AGENT_ID", ""
     ).strip()
+    remote_auth_bindings = _remote_auth_bindings(
+        os.getenv("NEXUS_SSW_REMOTE_AUTH_BINDINGS_JSON", "{}"),
+        known_agents=set(tokens),
+    )
     settings = ServerSettings(
         enabled=enabled,
         database_path=Path(os.getenv(
@@ -170,6 +211,18 @@ def load_server_settings() -> ServerSettings:
         ),
         remote_auth_enabled=remote_auth_enabled,
         remote_auth_agent_id=remote_auth_agent_id,
+        remote_auth_bindings=remote_auth_bindings,
+        agent_offline_seconds=_bounded_int(
+            "NEXUS_LOCAL_AGENT_OFFLINE_SECONDS", 30, 10, 3600
+        ),
+        pairing_enabled=_enabled("NEXUS_LOCAL_AGENT_PAIRING_ENABLED", False),
+        pairing_ttl_seconds=_bounded_int(
+            "NEXUS_LOCAL_AGENT_PAIRING_TTL_SECONDS", 600, 60, 3600
+        ),
+        paired_tasks=_tasks(os.getenv(
+            "NEXUS_LOCAL_AGENT_PAIRED_TASKS",
+            "system.ping,ssw.documentos_gce,ssw.op001.nfd,ssw.op001.transporte,ssw.session.close",
+        )),
         remote_auth_timeout_seconds=_bounded_int(
             "NEXUS_SSW_REMOTE_AUTH_TIMEOUT_SECONDS", 960, 30, 1200
         ),
@@ -211,19 +264,44 @@ def load_server_settings() -> ServerSettings:
             raise LocalAgentConfigurationError(
                 "O bootstrap exige system.ping na allowlist global."
             )
+    if settings.pairing_enabled and not settings.paired_tasks <= settings.allowed_tasks:
+        raise LocalAgentConfigurationError(
+            "Tarefa de agente pareado fora da allowlist global."
+        )
+    if settings.pairing_enabled and not settings.enabled:
+        raise LocalAgentConfigurationError(
+            "Pareamento não pode ser habilitado com o Local Agent desativado."
+        )
     if settings.remote_auth_enabled:
         if not settings.enabled:
             raise LocalAgentConfigurationError(
                 "Autenticação remota exige o Local Agent habilitado."
             )
-        if (
-            not AGENT_ID_RE.fullmatch(settings.remote_auth_agent_id)
-            or settings.remote_auth_agent_id not in settings.tokens
-        ):
+        legacy_agent_valid = (
+            bool(settings.remote_auth_agent_id)
+            and AGENT_ID_RE.fullmatch(settings.remote_auth_agent_id) is not None
+            and settings.remote_auth_agent_id in settings.tokens
+        )
+        if not settings.remote_auth_bindings and not legacy_agent_valid:
             raise LocalAgentConfigurationError(
-                "Agente autorizado para autenticação remota inválido."
+                "Autenticação remota exige vínculos usuário/agente ou agente legado válido."
             )
     return settings
+
+
+def remote_auth_agent_for(settings: ServerSettings, *, dominio: str, usuario: str) -> str:
+    """Resolve exclusivamente no backend o agente provisionado para a identidade."""
+    key = f"{str(dominio).strip().casefold()}/{str(usuario).strip().casefold()}"
+    if settings.remote_auth_bindings:
+        agent_id = settings.remote_auth_bindings.get(key, "")
+        if not agent_id:
+            raise LookupError("Usuário sem computador Nexus autorizado.")
+        return agent_id
+    if settings.pairing_enabled:
+        raise LookupError("Usuário sem computador Nexus autorizado.")
+    if settings.remote_auth_agent_id:
+        return settings.remote_auth_agent_id
+    raise LookupError("Usuário sem computador Nexus autorizado.")
 
 
 @dataclass(frozen=True)

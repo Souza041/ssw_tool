@@ -330,7 +330,7 @@
       const status=await response.json();
       badge.dataset.state=status.state||'unknown';
       badge.textContent=status.message||'Estado da sessão SSW indisponível.';
-      if(status.state==='reauthentication_required')badge.href='/login';
+      if(status.state==='reauthentication_required'||status.state==='offline')badge.href='/login';
       else badge.removeAttribute('href');
     }catch(_error){badge.dataset.state='unknown';badge.textContent='Estado da sessão SSW indisponível.';}
   }

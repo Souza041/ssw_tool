@@ -17,6 +17,14 @@ from web.jobs import Job
 
 class FakeClient:
     usuario = "admin_teste"
+    agent_id = "windows-admin-teste"
+    session_binding = "s" * 48
+
+    def identity_payload(self):
+        return {
+            "dominio": "ROD", "usuario": self.usuario, "unidade": "CWB",
+            "session_binding": self.session_binding,
+        }
 
 
 class FakeLease:
@@ -92,6 +100,8 @@ def test_manual_endpoint_delegates_gce_without_notifications(web_request, monkey
     assert calls[0][0] == "ssw.documentos_gce"
     assert calls[0][1]["send_notifications"] is False
     assert calls[0][1]["preview_notifications"] is False
+    assert calls[0][2]["target_agent_id"] == "windows-admin-teste"
+    assert calls[0][2]["concurrency_key"] == f"ssw.session:{'s' * 48}"
 
 
 def test_manual_endpoint_reports_scheduled_or_manual_conflict(web_request, monkeypatch):

@@ -35,8 +35,17 @@ from web.session_store import obter_client
 router = APIRouter(tags=["Nexus Local Agent"])
 
 
+class AgentSessionReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_binding: str = Field(pattern=r"^[A-Za-z0-9_-]{32,128}$")
+    state: str = Field(pattern=r"^(authenticated|busy|reauthentication_required)$")
+    operation: str = Field(default="", max_length=120)
+    observed_unit: str = Field(default="", pattern=r"^$|^[A-Z0-9]{3,16}$")
+
+
 class ClaimRequest(BaseModel):
     capabilities: list[str] = Field(min_length=1, max_length=100)
+    sessions: list[AgentSessionReport] = Field(default_factory=list, max_length=20)
 
 
 class LeaseRequest(BaseModel):
@@ -87,6 +96,18 @@ class BootstrapPingRequest(BaseModel):
     message: str = Field(default="homologacao", min_length=1, max_length=200)
 
 
+class PairingCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    dominio: str = Field(pattern=r"^[A-Za-z0-9_-]{1,32}$")
+    usuario: str = Field(pattern=r"^[A-Za-z0-9._-]{1,80}$")
+
+
+class PairingRedeemRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    code: str = Field(pattern=r"^[0-9A-Fa-f]{12}-[0-9A-Fa-f]{12}$")
+    machine_name: str = Field(min_length=1, max_length=64)
+
+
 def _settings() -> ServerSettings:
     try:
         settings = load_server_settings()
@@ -108,25 +129,31 @@ def _repository(settings: ServerSettings) -> LocalAgentRepository:
 
 def _agent(
     settings: ServerSettings,
+    repository: LocalAgentRepository,
     agent_id: str,
     authorization: str,
-) -> str:
+) -> tuple[str, frozenset[str]]:
     if not AGENT_ID_RE.fullmatch(agent_id):
         raise HTTPException(status_code=401, detail="Credenciais do agente inválidas.")
     prefix = "Bearer "
     token = authorization[len(prefix):] if authorization.startswith(prefix) else ""
     expected = settings.tokens.get(agent_id, "")
-    if not token or not expected or not hmac.compare_digest(token, expected):
-        raise HTTPException(status_code=401, detail="Credenciais do agente inválidas.")
-    return agent_id
+    if token and expected and hmac.compare_digest(token, expected):
+        return agent_id, settings.agent_tasks.get(agent_id, frozenset())
+    dynamic_tasks = repository.authenticate_dynamic_agent(agent_id=agent_id, token=token)
+    if not token or dynamic_tasks is None:
+        raise HTTPException(status_code=401, detail="Credenciais do agente inválidas ou revogadas.")
+    return agent_id, dynamic_tasks
 
 
 def _agent_context(
     agent_id: str,
     authorization: str,
-) -> tuple[ServerSettings, LocalAgentRepository, str]:
+) -> tuple[ServerSettings, LocalAgentRepository, str, frozenset[str]]:
     settings = _settings()
-    return settings, _repository(settings), _agent(settings, agent_id, authorization)
+    repository = _repository(settings)
+    authenticated_id, tasks = _agent(settings, repository, agent_id, authorization)
+    return settings, repository, authenticated_id, tasks
 
 
 def _bootstrap_context(request: Request):
@@ -236,11 +263,11 @@ def claim(
     x_nexus_agent_id: str = Header("", alias="X-Nexus-Agent-Id"),
     authorization: str = Header("", alias="Authorization"),
 ):
-    settings, repository, agent_id = _agent_context(x_nexus_agent_id, authorization)
+    settings, repository, agent_id, authorized_tasks = _agent_context(x_nexus_agent_id, authorization)
     capabilities = (
         set(body.capabilities)
         & set(settings.allowed_tasks)
-        & set(settings.agent_tasks.get(agent_id, ()))
+        & set(authorized_tasks)
     )
     if not capabilities:
         raise HTTPException(status_code=422, detail="Executor sem capacidades autorizadas.")
@@ -248,6 +275,7 @@ def claim(
         agent_id=agent_id,
         capabilities=capabilities,
         lease_seconds=settings.lease_seconds,
+        sessions=[item.model_dump() for item in body.sessions],
     ))
     return {"job": job, "lease_seconds": settings.lease_seconds}
 
@@ -258,7 +286,7 @@ def heartbeat(
     x_nexus_agent_id: str = Header("", alias="X-Nexus-Agent-Id"),
     authorization: str = Header("", alias="Authorization"),
 ):
-    settings, repository, agent_id = _agent_context(x_nexus_agent_id, authorization)
+    settings, repository, agent_id, _ = _agent_context(x_nexus_agent_id, authorization)
     return _lease_error(lambda: repository.heartbeat(
         job_id=body.job_id,
         agent_id=agent_id,
@@ -275,7 +303,7 @@ def logs(
     x_nexus_agent_id: str = Header("", alias="X-Nexus-Agent-Id"),
     authorization: str = Header("", alias="Authorization"),
 ):
-    settings, repository, agent_id = _agent_context(x_nexus_agent_id, authorization)
+    settings, repository, agent_id, _ = _agent_context(x_nexus_agent_id, authorization)
     accepted = _lease_error(lambda: repository.append_logs(
         job_id=body.job_id,
         agent_id=agent_id,
@@ -291,7 +319,7 @@ def complete(
     x_nexus_agent_id: str = Header("", alias="X-Nexus-Agent-Id"),
     authorization: str = Header("", alias="Authorization"),
 ):
-    settings, repository, agent_id = _agent_context(x_nexus_agent_id, authorization)
+    settings, repository, agent_id, _ = _agent_context(x_nexus_agent_id, authorization)
     status = _lease_error(lambda: repository.complete(
         job_id=body.job_id,
         agent_id=agent_id,
@@ -310,10 +338,17 @@ def _remote_auth_agent(
     settings = _settings()
     if not settings.remote_auth_enabled:
         raise HTTPException(status_code=503, detail="Autenticação remota desativada.")
-    agent_id = _agent(settings, x_nexus_agent_id, authorization)
-    if agent_id != settings.remote_auth_agent_id:
+    repository = _repository(settings)
+    agent_id, _ = _agent(settings, repository, x_nexus_agent_id, authorization)
+    static_authorized = set(settings.remote_auth_bindings.values())
+    if settings.remote_auth_agent_id:
+        static_authorized.add(settings.remote_auth_agent_id)
+    if agent_id in settings.tokens and agent_id not in static_authorized:
         raise HTTPException(status_code=403, detail="Agente não autorizado para autenticação.")
-    return settings, agent_id, settings.tokens[agent_id]
+    proof_secret = settings.tokens.get(agent_id) or repository.dynamic_agent_proof_secret(agent_id)
+    if not proof_secret:
+        raise HTTPException(status_code=401, detail="Credenciais do agente inválidas ou revogadas.")
+    return settings, agent_id, proof_secret
 
 
 def _remote_auth_claim_impl(
@@ -363,6 +398,23 @@ async def remote_auth_complete(
     authorization: str = Header("", alias="Authorization"),
 ):
     return _remote_auth_complete_impl(body, x_nexus_agent_id, authorization)
+
+
+@router.post("/api/local-agent/v1/pair", status_code=201)
+def redeem_pairing(body: PairingRedeemRequest):
+    settings = _settings()
+    if not settings.pairing_enabled:
+        raise HTTPException(status_code=503, detail="Pareamento de agentes desativado.")
+    try:
+        result = _repository(settings).redeem_pairing(
+            code=body.code,
+            machine_name=body.machine_name,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    return result
 
 
 @router.post("/api/local-agent/v1/bootstrap/system-ping", status_code=202)
@@ -460,6 +512,42 @@ def admin_overview(request: Request, limit: int = Query(50, ge=1, le=200)):
         "bootstrap_audit": repository.list_bootstrap_audit(limit=100),
         "csrf_token": csrf_token,
     }
+
+
+@router.post("/admin/local-agent/pairings", status_code=201)
+def admin_create_pairing(
+    request: Request,
+    body: PairingCreateRequest,
+    x_csrf_token: str = Header("", alias="X-CSRF-Token"),
+):
+    settings, repository = _admin(request)
+    _csrf(request, x_csrf_token)
+    if not settings.pairing_enabled:
+        raise HTTPException(status_code=503, detail="Pareamento de agentes desativado.")
+    client = obter_client(request)
+    try:
+        code = repository.create_pairing(
+            identity_key=f"{body.dominio}/{body.usuario}",
+            tasks=settings.paired_tasks,
+            created_by=str(getattr(client, "usuario", "admin") or "admin"),
+            ttl_seconds=settings.pairing_ttl_seconds,
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    return {"code": code, "expires_in_seconds": settings.pairing_ttl_seconds}
+
+
+@router.post("/admin/local-agent/agents/{agent_id}/revoke")
+def admin_revoke_agent(
+    request: Request,
+    agent_id: str = ApiPath(pattern=r"^[a-z][a-z0-9_-]{2,63}$"),
+    x_csrf_token: str = Header("", alias="X-CSRF-Token"),
+):
+    _, repository = _admin(request)
+    _csrf(request, x_csrf_token)
+    if not repository.revoke_agent(agent_id):
+        raise HTTPException(status_code=404, detail="Agente dinâmico ativo não encontrado.")
+    return {"revoked": True, "agent_id": agent_id}
 
 
 @router.post("/admin/local-agent/jobs", status_code=202)

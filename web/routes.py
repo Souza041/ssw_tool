@@ -236,10 +236,28 @@ def login_run(
             raise ValueError("Informe um CPF com 11 dígitos.")
 
         if _remote_auth_enabled():
-            from modules.local_agent.config import load_server_settings
+            from modules.local_agent.config import load_server_settings, remote_auth_agent_for
             from modules.local_agent.remote_auth import RemoteIdentity, broker
+            from modules.local_agent.repository import LocalAgentRepository
 
             settings = load_server_settings()
+            repository = LocalAgentRepository(
+                settings.database_path,
+                max_payload_bytes=settings.max_payload_bytes,
+                max_result_bytes=settings.max_result_bytes,
+                max_log_bytes=settings.max_log_bytes,
+            )
+            agent_id = repository.bound_agent(dominio=dominio, usuario=usuario)
+            if agent_id is None:
+                agent_id = remote_auth_agent_for(
+                    settings, dominio=dominio, usuario=usuario
+                )
+            if not repository.agent_online(
+                agent_id, offline_seconds=settings.agent_offline_seconds
+            ):
+                raise ConnectionError(
+                    "O Nexus Local Agent deste computador está offline. Abra-o e tente novamente."
+                )
             binding = str(request.session.get("remote_auth_binding") or "")
             request_id = broker.create(
                 RemoteIdentity(dominio, usuario, unidade, binding),
@@ -247,6 +265,7 @@ def login_run(
                 ttl_seconds=settings.remote_auth_request_ttl_seconds,
                 per_minute=settings.remote_auth_per_minute,
                 max_pending=settings.remote_auth_max_pending,
+                target_agent_id=agent_id,
             )
             result = broker.wait_and_consume(
                 request_id,
@@ -260,7 +279,7 @@ def login_run(
                 usuario=result.usuario,
                 unidade=result.unidade,
                 session_binding=result.session_binding,
-                agent_id=settings.remote_auth_agent_id,
+                agent_id=result.agent_id,
             )
         else:
             client = SSWClient(
@@ -283,11 +302,14 @@ def login_run(
         return RedirectResponse("/", status_code=303)
 
     except Exception as exc:
-        error = (
-            "Nao foi possivel confirmar a autenticacao no agente Windows. Tente novamente."
-            if _remote_auth_enabled()
-            else str(exc)
-        )
+        if _remote_auth_enabled():
+            safe_messages = (ValueError, LookupError, ConnectionError, PermissionError)
+            error = str(exc) if isinstance(exc, safe_messages) else (
+                "Nao foi possivel confirmar a autenticacao no agente Windows. "
+                "Verifique se ele está conectado e tente novamente."
+            )
+        else:
+            error = str(exc)
         return templates.TemplateResponse(
             "login.html",
             {

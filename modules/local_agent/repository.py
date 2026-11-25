@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import secrets
 import sqlite3
+import re
 from typing import Any, Iterator
 import uuid
 
@@ -138,6 +139,44 @@ class LocalAgentRepository:
                     first_seen_at TEXT NOT NULL,
                     last_seen_at TEXT NOT NULL,
                     current_job_id TEXT
+                );
+                CREATE TABLE IF NOT EXISTS local_agent_sessions (
+                    session_digest TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK(state IN (
+                        'authenticated','busy','reauthentication_required'
+                    )),
+                    operation TEXT NOT NULL DEFAULT '',
+                    observed_unit TEXT NOT NULL DEFAULT '',
+                    last_seen_at TEXT NOT NULL,
+                    FOREIGN KEY(agent_id) REFERENCES local_agent_agents(agent_id)
+                        ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_local_agent_sessions_agent
+                    ON local_agent_sessions(agent_id, last_seen_at);
+                CREATE TABLE IF NOT EXISTS local_agent_credentials (
+                    agent_id TEXT PRIMARY KEY,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    tasks_json TEXT NOT NULL,
+                    machine_name TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    revoked_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS local_agent_user_bindings (
+                    identity_key TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL,
+                    revoked_at TEXT,
+                    FOREIGN KEY(agent_id) REFERENCES local_agent_credentials(agent_id)
+                );
+                CREATE TABLE IF NOT EXISTS local_agent_pairings (
+                    code_hash TEXT PRIMARY KEY,
+                    identity_key TEXT NOT NULL,
+                    tasks_json TEXT NOT NULL,
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    used_at TEXT
                 );
                 CREATE TABLE IF NOT EXISTS local_agent_bootstrap_audit (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -477,6 +516,7 @@ class LocalAgentRepository:
         agent_id: str,
         capabilities: set[str] | frozenset[str],
         lease_seconds: int,
+        sessions: list[dict[str, str]] | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any] | None:
         checked_capabilities = sorted({checked_task(task) for task in capabilities})
@@ -498,6 +538,24 @@ class LocalAgentRepository:
                     capabilities_json=excluded.capabilities_json,
                     last_seen_at=excluded.last_seen_at
             """, (agent_id, capabilities_json, now_text, now_text))
+            db.execute("DELETE FROM local_agent_sessions WHERE agent_id=?", (agent_id,))
+            for session in sessions or []:
+                binding = str(session.get("session_binding") or "")
+                state = str(session.get("state") or "")
+                operation = str(session.get("operation") or "")[:120]
+                observed_unit = str(session.get("observed_unit") or "")[:16]
+                if (
+                    not 32 <= len(binding) <= 128
+                    or any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for character in binding)
+                    or state not in {"authenticated", "busy", "reauthentication_required"}
+                ):
+                    raise ValueError("Estado de sessão do agente inválido.")
+                digest = hashlib.sha256(binding.encode("utf-8")).hexdigest()
+                db.execute("""
+                    INSERT INTO local_agent_sessions (
+                        session_digest, agent_id, state, operation, observed_unit, last_seen_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                """, (digest, agent_id, state, operation, observed_unit, now_text))
             row = db.execute(f"""
                 SELECT id, task, payload_json, attempts, max_attempts
                 FROM local_agent_jobs
@@ -722,3 +780,205 @@ class LocalAgentRepository:
             **dict(row),
             "capabilities": json.loads(row["capabilities_json"]),
         } for row in rows]
+
+    @staticmethod
+    def _identity_key(value: str) -> str:
+        parts = str(value or "").strip().casefold().split("/", 1)
+        if (
+            len(parts) != 2
+            or not re.fullmatch(r"[a-z0-9_-]{1,32}", parts[0])
+            or not re.fullmatch(r"[a-z0-9._-]{1,80}", parts[1])
+        ):
+            raise ValueError("Identidade de pareamento inválida.")
+        return "/".join(parts)
+
+    def create_pairing(
+        self,
+        *,
+        identity_key: str,
+        tasks: frozenset[str],
+        created_by: str,
+        ttl_seconds: int,
+        now: datetime | None = None,
+    ) -> str:
+        identity_key = self._identity_key(identity_key)
+        checked_tasks = sorted({checked_task(task) for task in tasks})
+        if not checked_tasks:
+            raise ValueError("Pareamento sem tarefas autorizadas.")
+        current = now or utc_now()
+        code = f"{secrets.token_hex(6).upper()}-{secrets.token_hex(6).upper()}"
+        code_hash = hashlib.sha256(code.encode("ascii")).hexdigest()
+        with self._transaction(immediate=True) as db:
+            active = db.execute("""
+                SELECT 1 FROM local_agent_user_bindings
+                WHERE identity_key=? AND revoked_at IS NULL
+            """, (identity_key,)).fetchone()
+            if active is not None:
+                raise RuntimeError("Usuário já possui um agente ativo; revogue-o antes de parear novamente.")
+            db.execute("""
+                INSERT INTO local_agent_pairings (
+                    code_hash, identity_key, tasks_json, created_by, created_at, expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                code_hash, identity_key,
+                json.dumps(checked_tasks, separators=(",", ":")),
+                str(created_by or "admin")[:80], utc_text(current),
+                utc_text(current + timedelta(seconds=ttl_seconds)),
+            ))
+        return code
+
+    def redeem_pairing(
+        self,
+        *,
+        code: str,
+        machine_name: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        normalized = str(code or "").strip().upper()
+        if not re.fullmatch(r"[0-9A-F]{12}-[0-9A-F]{12}", normalized):
+            raise LookupError("Código de pareamento inválido ou expirado.")
+        machine = re.sub(r"[^A-Za-z0-9._-]", "-", str(machine_name or "windows").strip())[:64]
+        machine = machine or "windows"
+        current = now or utc_now()
+        timestamp = utc_text(current)
+        code_hash = hashlib.sha256(normalized.encode("ascii")).hexdigest()
+        token = secrets.token_urlsafe(48)
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        with self._transaction(immediate=True) as db:
+            pairing = db.execute("""
+                SELECT identity_key, tasks_json FROM local_agent_pairings
+                WHERE code_hash=? AND used_at IS NULL AND expires_at>=?
+            """, (code_hash, timestamp)).fetchone()
+            if pairing is None:
+                raise LookupError("Código de pareamento inválido, expirado ou já utilizado.")
+            active = db.execute("""
+                SELECT 1 FROM local_agent_user_bindings
+                WHERE identity_key=? AND revoked_at IS NULL
+            """, (pairing["identity_key"],)).fetchone()
+            if active is not None:
+                raise RuntimeError("Usuário já possui um agente ativo.")
+            slug = re.sub(r"[^a-z0-9]+", "-", machine.casefold()).strip("-")[:32] or "windows"
+            agent_id = f"{slug}-{secrets.token_hex(4)}"
+            if not agent_id[0].isalpha():
+                agent_id = "windows-" + agent_id
+            db.execute("""
+                INSERT INTO local_agent_credentials (
+                    agent_id, token_hash, tasks_json, machine_name, created_at
+                ) VALUES (?, ?, ?, ?, ?)
+            """, (agent_id, token_hash, pairing["tasks_json"], machine, timestamp))
+            db.execute("""
+                INSERT INTO local_agent_user_bindings (
+                    identity_key, agent_id, created_at
+                ) VALUES (?, ?, ?)
+            """, (pairing["identity_key"], agent_id, timestamp))
+            db.execute(
+                "UPDATE local_agent_pairings SET used_at=? WHERE code_hash=? AND used_at IS NULL",
+                (timestamp, code_hash),
+            )
+        return {"agent_id": agent_id, "token": token, "tasks": json.loads(pairing["tasks_json"])}
+
+    def authenticate_dynamic_agent(self, *, agent_id: str, token: str) -> frozenset[str] | None:
+        with self._connect() as db:
+            row = db.execute("""
+                SELECT token_hash, tasks_json FROM local_agent_credentials
+                WHERE agent_id=? AND revoked_at IS NULL
+            """, (agent_id,)).fetchone()
+        if row is None:
+            return None
+        supplied = hashlib.sha256(str(token).encode("utf-8")).hexdigest()
+        if not secrets.compare_digest(supplied, str(row["token_hash"])):
+            return None
+        return frozenset(json.loads(row["tasks_json"]))
+
+    def dynamic_agent_proof_secret(self, agent_id: str) -> str | None:
+        with self._connect() as db:
+            row = db.execute("""
+                SELECT token_hash FROM local_agent_credentials
+                WHERE agent_id=? AND revoked_at IS NULL
+            """, (agent_id,)).fetchone()
+        return f"sha256:{row['token_hash']}" if row is not None else None
+
+    def bound_agent(self, *, dominio: str, usuario: str) -> str | None:
+        identity_key = self._identity_key(f"{dominio}/{usuario}")
+        with self._connect() as db:
+            row = db.execute("""
+                SELECT b.agent_id FROM local_agent_user_bindings b
+                JOIN local_agent_credentials c ON c.agent_id=b.agent_id
+                WHERE b.identity_key=? AND b.revoked_at IS NULL AND c.revoked_at IS NULL
+            """, (identity_key,)).fetchone()
+        return str(row["agent_id"]) if row is not None else None
+
+    def revoke_agent(self, agent_id: str, *, now: datetime | None = None) -> bool:
+        timestamp = utc_text(now or utc_now())
+        with self._transaction(immediate=True) as db:
+            updated = db.execute("""
+                UPDATE local_agent_credentials SET revoked_at=?
+                WHERE agent_id=? AND revoked_at IS NULL
+            """, (timestamp, agent_id))
+            if updated.rowcount != 1:
+                return False
+            db.execute("""
+                UPDATE local_agent_user_bindings SET revoked_at=?
+                WHERE agent_id=? AND revoked_at IS NULL
+            """, (timestamp, agent_id))
+            db.execute("""
+                UPDATE local_agent_jobs
+                SET status='CANCELLED', cancellation_requested=1, finished_at=?, updated_at=?,
+                    error_message='Agente revogado pelo administrador.'
+                WHERE target_agent_id=? AND status='QUEUED'
+            """, (timestamp, timestamp, agent_id))
+            db.execute("DELETE FROM local_agent_sessions WHERE agent_id=?", (agent_id,))
+        return True
+
+    def session_status(
+        self,
+        *,
+        agent_id: str,
+        session_binding: str,
+        offline_seconds: int,
+        now: datetime | None = None,
+    ) -> dict[str, str]:
+        current = now or utc_now()
+        digest = hashlib.sha256(session_binding.encode("utf-8")).hexdigest()
+        with self._connect() as db:
+            agent = db.execute(
+                "SELECT last_seen_at FROM local_agent_agents WHERE agent_id=?", (agent_id,)
+            ).fetchone()
+            session = db.execute("""
+                SELECT state, operation, observed_unit, last_seen_at
+                FROM local_agent_sessions
+                WHERE session_digest=? AND agent_id=?
+            """, (digest, agent_id)).fetchone()
+        if agent is None:
+            return {"state": "offline", "message": "Agente deste computador ainda não se conectou.", "operation": "", "observed_unit": ""}
+        last_seen = datetime.fromisoformat(str(agent["last_seen_at"]))
+        if current - last_seen > timedelta(seconds=offline_seconds):
+            return {"state": "offline", "message": "Agente deste computador está offline. Inicie o Nexus Local Agent.", "operation": "", "observed_unit": ""}
+        if session is None:
+            return {"state": "connecting", "message": "Confirmando a sessão SSW no agente deste computador.", "operation": "", "observed_unit": ""}
+        state = str(session["state"])
+        operation = str(session["operation"] or "")
+        unit = str(session["observed_unit"] or "")
+        if state == "reauthentication_required":
+            message = "Sessão SSW expirada ou Chromium desconectado. Faça login novamente."
+        elif state == "busy":
+            message = f"Automação em andamento: {operation}." if operation else "Sessão SSW ocupada por outra automação."
+        else:
+            message = "Sessão SSW autenticada no agente deste computador."
+        return {"state": state, "message": message, "operation": operation, "observed_unit": unit}
+
+    def agent_online(
+        self,
+        agent_id: str,
+        *,
+        offline_seconds: int,
+        now: datetime | None = None,
+    ) -> bool:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT last_seen_at FROM local_agent_agents WHERE agent_id=?", (agent_id,)
+            ).fetchone()
+        if row is None:
+            return False
+        last_seen = datetime.fromisoformat(str(row["last_seen_at"]))
+        return (now or utc_now()) - last_seen <= timedelta(seconds=offline_seconds)

@@ -59,6 +59,7 @@ class RemoteAuthResult:
     usuario: str
     unidade: str
     session_binding: str = field(repr=False)
+    agent_id: str
 
 
 @dataclass
@@ -68,6 +69,7 @@ class _PendingRequest:
     session_digest: str = field(repr=False)
     identity_fingerprint: str
     identity: RemoteIdentity = field(repr=False)
+    target_agent_id: str | None
     created_at: float
     expires_at: float
     event: threading.Event = field(default_factory=threading.Event, repr=False)
@@ -135,7 +137,11 @@ def response_proof(
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
-    return hmac.new(secret.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
+    if secret.startswith("sha256:") and re.fullmatch(r"sha256:[0-9a-f]{64}", secret):
+        key = bytes.fromhex(secret.split(":", 1)[1])
+    else:
+        key = hashlib.sha256(secret.encode("utf-8")).digest()
+    return hmac.new(key, canonical, hashlib.sha256).hexdigest()
 
 
 class RemoteAuthBroker:
@@ -174,6 +180,7 @@ class RemoteAuthBroker:
         ttl_seconds: int,
         per_minute: int,
         max_pending: int,
+        target_agent_id: str | None = None,
     ) -> str:
         clean = validate_identity(identity)
         if not hmac.compare_digest(clean.session_binding, session_binding):
@@ -200,6 +207,7 @@ class RemoteAuthBroker:
                 session_digest=session_digest,
                 identity_fingerprint=identity_fingerprint(**clean.as_payload()),
                 identity=clean,
+                target_agent_id=target_agent_id,
                 created_at=now,
                 expires_at=now + ttl_seconds,
             )
@@ -212,6 +220,10 @@ class RemoteAuthBroker:
             self._cleanup(now)
             for pending in self._pending.values():
                 if pending.state != "PENDING":
+                    continue
+                if pending.target_agent_id is not None and not hmac.compare_digest(
+                    pending.target_agent_id, agent_id
+                ):
                     continue
                 pending.state = "CLAIMED"
                 pending.agent_id = agent_id
@@ -294,6 +306,7 @@ class RemoteAuthBroker:
                 usuario=identity.usuario,
                 unidade=identity.unidade,
                 session_binding=identity.session_binding,
+                agent_id=str(pending.agent_id or ""),
             )
 
 

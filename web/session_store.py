@@ -29,12 +29,29 @@ class RemoteAuthenticatedClient:
         }
 
     def session_status(self) -> dict[str, str]:
-        return {
-            "state": "authenticated",
-            "message": "Sessao SSW autenticada no agente Windows.",
-            "operation": "",
-            "observed_unit": self.unidade,
-        }
+        try:
+            from modules.local_agent.config import load_server_settings
+            from modules.local_agent.repository import LocalAgentRepository
+
+            settings = load_server_settings()
+            repository = LocalAgentRepository(
+                settings.database_path,
+                max_payload_bytes=settings.max_payload_bytes,
+                max_result_bytes=settings.max_result_bytes,
+                max_log_bytes=settings.max_log_bytes,
+            )
+            return repository.session_status(
+                agent_id=self.agent_id,
+                session_binding=self.session_binding,
+                offline_seconds=settings.agent_offline_seconds,
+            )
+        except Exception:
+            return {
+                "state": "offline",
+                "message": "Nao foi possivel consultar o agente deste computador.",
+                "operation": "",
+                "observed_unit": self.unidade,
+            }
 
     def close(self) -> None:
         try:
