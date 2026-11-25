@@ -177,7 +177,7 @@ class OP001Coleta:
             html_final = self.confirmar_unidade_remetente(html_final)
 
         return self.extrair_resultado(html_final)
-    
+
     def extrair_hidden_inputs(self, html: str) -> dict:
         decoded = unquote(unescape(html or ""))
 
@@ -230,7 +230,7 @@ class OP001Coleta:
         texto_limpo = re.sub(r"\s+", " ", texto_limpo).strip()
 
         match = re.search(
-            r"Coleta\s+([A-Z]{3})\s+(\d+).*?INCLU[IÍ]DA\s+com\s+sucesso",
+            r"Coleta\s+([A-Z][A-Z0-9]{2})\s+(\d+).*?INCLU[IÍ]DA\s+com\s+sucesso",
             texto_limpo,
             flags=re.I,
         )
@@ -260,7 +260,7 @@ class OP001Coleta:
             "mensagem": texto_limpo[:500],
             "raw": decoded[:3000],
         }
-    
+
     def salvar_coleta_nfd(
         self,
         nfd: str,
@@ -372,7 +372,7 @@ class OP001Coleta:
         )
 
         return response.text
-    
+
     def consultar_cliente(self, cnpj: str) -> dict:
         response = self.client.get(
             "/bin/ssw0017",
@@ -407,7 +407,7 @@ class OP001Coleta:
             "filial": get("fil"),
             "credito": get("credito"),
         }
-    
+
     def consultar_destinatario(self, cnpj: str) -> dict:
         response = self.client.get(
             "/bin/ssw0017",
@@ -482,7 +482,7 @@ class OP001Coleta:
                 return html_atual
 
         return html_atual
-    
+
     def salvar_coleta_transporte(
         self,
         nome_cliente: str,
