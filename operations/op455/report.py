@@ -1086,7 +1086,10 @@ class OP455Report:
                 content=html.encode("utf-8"),
                 status_code=200,
                 headers={"Content-Type": "text/html"},
-                url=f"{self.client.base_url.rstrip('/')}/bin/ssw0230",
+                url=(
+                    f"{getattr(self.client, 'base_url', settings.base_url).rstrip('/')}"
+                    "/bin/ssw0230"
+                ),
             )
         )
 

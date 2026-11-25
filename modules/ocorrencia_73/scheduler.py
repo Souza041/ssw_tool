@@ -108,6 +108,24 @@ def _executar_ocorrencia_73_agendada_serializada(
         )
         return None
 
+    from modules.local_agent.delegation import delegation_enabled
+    if delegation_enabled():
+        logger.warning(
+            "[OCORRENCIA 73][%s] Bloqueada durante a fase de delegação SSW.", fluxo
+        )
+        return None
+
+    return executar_ocorrencia_73_local(
+        fluxo=fluxo, reference_date=data_referencia
+    )
+
+
+def executar_ocorrencia_73_local(
+    *, fluxo: str, reference_date: date, raise_on_error: bool = False
+) -> dict | None:
+    """Executa a regra existente no host atual, sem possibilidade de redelegação."""
+    data_referencia = reference_date
+
     logger.info(
         "[OCORRENCIA 73][%s] Iniciando execução agendada para %s.",
         fluxo,
@@ -163,10 +181,12 @@ def _executar_ocorrencia_73_agendada_serializada(
             "[OCORRENCIA 73][%s] Falha na execução agendada.",
             fluxo,
         )
+        if raise_on_error:
+            raise
         return None
 
 
-def executar_rechecagens_big():
+def executar_rechecagens_big_local(*, raise_on_error: bool = False):
     # A data é da pendência persistida; sexta 00h20 pode continuar a quinta.
     if not rechecagem_big_habilitada() or DRY_RUN:
         return []
@@ -181,7 +201,17 @@ def executar_rechecagens_big():
         )
     except Exception:
         logger.exception("[OC73] Falha na rodada de rechecagem BIG.")
+        if raise_on_error:
+            raise
         return []
+
+
+def executar_rechecagens_big():
+    from modules.local_agent.delegation import delegation_enabled
+    if delegation_enabled():
+        logger.warning("[OC73][BIG] Rechecagem bloqueada durante a delegação SSW.")
+        return []
+    return executar_rechecagens_big_local()
 
 
 def iniciar_scheduler_ocorrencia_73() -> bool:

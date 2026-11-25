@@ -15,6 +15,7 @@ class SSWClient:
         senha: str | None = None,
         unidade: str | None = None,
         auth_mode: str | None = None,
+        session_binding: str | None = None,
     ) -> None:
         settings.validate(required_login=False)
 
@@ -22,6 +23,7 @@ class SSWClient:
         self.timeout = settings.timeout
         self.session = requests.Session()
         self.auth_mode = str(auth_mode or settings.auth_mode).strip().lower()
+        self.session_binding = str(session_binding or "").strip() or None
 
         self.dominio = dominio or settings.dominio
         self.usuario = usuario or settings.usuario
@@ -107,13 +109,16 @@ class SSWClient:
         if self.auth_mode == "browser":
             from ssw.browser_transport import authenticated_browser_transport
 
-            self.session = authenticated_browser_transport(
-                domain=self.dominio,
-                user=self.usuario,
-                unit=self.unidade,
-                base_url=self.base_url,
-                timeout_seconds=settings.human_login_timeout,
-            )
+            transport_options = {
+                "domain": self.dominio,
+                "user": self.usuario,
+                "unit": self.unidade,
+                "base_url": self.base_url,
+                "timeout_seconds": settings.human_login_timeout,
+            }
+            if self.session_binding is not None:
+                transport_options["session_binding"] = self.session_binding
+            self.session = authenticated_browser_transport(**transport_options)
             self.authenticated_unit = self.session.observed_unit
             return None
 

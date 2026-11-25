@@ -5,6 +5,7 @@
   <div class="auth-panel"><div class="auth-eyebrow">ACESSO CORPORATIVO</div><h2>Bem-vindo de volta</h2><p>{% if browser_auth %}Informe a identidade esperada. O login e o CAPTCHA serão concluídos por você na janela oficial do SSW.{% else %}Entre com suas credenciais do SSW para continuar.{% endif %}</p>
   {% if error %}<div class="nexus-error" role="alert">{{ error }}</div>{% endif %}
   <form method="post" id="ssw-login-form" autocomplete="on">
+  <input type="hidden" name="login_csrf" value="{{ login_csrf }}">
   <div class="auth-fields"><div><label for="dominio">Domínio</label><input id="dominio" name="dominio" value="ROD" required></div><div><label for="unidade">Unidade</label><input id="unidade" name="unidade" value="CWB" required></div></div>
   {% if not browser_auth %}<label for="cpf">CPF</label><input id="cpf" name="cpf" inputmode="numeric" maxlength="14" placeholder="000.000.000-00" autocomplete="off" required>{% endif %}
   <label for="usuario">Usuário</label><input id="usuario" name="usuario" autocomplete="username" required placeholder="Seu usuário SSW">

@@ -9,7 +9,7 @@ executam as operacoes web do Nexus.
 from __future__ import annotations
 
 from concurrent.futures import Future
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import atexit
 from pathlib import Path
 import queue
@@ -49,6 +49,10 @@ class SSWBrowserAuthenticationError(RuntimeError):
 
 class SSWBrowserTransportError(RuntimeError):
     """Falha sanitizada no transporte; nao inclui payload nem conteudo da pagina."""
+
+
+class SSWUncertainResultError(SSWBrowserTransportError):
+    """A requisicao pode ter chegado ao SSW e nao pode ser repetida automaticamente."""
 
 
 class SSWSessionBusyError(RuntimeError):
@@ -107,15 +111,21 @@ class _OperationCoordinator:
 class BrowserIdentity:
     domain: str
     user: str
+    session_binding: str = field(default="local", repr=False)
 
     @classmethod
-    def checked(cls, domain: str, user: str) -> "BrowserIdentity":
+    def checked(
+        cls, domain: str, user: str, session_binding: str | None = None,
+    ) -> "BrowserIdentity":
         values = tuple(str(value or "").strip().upper() for value in (domain, user))
         if not all(values):
             raise SSWBrowserAuthenticationError("Dominio e usuario esperados sao obrigatorios.")
         if len(values[0]) > 16 or len(values[1]) > 80:
             raise SSWBrowserAuthenticationError("Identidade SSW fora do limite permitido.")
-        return cls(*values)
+        binding = str(session_binding or "local").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", binding):
+            raise SSWBrowserAuthenticationError("Vinculo da sessao SSW invalido.")
+        return cls(*values, binding)
 
 
 def _checked_requested_unit(unit: str) -> str:
@@ -436,7 +446,7 @@ class _BrowserWorker:
                 raise SSWBrowserAuthenticationError(
                     "O navegador SSW foi encerrado; realize nova autenticacao humana."
                 ) from None
-            raise SSWBrowserTransportError(
+            raise SSWUncertainResultError(
                 "Falha no transporte SSW; o resultado da requisicao pode ser incerto."
             ) from None
         try:
@@ -563,9 +573,10 @@ _registry_lock = threading.RLock()
 
 def authenticated_browser_transport(
     *, domain: str, user: str, unit: str, base_url: str, timeout_seconds: int = 900,
+    session_binding: str | None = None,
 ) -> BrowserSessionTransport:
-    """Reutiliza somente uma sessao do mesmo dominio e usuario."""
-    identity = BrowserIdentity.checked(domain, user)
+    """Reutiliza somente uma sessao do mesmo usuario e vinculo remoto/local."""
+    identity = BrowserIdentity.checked(domain, user, session_binding)
     _checked_requested_unit(unit)
     with _registry_lock:
         current = _registry.get(identity)
@@ -605,6 +616,16 @@ def discard_browser_transport(transport: BrowserSessionTransport) -> None:
         if _registry.get(transport.identity) is transport:
             _registry.pop(transport.identity, None)
         transport.shutdown()
+
+
+def discard_browser_session(*, domain: str, user: str, session_binding: str) -> bool:
+    identity = BrowserIdentity.checked(domain, user, session_binding)
+    with _registry_lock:
+        transport = _registry.pop(identity, None)
+    if transport is None:
+        return False
+    transport.shutdown()
+    return True
 
 
 def discard_all_browser_transports() -> None:

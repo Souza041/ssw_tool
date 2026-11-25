@@ -111,6 +111,10 @@ def processar_planilha_nfd(
                 add_log(job, f"NFD={nfd} | Coleta={resultado.get('coleta', '')}")
 
         except Exception as exc:
+            from ssw.browser_transport import SSWUncertainResultError
+            if isinstance(exc, SSWUncertainResultError):
+                df.to_excel(output_file, index=False)
+                raise
             df.at[index, COLUNA_RESULTADO_STATUS] = "ERRO"
             df.at[index, COLUNA_RESULTADO_MSG] = str(exc)
 

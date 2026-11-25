@@ -34,6 +34,7 @@ if not QA_MODE:
     from modules.ocorrencia_73.scheduler import iniciar_scheduler_ocorrencia_73
     from modules.ocorrencia_73.routes import router as ocorrencia_73_router
     from modules.health_center.routes import router as health_center_router
+    from modules.local_agent.routes import router as local_agent_router
 
 mimetypes.add_type("text/css", ".css")
 mimetypes.add_type("application/javascript", ".js")
@@ -60,6 +61,14 @@ if QA_MODE:
 async def bloquear_operacoes_qa(request, call_next):
     if QA_MODE and request.url.path != "/qa/health" and not request.url.path.startswith("/static/"):
         return PlainTextResponse("Operações desabilitadas no ambiente QA.", status_code=503)
+    if not QA_MODE:
+        from modules.local_agent.vps_guard import direct_ssw_post_blocked
+
+        if direct_ssw_post_blocked(request.method, request.url.path):
+            return PlainTextResponse(
+                "Execução SSW direta bloqueada na VPS; use a interface Windows autorizada.",
+                status_code=503,
+            )
     return await call_next(request)
 
 app.add_middleware(
@@ -113,6 +122,7 @@ if not QA_MODE:
     app.include_router(lg_pod_router)
     app.include_router(ocorrencia_73_router)
     app.include_router(health_center_router)
+    app.include_router(local_agent_router)
     app.include_router(whirlpool_router)
     app.include_router(documentos_lg_router)
 

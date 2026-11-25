@@ -1,0 +1,15 @@
+; Referência para mesclar manualmente ao programa ssw_web já existente.
+; Preserve todas as opções, variáveis do Health Center e logs atuais.
+; Não crie um segundo servidor e não altere o Nginx.
+[program:ssw_web]
+directory=/home/automacao/bots/ssw_tool
+command=/home/automacao/venv/bin/python /home/automacao/bots/ssw_tool/scripts/run_nexus_server.py --env-file /etc/nexus/local-agent.env --host 127.0.0.1 --port 8000 --workers 1
+user=automacao
+autostart=true
+autorestart=true
+startsecs=5
+stopasgroup=true
+killasgroup=true
+redirect_stderr=true
+stdout_logfile=/var/log/nexus/ssw_web.log
+environment=PYTHONUNBUFFERED="1"

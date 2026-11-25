@@ -30,6 +30,7 @@ templates = Jinja2Templates(directory="web/templates")
 _manual_job_guard = threading.Lock()
 _latest_manual_job_id: str | None = None
 _manual_job_ids: set[str] = set()
+_manual_remote_job_ids: set[str] = set()
 
 
 def _require_documents_admin(request: Request) -> None:
@@ -114,6 +115,40 @@ def documentos_executar(
     if not expected or not csrf_token or not secrets.compare_digest(expected, csrf_token):
         raise HTTPException(status_code=403, detail="Token CSRF inválido. Recarregue a página.")
 
+    from modules.local_agent.delegation import delegation_enabled, enqueue_ssw_task
+    if delegation_enabled("ssw.documentos_gce"):
+        client = obter_client(request)
+        identity_payload = (
+            client.identity_payload()
+            if client is not None and callable(getattr(client, "identity_payload", None))
+            else {}
+        )
+        try:
+            job_id = enqueue_ssw_task(
+                "ssw.documentos_gce",
+                {
+                    "origin": "MANUAL",
+                    "send_notifications": False,
+                    "preview_notifications": False,
+                    **identity_payload,
+                },
+                idempotency_key=None,
+                concurrency_key="ssw.documentos_gce",
+                priority=50,
+                coalesce_active=True,
+                target_agent_id=getattr(client, "agent_id", None),
+            )
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from None
+        with _manual_job_guard:
+            _latest_manual_job_id = job_id
+            _manual_remote_job_ids.add(job_id)
+        return {
+            "accepted": True,
+            "job_id": job_id,
+            "message": "Execução enviada com segurança ao agente Windows.",
+        }
+
     try:
         execution_lease = acquire_execution_lock()
     except RuntimeError as exc:
@@ -147,6 +182,43 @@ def documentos_executar(
 def documentos_execution_status(request: Request, job_id: str = ""):
     _require_documents_admin(request)
     selected_id = job_id or _latest_manual_job_id or ""
+    from modules.local_agent.delegation import delegation_enabled
+    if selected_id and (
+        selected_id in _manual_remote_job_ids
+        or delegation_enabled("ssw.documentos_gce")
+    ):
+        from modules.local_agent.config import load_server_settings
+        from modules.local_agent.repository import LocalAgentRepository
+
+        settings = load_server_settings()
+        remote = LocalAgentRepository(
+            settings.database_path,
+            max_payload_bytes=settings.max_payload_bytes,
+            max_result_bytes=settings.max_result_bytes,
+            max_log_bytes=settings.max_log_bytes,
+        ).get_job(selected_id)
+        if remote is not None:
+            state = {
+                "QUEUED": "running", "LEASED": "running", "SUCCEEDED": "done",
+                "FAILED": "error", "CANCELLED": "error",
+            }.get(remote["status"], "error")
+            total = int(remote.get("progress_total") or 0)
+            progress = int(remote.get("progress_current") or 0)
+            return {
+                "available": True,
+                "job_id": selected_id,
+                "status": state,
+                "progress": progress,
+                "total": total,
+                "percent": round(progress * 100 / total) if total else 0,
+                "logs": [item["message"] for item in remote.get("logs", [])],
+                "error": remote.get("error_message"),
+                "message": {
+                    "running": "Execução aguardando ou em andamento no Windows.",
+                    "done": "Execução concluída no Windows. Indicadores atualizados.",
+                    "error": "A execução remota falhou ou foi cancelada.",
+                }[state],
+            }
     job = JOBS.get(selected_id) if selected_id in _manual_job_ids else None
     if job is None:
         return {

@@ -162,6 +162,10 @@ def processar_planilha_transporte(
                 add_log(job, f"Coleta gerada: {coleta_gerada}")
 
         except Exception as exc:
+            from ssw.browser_transport import SSWUncertainResultError
+            if isinstance(exc, SSWUncertainResultError):
+                wb.save(output_file)
+                raise
             ws[f"AG{linha_excel}"] = "ERRO"
             ws[f"AH{linha_excel}"] = str(exc)
 

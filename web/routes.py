@@ -1,5 +1,8 @@
 import json
 import time
+import os
+import secrets
+import base64
 
 import uuid
 import shutil
@@ -31,7 +34,13 @@ from modules.health_center.routes import dashboard_context, dependency_dashboard
 from web.admin_access import is_admin
 from fastapi import HTTPException, Query
 
-from web.session_store import criar_sessao, exigir_client, remover_sessao, obter_client
+from web.session_store import (
+    RemoteAuthenticatedClient,
+    criar_sessao,
+    exigir_client,
+    remover_sessao,
+    obter_client,
+)
 
 from operations.op101.comprovantes import OP101Comprovantes
 from operations.op101.batch_comprovantes import processar_planilha_comprovantes
@@ -43,6 +52,12 @@ from modules.ocorrencia_73.observabilidade import usuario_pode_observar
 router = APIRouter()
 templates = Jinja2Templates(directory="web/templates")
 templates.context_processors.append(lambda request: {"is_admin": is_admin(request)})
+
+
+def _remote_auth_enabled() -> bool:
+    return os.getenv("NEXUS_SSW_REMOTE_AUTH_ENABLED", "false").strip().casefold() in {
+        "1", "true", "yes", "sim", "on",
+    }
 
 def validar_login(request: Request):
     if not request.session.get("ssw_session_id"):
@@ -169,9 +184,15 @@ def executar_op488_job(
 
 @router.get("/login", response_class=HTMLResponse)
 def login_form(request: Request):
+    request.session["login_csrf"] = secrets.token_urlsafe(32)
+    request.session["remote_auth_binding"] = secrets.token_urlsafe(48)
     return templates.TemplateResponse(
         "login.html",
-        {"request": request, "browser_auth": ssw_settings.auth_mode == "browser"},
+        {
+            "request": request,
+            "browser_auth": ssw_settings.auth_mode == "browser" or _remote_auth_enabled(),
+            "login_csrf": request.session["login_csrf"],
+        },
     )
 
 
@@ -204,22 +225,53 @@ def login_run(
     usuario: str = Form(...),
     senha: str = Form(""),
     unidade: str = Form(...),
+    login_csrf: str = Form(""),
 ):
     try:
+        expected_csrf = str(request.session.get("login_csrf") or "")
+        if not expected_csrf or not secrets.compare_digest(expected_csrf, login_csrf):
+            raise ValueError("Sessao de login invalida. Recarregue a pagina.")
         cpf = "".join(ch for ch in cpf if ch.isdigit())
-        if ssw_settings.auth_mode != "browser" and len(cpf) != 11:
+        if not _remote_auth_enabled() and ssw_settings.auth_mode != "browser" and len(cpf) != 11:
             raise ValueError("Informe um CPF com 11 dígitos.")
 
-        client = SSWClient(
-            dominio=dominio,
-            cpf=cpf,
-            usuario=usuario,
-            senha=senha,
-            unidade=unidade,
-        )
+        if _remote_auth_enabled():
+            from modules.local_agent.config import load_server_settings
+            from modules.local_agent.remote_auth import RemoteIdentity, broker
 
-        client.login()
-        client.open_menu()
+            settings = load_server_settings()
+            binding = str(request.session.get("remote_auth_binding") or "")
+            request_id = broker.create(
+                RemoteIdentity(dominio, usuario, unidade, binding),
+                session_binding=binding,
+                ttl_seconds=settings.remote_auth_request_ttl_seconds,
+                per_minute=settings.remote_auth_per_minute,
+                max_pending=settings.remote_auth_max_pending,
+            )
+            result = broker.wait_and_consume(
+                request_id,
+                session_binding=binding,
+                timeout_seconds=settings.remote_auth_timeout_seconds,
+            )
+            if not result.accepted:
+                raise PermissionError("O agente Windows nao confirmou a autenticacao SSW.")
+            client = RemoteAuthenticatedClient(
+                dominio=result.dominio,
+                usuario=result.usuario,
+                unidade=result.unidade,
+                session_binding=result.session_binding,
+                agent_id=settings.remote_auth_agent_id,
+            )
+        else:
+            client = SSWClient(
+                dominio=dominio,
+                cpf=cpf,
+                usuario=usuario,
+                senha=senha,
+                unidade=unidade,
+            )
+            client.login()
+            client.open_menu()
 
         remover_sessao(request)
         session_id = criar_sessao(client)
@@ -231,12 +283,18 @@ def login_run(
         return RedirectResponse("/", status_code=303)
 
     except Exception as exc:
+        error = (
+            "Nao foi possivel confirmar a autenticacao no agente Windows. Tente novamente."
+            if _remote_auth_enabled()
+            else str(exc)
+        )
         return templates.TemplateResponse(
             "login.html",
             {
                 "request": request,
-                "error": str(exc),
-                "browser_auth": ssw_settings.auth_mode == "browser",
+                "error": error,
+                "browser_auth": ssw_settings.auth_mode == "browser" or _remote_auth_enabled(),
+                "login_csrf": request.session.get("login_csrf", ""),
             },
         )
 
@@ -723,13 +781,39 @@ async def op001_run(
     except RuntimeError:
         return RedirectResponse("/login", status_code=303)
 
+    from modules.local_agent.delegation import delegation_enabled, enqueue_ssw_task
+    content = await arquivo_excel.read()
+    if delegation_enabled("ssw.op001.nfd"):
+        identity = getattr(client, "identity_payload", None)
+        if not callable(identity):
+            raise HTTPException(status_code=409, detail="A OP001 remota exige uma sessão autenticada no agente Windows.")
+        safe_name = Path(arquivo_excel.filename or "entrada.xlsx").name
+        job = criar_job("OP001 NFD")
+        try:
+            remote_job_id = enqueue_ssw_task(
+                "ssw.op001.nfd",
+                {
+                    "filename": safe_name,
+                    "workbook_base64": base64.b64encode(content).decode("ascii"),
+                    **identity(),
+                },
+                idempotency_key=None,
+                concurrency_key=f"ssw.session:{client.session_binding}",
+                priority=40,
+                target_agent_id=client.agent_id,
+            )
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from None
+        executar_job(job, executar_job_remoto_op001, remote_job_id, "OP001 - Coletas NFD")
+        return RedirectResponse(url=f"/jobs/{job.id}", status_code=303)
+
     uploads_dir = Path("uploads")
     uploads_dir.mkdir(exist_ok=True)
 
     input_file = uploads_dir / arquivo_excel.filename
 
     with input_file.open("wb") as f:
-        f.write(await arquivo_excel.read())
+        f.write(content)
 
     output_file = Path("downloads") / f"processado_{arquivo_excel.filename}"
 
@@ -772,13 +856,39 @@ async def op001_transporte_run(
     except RuntimeError:
         return RedirectResponse("/login", status_code=303)
 
+    from modules.local_agent.delegation import delegation_enabled, enqueue_ssw_task
+    content = await arquivo_excel.read()
+    if delegation_enabled("ssw.op001.transporte"):
+        identity = getattr(client, "identity_payload", None)
+        if not callable(identity):
+            raise HTTPException(status_code=409, detail="A OP001 remota exige uma sessão autenticada no agente Windows.")
+        safe_name = Path(arquivo_excel.filename or "entrada.xlsx").name
+        job = criar_job("OP001 Transporte")
+        try:
+            remote_job_id = enqueue_ssw_task(
+                "ssw.op001.transporte",
+                {
+                    "filename": safe_name,
+                    "workbook_base64": base64.b64encode(content).decode("ascii"),
+                    **identity(),
+                },
+                idempotency_key=None,
+                concurrency_key=f"ssw.session:{client.session_binding}",
+                priority=40,
+                target_agent_id=client.agent_id,
+            )
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from None
+        executar_job(job, executar_job_remoto_op001, remote_job_id, "OP001 - Coletas Transporte")
+        return RedirectResponse(url=f"/jobs/{job.id}", status_code=303)
+
     uploads_dir = Path("uploads")
     uploads_dir.mkdir(exist_ok=True)
 
     input_file = uploads_dir / arquivo_excel.filename
 
     with input_file.open("wb") as f:
-        f.write(await arquivo_excel.read())
+        f.write(content)
 
     output_file = Path("downloads") / f"transporte_processado_{arquivo_excel.filename}"
 
@@ -923,6 +1033,55 @@ def executar_op001_nfd_job(
 
     job.result_files = arquivos
     return arquivos
+
+
+def executar_job_remoto_op001(job, remote_job_id: str, periodo: str) -> list[dict]:
+    """Espelha progresso seguro da fila e materializa somente o artefato final na VPS."""
+    from modules.local_agent.config import load_server_settings
+    from modules.local_agent.repository import LocalAgentRepository
+
+    settings = load_server_settings()
+    repository = LocalAgentRepository(
+        settings.database_path,
+        max_payload_bytes=settings.max_payload_bytes,
+        max_result_bytes=settings.max_result_bytes,
+        max_log_bytes=settings.max_log_bytes,
+    )
+    seen_logs = 0
+    deadline = time.monotonic() + int(os.getenv("NEXUS_REMOTE_JOB_TIMEOUT_SECONDS", "7200"))
+    while time.monotonic() < deadline:
+        remote = repository.get_job(remote_job_id)
+        if remote is None:
+            raise RuntimeError("Execução remota não encontrada.")
+        logs = remote.get("logs") or []
+        for entry in logs[seen_logs:]:
+            add_log(job, str(entry.get("message") or "")[:4000])
+        seen_logs = len(logs)
+        set_progress(job, int(remote.get("progress_current") or 0), int(remote.get("progress_total") or 0))
+        status = remote.get("status")
+        if status == "SUCCEEDED":
+            result = remote.get("result") or {}
+            try:
+                artifact = base64.b64decode(str(result["workbook_base64"]), validate=True)
+            except Exception:
+                raise RuntimeError("O agente retornou um artefato OP001 inválido.") from None
+            maximum = int(os.getenv("NEXUS_OP001_MAX_UPLOAD_BYTES", "8388608")) * 2
+            if not artifact or len(artifact) > maximum:
+                raise RuntimeError("O artefato OP001 excede o limite permitido.")
+            original_name = Path(str(result.get("filename") or "op001_processado.xlsx")).name
+            filename = f"{job.id}_{original_name}"
+            output = Path("downloads") / filename
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(artifact)
+            files = [{"name": filename, "url": f"/downloads/{filename}", "periodo": periodo}]
+            job.result_files = files
+            return files
+        if status in {"FAILED", "CANCELLED"}:
+            raise RuntimeError(
+                "A operação remota falhou ou ficou com resultado incerto; ela não será repetida automaticamente."
+            )
+        time.sleep(1)
+    raise RuntimeError("Tempo limite da operação remota excedido; verifique o agente antes de repetir.")
 
 def executar_op001_transporte_job(
     job,

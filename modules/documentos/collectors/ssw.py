@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import Callable
 
 from modules.documentos.config import DocumentosSettings, settings
 from operations.op455.report import OP455Report
@@ -23,8 +24,13 @@ def _ddmmaa(value: date) -> str:
 class SSWDocumentsCollector:
     """Baixa as bases incrementais usadas pelo módulo Documentos GCE."""
 
-    def __init__(self, config: DocumentosSettings = settings) -> None:
+    def __init__(
+        self,
+        config: DocumentosSettings = settings,
+        client_factory: Callable[[], SSWClient] | None = None,
+    ) -> None:
         self.config = config
+        self.client_factory = client_factory
 
     def download(
         self,
@@ -43,16 +49,15 @@ class SSWDocumentsCollector:
 
         self.config.validate_ssw()
 
-        client = SSWClient(
-            dominio=self.config.ssw_dominio,
-            cpf=self.config.ssw_cpf,
-            usuario=self.config.ssw_usuario,
-            senha=self.config.ssw_senha,
+        client = self.client_factory() if self.client_factory else SSWClient(
+            dominio=self.config.ssw_dominio, cpf=self.config.ssw_cpf,
+            usuario=self.config.ssw_usuario, senha=self.config.ssw_senha,
             unidade=self.config.ssw_unidade,
         )
         try:
-            client.login()
-            client.open_menu()
+            if self.client_factory is None:
+                client.login()
+                client.open_menu()
 
             op455 = OP455Report(client).gerar_e_baixar_documentos(
                 output_dir=op455_dir,
