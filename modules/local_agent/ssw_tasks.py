@@ -226,8 +226,8 @@ def _authenticated_client(clean: dict[str, Any]):
 class _RemoteJobProgress:
     def __init__(self, context: ExecutionContext) -> None:
         self.context = context
-        self.progress = 0
-        self.total = 0
+        self._progress = 0
+        self._total = 0
 
         class _Logs:
             def put(_self, message: str) -> None:
@@ -235,6 +235,31 @@ class _RemoteJobProgress:
                 context.log(str(message)[:4000])
 
         self.logs = _Logs()
+
+    @property
+    def progress(self) -> int:
+        return self._progress
+
+    @progress.setter
+    def progress(self, value: int) -> None:
+        self._progress = int(value)
+        self._sync_progress()
+
+    @property
+    def total(self) -> int:
+        return self._total
+
+    @total.setter
+    def total(self, value: int) -> None:
+        self._total = int(value)
+        self._sync_progress()
+
+    def _sync_progress(self) -> None:
+        if 0 <= self._progress <= self._total:
+            self.context.set_progress(
+                self._progress,
+                self._total,
+            )
 
 
 def _op001(payload: dict[str, Any], context: ExecutionContext, *, task: str) -> dict[str, Any]:

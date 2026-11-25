@@ -1,4 +1,5 @@
 import json
+import re
 import time
 import os
 import secrets
@@ -368,7 +369,7 @@ def op455_form(request: Request):
     redirect = validar_login(request)
     if redirect:
         return redirect
-    
+
     return templates.TemplateResponse("op455.html", {"request": request})
 
 @router.post("/op455")
@@ -377,12 +378,12 @@ def op455_run(
     periodos: str = Form(...),
     timeout: int = Form(300),
 ):
-    
+
     try:
         client = exigir_client(request)
     except RuntimeError:
         return RedirectResponse("/login", status_code=303)
-    
+
     job = criar_job('OP455')
     add_log(job, "Job criado.")
 
@@ -405,7 +406,7 @@ def op150_form(request: Request):
     redirect = validar_login(request)
     if redirect:
         return redirect
-    
+
     return templates.TemplateResponse("op150.html", {"request": request})
 
 
@@ -460,7 +461,7 @@ def op103_run(
         client = exigir_client(request)
     except RuntimeError:
         return RedirectResponse("/login", status_code=303)
-    
+
     op103 = OP103Report(client)
 
     arquivo = op103.gerar_e_baixar_devolucao(
@@ -490,7 +491,7 @@ def op488_form(request: Request):
     redirect = validar_login(request)
     if redirect:
         return redirect
-    
+
     return templates.TemplateResponse("op488.html", {"request": request})
 
 @router.post("/op488")
@@ -789,7 +790,7 @@ def op001_form(request: Request):
     redirect = validar_login(request)
     if redirect:
         return redirect
-    
+
     return templates.TemplateResponse("op001.html", {"request": request})
 
 
@@ -861,7 +862,7 @@ def op001_transporte_form(request: Request):
     redirect = validar_login(request)
     if redirect:
         return redirect
-    
+
     return templates.TemplateResponse(
         "op001_transporte.html",
         {"request": request},
@@ -948,7 +949,7 @@ def job_stream(job_id: str):
         if not job:
             yield f"data: {json.dumps({'type': 'error', 'message': 'Job não encontrado.'})}\n\n"
             return
-        
+
         yield f"data: {json.dumps({'type':'log','message':'Conectado ao monitor.'})}\n\n"
 
         while True:
@@ -1077,7 +1078,16 @@ def executar_job_remoto_op001(job, remote_job_id: str, periodo: str) -> list[dic
             raise RuntimeError("Execução remota não encontrada.")
         logs = remote.get("logs") or []
         for entry in logs[seen_logs:]:
-            add_log(job, str(entry.get("message") or "")[:4000])
+            message = str(entry.get("message") or "")[:4000]
+
+            message = re.sub(
+                r"^\[\d{2}:\d{2}:\d{2}\]\s*",
+                "",
+                message,
+                count=1,
+            )
+
+            add_log(job, message)
         seen_logs = len(logs)
         set_progress(job, int(remote.get("progress_current") or 0), int(remote.get("progress_total") or 0))
         status = remote.get("status")
@@ -1095,7 +1105,13 @@ def executar_job_remoto_op001(job, remote_job_id: str, periodo: str) -> list[dic
             output = Path("downloads") / filename
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_bytes(artifact)
-            files = [{"name": filename, "url": f"/downloads/{filename}", "periodo": periodo}]
+            files = [
+                {
+                    "name": original_name,
+                    "url": f"/downloads/{filename}",
+                    "periodo": periodo,
+                }
+            ]
             job.result_files = files
             return files
         if status in {"FAILED", "CANCELLED"}:
@@ -1397,7 +1413,7 @@ def incidentes_op930_run(
     redirect = validar_login(request)
     if redirect:
         return redirect
-    
+
     try:
         client = exigir_client(request)
     except RuntimeError:

@@ -76,7 +76,7 @@
                 const percent = Math.round((data.progress / data.total) * 100);
                 progressBar.style.width = `${percent}%`;
             }
-            
+
             logbox.textContent += "\nFinalizado.\n";
 
             if (data.files && data.files.length > 0) {
@@ -86,10 +86,19 @@
                 data.files.forEach(file => {
                     const div = document.createElement("div");
                     div.className = "success";
-                    div.innerHTML = `
-                        ${file.periodo}<br>
-                        <a href="${file.url}" download>Baixar ${file.name}</a>
-                    `;
+
+                    const label = document.createTextNode(file.periodo || "");
+                    const lineBreak = document.createElement("br");
+
+                    const link = document.createElement("a");
+                    link.href = file.url;
+                    link.download = file.name || "";
+                    link.textContent = `Baixar ${file.name || "arquivo"}`;
+
+                    div.appendChild(label);
+                    div.appendChild(lineBreak);
+                    div.appendChild(link);
+
                     downloadArea.appendChild(div);
                 });
             } else if (data.download_url) {
@@ -104,7 +113,7 @@
             logbox.textContent += "\nERRO: " + data.message + "\n";
             evtSource.close();
         }
-    
+
     };
 </script>
 {% endblock %}
