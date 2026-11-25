@@ -53,8 +53,11 @@ class SSWClient:
         ) -> requests.Response:
             url = f"{self.base_url}{path}"
             last_error = None
+            from ssw.browser_transport import BrowserSessionTransport
 
-            for attempt in range(1, retries + 1):
+            attempts = 1 if isinstance(self.session, BrowserSessionTransport) else retries
+
+            for attempt in range(1, attempts + 1):
                 try:
                     response = self.session.post(
                         url,
@@ -67,7 +70,7 @@ class SSWClient:
                 except Exception as exc:
                     last_error = exc
 
-                    if attempt < retries:
+                    if attempt < attempts:
                         time.sleep(wait_seconds)
 
             raise last_error
@@ -133,6 +136,25 @@ class SSWClient:
             discard_browser_transport(self.session)
         else:
             self.session.close()
+
+    def acquire_operation(self, automation: str):
+        from ssw.browser_transport import BrowserSessionTransport
+
+        if isinstance(self.session, BrowserSessionTransport):
+            return self.session.acquire_operation(automation)
+        return None
+
+    def session_status(self) -> dict[str, str]:
+        from ssw.browser_transport import BrowserSessionTransport
+
+        if isinstance(self.session, BrowserSessionTransport):
+            return self.session.session_status()
+        return {
+            "state": "authenticated",
+            "message": "Sessao SSW autenticada.",
+            "operation": "",
+            "observed_unit": str(self.unidade or ""),
+        }
 
     def open_menu(self) -> None:
         self.post("/bin/menu01", {"act": ""})

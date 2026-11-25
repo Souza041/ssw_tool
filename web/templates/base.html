@@ -234,6 +234,16 @@
             background: rgba(239,68,68,.15);
         }
 
+        .nexus-ssw-session {
+            color: var(--muted);
+            font-size: 12px;
+            text-decoration: none;
+        }
+
+        .nexus-ssw-session[data-state="authenticated"] { color: #16a34a; }
+        .nexus-ssw-session[data-state="busy"] { color: #d97706; }
+        .nexus-ssw-session[data-state="reauthentication_required"] { color: #dc2626; }
+
         @media (max-width: 800px) {
             .layout {
                 display: block;
@@ -304,10 +314,29 @@
     </aside>
 
     <main>
-        <div class="nexus-header"><span class="nexus-breadcrumb">Workspace <span>/</span> <strong id="nexus-current-page">Automações</strong></span><span class="nexus-header-right"><span class="nexus-header-status">NEXUS AUTOMATION</span><button type="button" id="nexus-theme-top" class="nexus-theme-top" aria-label="Alternar tema">◐</button></span></div>
+        <div class="nexus-header"><span class="nexus-breadcrumb">Workspace <span>/</span> <strong id="nexus-current-page">Automações</strong></span><span class="nexus-header-right">{% if request.session.get("ssw_session_id") %}<a id="nexus-ssw-session" class="nexus-ssw-session" data-state="checking">Verificando sessão SSW…</a>{% endif %}<span class="nexus-header-status">NEXUS AUTOMATION</span><button type="button" id="nexus-theme-top" class="nexus-theme-top" aria-label="Alternar tema">◐</button></span></div>
         {% block content %}{% endblock %}
         <link rel="stylesheet" href="/static/nexus-dark-contrast.css?v=1">
     </main>
 </div>
+{% if request.session.get("ssw_session_id") %}
+<script>
+(function(){
+  const badge=document.getElementById('nexus-ssw-session');
+  if(!badge)return;
+  async function refresh(){
+    try{
+      const response=await fetch('/api/ssw-session-status',{credentials:'same-origin',cache:'no-store'});
+      const status=await response.json();
+      badge.dataset.state=status.state||'unknown';
+      badge.textContent=status.message||'Estado da sessão SSW indisponível.';
+      if(status.state==='reauthentication_required')badge.href='/login';
+      else badge.removeAttribute('href');
+    }catch(_error){badge.dataset.state='unknown';badge.textContent='Estado da sessão SSW indisponível.';}
+  }
+  refresh();setInterval(refresh,15000);
+})();
+</script>
+{% endif %}
 </body>
 </html>

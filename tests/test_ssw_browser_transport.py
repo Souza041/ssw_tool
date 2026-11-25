@@ -11,7 +11,10 @@ from ssw.browser_transport import (
     BrowserIdentity,
     BrowserSessionTransport,
     SSWBrowserAuthenticationError,
+    SSWBrowserTransportError,
+    SSWSessionBusyError,
     _BrowserWorker,
+    _OperationCoordinator,
     _browser_launch_options,
     _checked_requested_unit,
     _load_playwright_proxy,
@@ -25,6 +28,7 @@ class RecordingWorker:
         self.identity = BrowserIdentity.checked("ROD", "employee.one")
         self.observed_unit = "CWB"
         self.valid = True
+        self.operations = _OperationCoordinator()
         self.calls = []
         self.closed = False
 
@@ -227,6 +231,94 @@ def test_proxy_errors_are_sanitized_and_incomplete_credentials_fail_closed(tmp_p
     diagnostic = str(captured.value)
     assert "proxy.corp" not in diagnostic
     assert "user" not in diagnostic
+
+
+def test_same_session_has_atomic_operation_lock_and_friendly_diagnostic():
+    transport = BrowserSessionTransport(RecordingWorker())
+    first = transport.acquire_operation("OP001 · Coletas")
+
+    with pytest.raises(SSWSessionBusyError, match="OP001 · Coletas"):
+        transport.acquire_operation("OP455 · CTRCs")
+
+    first.release()
+    second = transport.acquire_operation("OP455 · CTRCs")
+    second.release()
+
+
+def test_independent_sessions_can_run_in_parallel():
+    first_worker = RecordingWorker()
+    second_worker = RecordingWorker()
+    second_worker.identity = BrowserIdentity.checked("ROD", "other.user")
+    first = BrowserSessionTransport(first_worker).acquire_operation("OP001")
+    second = BrowserSessionTransport(second_worker).acquire_operation("OP455")
+    first.release()
+    second.release()
+
+
+def test_closed_browser_requires_new_human_authentication():
+    worker = RecordingWorker()
+    transport = BrowserSessionTransport(worker)
+    worker.valid = False
+
+    assert transport.session_status()["state"] == "reauthentication_required"
+    with pytest.raises(SSWBrowserAuthenticationError, match="nova autenticacao"):
+        transport.acquire_operation("OP001")
+
+
+def test_browser_disconnect_and_closed_context_invalidate_transport():
+    worker = object.__new__(_BrowserWorker)
+    worker.base_url = "https://tms.ssw.inf.br"
+    worker._authenticated = True
+    worker._browser_disconnected()
+    assert worker._authenticated is False
+
+    worker._authenticated = True
+    request = Mock()
+    request.fetch.side_effect = RuntimeError(
+        "Target page, context or browser has been closed secret-value"
+    )
+    with pytest.raises(SSWBrowserAuthenticationError, match="nova autenticacao") as error:
+        worker._request(SimpleNamespace(request=request), {
+            "method": "GET", "url": "https://tms.ssw.inf.br/bin/menu01",
+            "params": {}, "data": None, "headers": {}, "timeout": 60,
+            "allow_redirects": True,
+        })
+    assert "secret-value" not in str(error.value)
+    assert worker._authenticated is False
+
+
+def test_browser_post_is_not_retried_when_result_is_uncertain():
+    worker = RecordingWorker()
+    worker.call = Mock(side_effect=SSWBrowserTransportError("resultado incerto"))
+    client = SSWClient(
+        dominio="ROD", usuario="employee.one", unidade="CWB", auth_mode="http",
+    )
+    client.session = BrowserSessionTransport(worker)
+
+    with pytest.raises(SSWBrowserTransportError, match="incerto"):
+        client.post("/bin/ssw0017", {"act": "SAVECOL"}, retries=3)
+
+    assert worker.call.call_count == 1
+
+
+def test_chromium_window_is_minimized_best_effort_after_authentication():
+    cdp = Mock()
+    cdp.send.side_effect = [{"windowId": 42}, {}]
+    context = SimpleNamespace(new_cdp_session=Mock(return_value=cdp))
+
+    assert _BrowserWorker._minimize_window(context, object()) is True
+    assert cdp.send.call_args_list[1].args == (
+        "Browser.setWindowBounds",
+        {"windowId": 42, "bounds": {"windowState": "minimized"}},
+    )
+    cdp.detach.assert_called_once_with()
+
+
+def test_minimize_failure_preserves_authenticated_flow():
+    context = SimpleNamespace(
+        new_cdp_session=Mock(side_effect=RuntimeError("unsupported")),
+    )
+    assert _BrowserWorker._minimize_window(context, object()) is False
 
 
 def test_ssw_client_switches_only_transport_during_browser_login(monkeypatch):

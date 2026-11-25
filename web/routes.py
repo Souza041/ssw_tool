@@ -175,6 +175,27 @@ def login_form(request: Request):
     )
 
 
+@router.get("/api/ssw-session-status")
+def ssw_session_status(request: Request):
+    client = obter_client(request)
+    if client is None:
+        return {
+            "state": "reauthentication_required",
+            "message": "Sessao SSW ausente. Realize nova autenticacao humana.",
+            "operation": "",
+            "observed_unit": "",
+        }
+    status = getattr(client, "session_status", None)
+    if not callable(status):
+        return {
+            "state": "authenticated",
+            "message": "Sessao SSW autenticada.",
+            "operation": "",
+            "observed_unit": str(getattr(client, "unidade", "") or ""),
+        }
+    return status()
+
+
 @router.post("/login")
 def login_run(
     request: Request,

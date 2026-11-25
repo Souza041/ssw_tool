@@ -51,6 +51,58 @@ class SSWBrowserTransportError(RuntimeError):
     """Falha sanitizada no transporte; nao inclui payload nem conteudo da pagina."""
 
 
+class SSWSessionBusyError(RuntimeError):
+    """Outra automacao detem atomicamente o contexto operacional."""
+
+
+class _OperationLease:
+    def __init__(self, coordinator: "_OperationCoordinator", token: object) -> None:
+        self._coordinator = coordinator
+        self._token = token
+        self._released = False
+
+    @property
+    def resource_id(self) -> int:
+        return id(self._coordinator)
+
+    def release(self) -> None:
+        if self._released:
+            return
+        self._released = True
+        self._coordinator.release(self._token)
+
+
+class _OperationCoordinator:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._owner: object | None = None
+        self._automation = ""
+
+    def acquire(self, automation: str) -> _OperationLease:
+        name = str(automation or "Automacao SSW").strip()[:120] or "Automacao SSW"
+        token = object()
+        with self._lock:
+            if self._owner is not None:
+                current = self._automation or "outra automacao SSW"
+                raise SSWSessionBusyError(
+                    f"A automacao '{current}' esta em andamento nesta sessao SSW. "
+                    "Aguarde a conclusao antes de iniciar outra operacao."
+                )
+            self._owner = token
+            self._automation = name
+        return _OperationLease(self, token)
+
+    def release(self, token: object) -> None:
+        with self._lock:
+            if self._owner is token:
+                self._owner = None
+                self._automation = ""
+
+    def current(self) -> str:
+        with self._lock:
+            return self._automation if self._owner is not None else ""
+
+
 @dataclass(frozen=True)
 class BrowserIdentity:
     domain: str
@@ -163,6 +215,8 @@ class _BrowserWorker:
         self.timeout_seconds = max(30, min(int(timeout_seconds), 900))
         self.proxy = _load_playwright_proxy()
         self.observed_unit = ""
+        self.window_minimized = False
+        self.operations = _OperationCoordinator()
         self._commands: queue.Queue[tuple[str, Any, Future] | None] = queue.Queue()
         self._ready: Future = Future()
         self._authenticated = False
@@ -206,10 +260,12 @@ class _BrowserWorker:
 
             manager = sync_playwright().start()
             browser = manager.chromium.launch(**_browser_launch_options(self.proxy))
+            browser.on("disconnected", self._browser_disconnected)
             context = browser.new_context(accept_downloads=False)
             page = context.new_page()
             page.goto(self.base_url + LOGIN_PATH, wait_until="commit", timeout=60_000)
             self._await_human_login(page)
+            self.window_minimized = self._minimize_window(context, page)
             self._authenticated = True
             self._ready.set_result(True)
 
@@ -249,6 +305,32 @@ class _BrowserWorker:
                         getattr(resource, method)()
                     except Exception:
                         pass
+
+    def _browser_disconnected(self, *_args) -> None:
+        self._authenticated = False
+
+    @staticmethod
+    def _minimize_window(context, page) -> bool:
+        session = None
+        try:
+            session = context.new_cdp_session(page)
+            window = session.send("Browser.getWindowForTarget")
+            window_id = window.get("windowId") if isinstance(window, dict) else None
+            if not isinstance(window_id, int):
+                return False
+            session.send(
+                "Browser.setWindowBounds",
+                {"windowId": window_id, "bounds": {"windowState": "minimized"}},
+            )
+            return True
+        except Exception:
+            return False
+        finally:
+            if session is not None:
+                try:
+                    session.detach()
+                except Exception:
+                    pass
 
     def _await_human_login(self, page) -> None:
         deadline_ms = self.timeout_seconds * 1000
@@ -341,7 +423,22 @@ class _BrowserWorker:
         }
         values = request_data.get("params") if method == "GET" else request_data.get("data")
         kwargs["params" if method == "GET" else "form"] = values or {}
-        raw = context.request.fetch(url, **kwargs)
+        try:
+            raw = context.request.fetch(url, **kwargs)
+        except Exception as exc:
+            message = str(exc).casefold()
+            if any(marker in message for marker in (
+                "target page, context or browser has been closed",
+                "browser has been closed", "context has been closed",
+                "target closed", "connection closed",
+            )):
+                self._authenticated = False
+                raise SSWBrowserAuthenticationError(
+                    "O navegador SSW foi encerrado; realize nova autenticacao humana."
+                ) from None
+            raise SSWBrowserTransportError(
+                "Falha no transporte SSW; o resultado da requisicao pode ser incerto."
+            ) from None
         try:
             content = raw.body()
             final_url = raw.url
@@ -380,6 +477,40 @@ class BrowserSessionTransport:
     @property
     def valid(self) -> bool:
         return self._worker.valid
+
+    @property
+    def current_operation(self) -> str:
+        return self._worker.operations.current()
+
+    def acquire_operation(self, automation: str) -> _OperationLease:
+        if not self.valid:
+            raise SSWBrowserAuthenticationError(
+                "A sessao SSW nao esta disponivel; realize nova autenticacao humana."
+            )
+        return self._worker.operations.acquire(automation)
+
+    def session_status(self) -> dict[str, str]:
+        operation = self.current_operation
+        if not self.valid:
+            return {
+                "state": "reauthentication_required",
+                "message": "Sessao SSW indisponivel. Realize nova autenticacao humana.",
+                "operation": "",
+                "observed_unit": self.observed_unit,
+            }
+        if operation:
+            return {
+                "state": "busy",
+                "message": f"Automacao em andamento: {operation}.",
+                "operation": operation,
+                "observed_unit": self.observed_unit,
+            }
+        return {
+            "state": "authenticated",
+            "message": "Sessao SSW autenticada.",
+            "operation": "",
+            "observed_unit": self.observed_unit,
+        }
 
     def probe(self) -> bool:
         return bool(self._worker.call("probe", timeout=70))
@@ -438,13 +569,22 @@ def authenticated_browser_transport(
     _checked_requested_unit(unit)
     with _registry_lock:
         current = _registry.get(identity)
-        if current is not None and current.valid:
-            try:
-                current.probe()
-                return current
-            except (SSWBrowserAuthenticationError, SSWBrowserTransportError):
-                current.shutdown()
-                _registry.pop(identity, None)
+        if current is not None:
+            if current.valid:
+                lease = None
+                try:
+                    lease = current.acquire_operation("Validacao da sessao SSW")
+                    current.probe()
+                    return current
+                except SSWSessionBusyError:
+                    raise
+                except Exception:
+                    pass
+                finally:
+                    if lease is not None:
+                        lease.release()
+            current.shutdown()
+            _registry.pop(identity, None)
         worker = _BrowserWorker(
             identity=identity,
             base_url=base_url,

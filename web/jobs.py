@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Job:
     id: str
+    module: str = "SSW Tool"
     status: str = "running"
     logs: queue.Queue = field(default_factory=queue.Queue)
     result_file: Path | None = None
@@ -26,7 +27,7 @@ JOBS: dict[str, Job] = {}
 
 
 def criar_job(module: str = "SSW Tool") -> Job:
-    job = Job(id=str(uuid.uuid4()))
+    job = Job(id=str(uuid.uuid4()), module=module)
     JOBS[job.id] = job
     try:
         automation_metrics.started(job.id, module)
@@ -45,6 +46,31 @@ def set_progress(job: Job, progress: int, total: int) -> None:
 
 
 def executar_job(job: Job, func: Callable, *args, **kwargs) -> None:
+    leases = []
+    resources = set()
+    try:
+        for value in (*args, *kwargs.values()):
+            acquire = getattr(value, "acquire_operation", None)
+            session = getattr(value, "session", None)
+            resource = id(session) if session is not None else id(value)
+            if not callable(acquire) or resource in resources:
+                continue
+            lease = acquire(job.module)
+            resources.add(resource)
+            if lease is not None:
+                leases.append(lease)
+    except Exception as exc:
+        for lease in reversed(leases):
+            lease.release()
+        job.status = "error"
+        job.error = str(exc)
+        add_log(job, f"Execução não iniciada: {exc}")
+        try:
+            automation_metrics.finished(job.id, job.status)
+        except Exception:
+            logger.exception("Falha ao registrar termino de job em metricas")
+        return
+
     def runner():
         try:
             add_log(job, "Thread iniciada.")
@@ -63,10 +89,17 @@ def executar_job(job: Job, func: Callable, *args, **kwargs) -> None:
 
             add_log(job, f"Erro: {exc}")
         finally:
+            for lease in reversed(leases):
+                lease.release()
             try:
                 automation_metrics.finished(job.id, job.status)
             except Exception:
                 logger.exception("Falha ao registrar termino de job em metricas")
 
     thread = threading.Thread(target=runner, daemon=True)
-    thread.start()
+    try:
+        thread.start()
+    except BaseException:
+        for lease in reversed(leases):
+            lease.release()
+        raise
