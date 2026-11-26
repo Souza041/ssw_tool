@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import logging
+from logging.handlers import RotatingFileHandler
 import os
 from pathlib import Path
 import platform
@@ -23,6 +25,22 @@ from modules.local_agent.ssw_tasks import register_ssw_handlers
 from modules.local_agent.windows_credentials import (
     default_config_path, load_config, protect_token, save_config, unprotect_token,
 )
+
+
+OFFICIAL_SERVER = "https://nexus.rodobrastransp.com.br"
+
+
+def _configure_logging() -> Path:
+    path = default_config_path().with_name("agent.log")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handler = RotatingFileHandler(path, maxBytes=512_000, backupCount=2, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    for name in (__name__, "modules.local_agent.remote_auth"):
+        logger = logging.getLogger(name)
+        logger.setLevel(logging.INFO)
+        logger.addHandler(handler)
+        logger.propagate = False
+    return path
 
 
 def _resource_path(name: str) -> Path:
@@ -54,6 +72,18 @@ def _proxy_session() -> requests.Session:
         key: value for key, value in urllib.request.getproxies().items()
         if key in {"http", "https"}
     })
+    # Optional per-user, Nexus-only override approved by corporate IT.
+    proxy_file = default_config_path().with_name("nexus-proxy.txt")
+    if proxy_file.is_file():
+        explicit = proxy_file.read_text(encoding="utf-8-sig").strip()
+        parsed = urlsplit(explicit)
+        if (parsed.scheme not in {"http", "https"} or not parsed.hostname
+                or parsed.username or parsed.password or parsed.path not in {"", "/"}
+                or parsed.query or parsed.fragment or any(c.isspace() for c in explicit)):
+            raise ValueError("Proxy Nexus inválido.")
+        session.trust_env = False
+        session.proxies = {"http": explicit, "https": explicit}
+        return session
     server = os.getenv("PROXY_SERVER", "").strip().rstrip("/")
     username = os.getenv("PROXY_USER", "").strip()
     password = os.getenv("PROXY_PASS", "")
@@ -73,7 +103,7 @@ def _proxy_session() -> requests.Session:
 
 def pair(server_url: str, code: str, config_path: Path) -> dict:
     parsed = urlparse(server_url.strip().rstrip("/"))
-    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment:
         raise ValueError("Informe a URL HTTPS oficial do Nexus.")
     response = _proxy_session().post(
         server_url.strip().rstrip("/") + "/api/local-agent/v1/pair",
@@ -81,7 +111,7 @@ def pair(server_url: str, code: str, config_path: Path) -> dict:
         timeout=30,
     )
     if response.status_code != 201:
-        raise RuntimeError("Código inválido, expirado ou já utilizado.")
+        raise RuntimeError(f"Pareamento recusado pelo servidor (HTTP {response.status_code}).")
     payload = response.json()
     config = {
         "server_url": server_url.strip().rstrip("/"),
@@ -99,14 +129,14 @@ def _interactive_pair(config_path: Path) -> dict:
 
     root = tk.Tk()
     root.withdraw()
-    server_url = simpledialog.askstring("Nexus Local Agent", "URL HTTPS do Nexus:", parent=root)
+    server_url = OFFICIAL_SERVER
     code = simpledialog.askstring("Nexus Local Agent", "Código temporário de pareamento:", parent=root)
     if not server_url or not code:
         raise RuntimeError("Pareamento cancelado.")
     try:
         config = pair(server_url, code, config_path)
     except Exception as exc:
-        messagebox.showerror("Nexus Local Agent", str(exc), parent=root)
+        messagebox.showerror("Nexus Local Agent", "Falha no pareamento. Confira a rede e o código.", parent=root)
         raise
     messagebox.showinfo("Nexus Local Agent", "Computador pareado com sucesso.", parent=root)
     root.destroy()
@@ -155,9 +185,11 @@ class AgentRuntime:
                     worked = self.executor.run_once()
                 self.status = "Conectado"
             except (AgentProtocolError, RemoteAuthError, requests.RequestException):
+                logging.getLogger(__name__).warning("Agent communication failed")
                 worked = False
                 self.status = "Desconectado"
             except Exception:
+                logging.getLogger(__name__).warning("Agent runtime failed")
                 worked = False
                 self.status = "Atenção necessária"
             if not worked:
@@ -196,6 +228,7 @@ def main() -> int:
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
     mutex = _single_instance()
+    _configure_logging()
     _prepare_playwright()
     if args.server_url or args.pair_code:
         if not args.server_url or not args.pair_code:

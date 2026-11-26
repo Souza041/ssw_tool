@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 import hashlib
 import hmac
 import json
+import logging
 import re
 import secrets
 import threading
@@ -341,6 +342,8 @@ class WindowsRemoteAuthExecutor:
             raise RemoteAuthError("Vinculo de identidade invalido.")
 
         accepted = False
+        stage = "client_init"
+        ssw_client = None
         try:
             from ssw.client import SSWClient
 
@@ -351,11 +354,33 @@ class WindowsRemoteAuthExecutor:
                 auth_mode="browser",
                 session_binding=identity.session_binding,
             )
+            stage = "human_login"
             ssw_client.login()
+            stage = "open_menu"
             ssw_client.open_menu()
             accepted = True
-        except Exception:
-            accepted = False
+        except Exception as exc:
+            # Only fixed messages are safe: never log raw HTTP or browser errors.
+            known = {
+                "Dominio autenticado nao confirmado.": "domain_missing",
+                "Dominio autenticado divergente.": "domain_mismatch",
+                "Usuario autenticado nao confirmado.": "user_missing",
+                "Usuario autenticado divergente.": "user_mismatch",
+                "Unidade inicial observada invalida.": "unit_invalid",
+                "O prazo do login humano expirou; conclua credenciais e CAPTCHA no Chromium.": "human_timeout",
+                "Nao foi possivel iniciar ou confirmar o Chromium do SSW.": "browser_failure",
+            }
+            logging.getLogger(__name__).warning(
+                "SSW auth rejected stage=%s reason=%s", stage,
+                known.get(str(exc), "unclassified"),
+            )
+            if ssw_client is not None:
+                try:
+                    ssw_client.close()
+                except Exception:
+                    logging.getLogger(__name__).warning("SSW auth cleanup failed")
+        if accepted:
+            logging.getLogger(__name__).info("SSW auth accepted")
 
         self.client.remote_auth_complete(
             request_id=request_id,
