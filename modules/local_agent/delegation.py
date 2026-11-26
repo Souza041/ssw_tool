@@ -60,14 +60,34 @@ def enqueue_ssw_task(
         raise RuntimeError("Nexus Local Agent está desativado.")
     if task not in settings.allowed_tasks:
         raise RuntimeError("Tarefa SSW fora da allowlist da VPS.")
-    if target_agent_id is not None and task not in settings.agent_tasks.get(target_agent_id, ()):
-        raise RuntimeError("Tarefa SSW fora da allowlist do agente de destino.")
     repository = LocalAgentRepository(
         settings.database_path,
         max_payload_bytes=settings.max_payload_bytes,
         max_result_bytes=settings.max_result_bytes,
         max_log_bytes=settings.max_log_bytes,
     )
+
+    if target_agent_id is not None:
+        if target_agent_id in settings.tokens:
+            authorized_tasks = settings.agent_tasks.get(
+                target_agent_id, frozenset()
+            )
+        elif settings.pairing_enabled:
+            dynamic_tasks = repository.dynamic_agent_tasks(
+                agent_id=target_agent_id
+            )
+
+            authorized_tasks = (
+                frozenset(dynamic_tasks or ())
+                & frozenset(settings.paired_tasks)
+            )
+        else:
+            authorized_tasks = frozenset()
+
+        if task not in authorized_tasks:
+            raise RuntimeError(
+                "Tarefa SSW fora da allowlist do agente de destino."
+            )
     return repository.enqueue(
         task=task,
         payload=clean_payload,

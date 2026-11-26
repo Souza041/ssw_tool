@@ -189,7 +189,7 @@ class _Heartbeat:
         self.job_id = job_id
         self.lease_token = lease_token
         self.context = context
-        self.interval = max(1, lease_seconds // 3)
+        self.interval = max(1, min(10, lease_seconds // 3))
         self.stop_event = threading.Event()
         self.lost_lease = threading.Event()
         self.thread = threading.Thread(target=self._run, daemon=True)

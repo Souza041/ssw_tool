@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
     <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
-    
+
     <title>Indicadores | Documentos GCE</title>
 
     <style>
@@ -573,6 +573,11 @@
             border-radius: 20px;
             font-size: 9px;
             font-weight: 800;
+        }
+
+        .badge-running {
+            background: #dbeafe;
+            color: #1d4ed8;
         }
 
         .badge-success {
@@ -1207,9 +1212,21 @@
                                 <span class="badge badge-success">
                                     Concluído
                                 </span>
-                            {% else %}
+                            {% elif run.status in ['RUNNING', 'LEASED'] %}
+                                <span class="badge badge-running">
+                                    Em andamento
+                                </span>
+                            {% elif run.status == 'QUEUED' %}
+                                <span class="badge badge-running">
+                                    Aguardando
+                                </span>
+                            {% elif run.status in ['ERROR', 'FAILED'] %}
                                 <span class="badge badge-error">
                                     Erro
+                                </span>
+                            {% else %}
+                                <span class="badge">
+                                    {{ run.status or 'Não informado' }}
                                 </span>
                             {% endif %}
                         </td>

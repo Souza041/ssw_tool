@@ -194,7 +194,7 @@ class DailyDocumentsPipeline:
 
                 self._log("[1/6] Baixando relatórios do Portal GCE...")
 
-                portal = GCEPortalCollector(self.config).download_daily(
+                portal = GCEPortalCollector(self.config, progress=self._log).download_daily(
                     Path(output_root),
                     reference_date,
                 )
@@ -213,7 +213,7 @@ class DailyDocumentsPipeline:
                 )
 
                 ssw = SSWDocumentsCollector(
-                    self.config, client_factory=self.ssw_client_factory,
+                    self.config, client_factory=self.ssw_client_factory, progress=self._log
                 ).download(
                     day_dir / "ssw",
                     period.start,

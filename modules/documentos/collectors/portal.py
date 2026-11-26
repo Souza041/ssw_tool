@@ -64,8 +64,10 @@ class GCEPortalCollector:
     def __init__(
         self,
         config: DocumentosSettings = settings,
+        progress=print,
     ) -> None:
         self.config = config
+        self.progress = progress
         if self.config.gce_use_system_ca:
             try:
                 import truststore
@@ -504,7 +506,7 @@ class GCEPortalCollector:
             carrier_cnpj = carrier["cnpj"]
             carrier_name = carrier["name"]
 
-            print(
+            self.progress(
                 "[GCE] Coletando "
                 f"{carrier_cnpj} - {carrier_name}..."
             )
@@ -543,7 +545,7 @@ class GCEPortalCollector:
             ) in self._finalizados_periods(
                 reference_date
             ):
-                print(
+                self.progress(
                     "[GCE][FINALIZADOS] "
                     f"CNPJ {carrier_cnpj} | "
                     f"{finalizados_start:%d/%m/%Y} "
@@ -573,7 +575,7 @@ class GCEPortalCollector:
                 )
             )
 
-            print(
+            self.progress(
                 "[GCE] "
                 f"{carrier_cnpj}: coleta concluída."
             )
@@ -599,7 +601,7 @@ class GCEPortalCollector:
             if not self.session.proxies:
                 raise
 
-            print(
+            self.progress(
                 "[GCE] Proxy indisponível. "
                 "Tentando conexão direta..."
             )
@@ -612,7 +614,7 @@ class GCEPortalCollector:
             try:
                 response = self._post(url, **kwargs)
 
-                print(
+                self.progress(
                     "[GCE] Conexão direta estabelecida. "
                     "Proxy desativado para esta execução."
                 )
@@ -620,7 +622,7 @@ class GCEPortalCollector:
                 return response
 
             except Exception:
-                print(
+                self.progress(
                     "[GCE] Falha também na conexão direta."
                 )
                 raise exc

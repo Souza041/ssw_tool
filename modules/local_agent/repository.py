@@ -454,6 +454,21 @@ class LocalAgentRepository:
         job_id = str(uuid.uuid4())
         timestamp = utc_text(now or utc_now())
         with self._transaction(immediate=True) as db:
+            if task == "ssw.documentos_gce":
+                active_gce = db.execute("""
+                    SELECT id
+                    FROM local_agent_jobs
+                    WHERE task = ?
+                      AND status IN ('QUEUED', 'LEASED')
+                    LIMIT 1
+                """, (task,)).fetchone()
+
+                if active_gce is not None:
+                    raise RuntimeError(
+                        "O Documentos GCE já possui uma execução "
+                        "pendente ou em andamento."
+                    )
+
             if concurrency_key and coalesce_active:
                 active = db.execute("""
                     SELECT id FROM local_agent_jobs
@@ -897,6 +912,38 @@ class LocalAgentRepository:
                 WHERE agent_id=? AND revoked_at IS NULL
             """, (agent_id,)).fetchone()
         return f"sha256:{row['token_hash']}" if row is not None else None
+
+    def dynamic_agent_tasks(
+        self, *, agent_id: str
+    ) -> frozenset[str] | None:
+        import json
+
+        with self._connect() as db:
+            row = db.execute("""
+                SELECT c.tasks_json
+                FROM local_agent_credentials c
+                JOIN local_agent_user_bindings b
+                    ON b.agent_id = c.agent_id
+                WHERE c.agent_id = ?
+                    AND c.revoked_at IS NULL
+                    AND b.revoked_at IS NULL
+            """, (agent_id,)).fetchone()
+
+        if row is None:
+            return None
+
+        try:
+            tasks = json.loads(row["tasks_json"])
+        except (TypeError, ValueError):
+            return None
+
+        if not isinstance(tasks, list):
+            return None
+
+        if not all(isinstance(task, str) for task in tasks):
+            return None
+
+        return frozenset(tasks)
 
     def bound_agent(self, *, dominio: str, usuario: str) -> str | None:
         identity_key = self._identity_key(f"{dominio}/{usuario}")

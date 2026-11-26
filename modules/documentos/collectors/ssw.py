@@ -28,9 +28,11 @@ class SSWDocumentsCollector:
         self,
         config: DocumentosSettings = settings,
         client_factory: Callable[[], SSWClient] | None = None,
+        progress: Callable[[str], None] = print,
     ) -> None:
         self.config = config
         self.client_factory = client_factory
+        self.progress = progress
 
     def download(
         self,
@@ -59,12 +61,17 @@ class SSWDocumentsCollector:
                 client.login()
                 client.open_menu()
 
+            self.progress("[SSW] Solicitando relatório OP455...")
+
             op455 = OP455Report(client).gerar_e_baixar_documentos(
                 output_dir=op455_dir,
                 data_inicial=_ddmmaa(period_start),
                 data_final=_ddmmaa(period_end),
                 timeout_seconds=self.config.ssw_report_timeout,
             )
+
+            self.progress("[SSW] Relatório OP455 baixado com sucesso.")
+            self.progress("[SSW] Solicitando relatório OP930...")
 
             op930 = OP930Report(client).gerar_e_baixar_por_cnpj(
                 output_dir=op930_dir,
@@ -74,6 +81,9 @@ class SSWDocumentsCollector:
                 grupo=self.config.op930_group,
                 timeout_seconds=self.config.ssw_report_timeout,
             )
+
+            self.progress("[SSW] Relatório OP930 baixado com sucesso.")
+
             return SSWDownloads(Path(op455), Path(op930))
         finally:
             client.session.close()
