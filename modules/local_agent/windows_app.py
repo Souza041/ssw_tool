@@ -126,21 +126,53 @@ def pair(server_url: str, code: str, config_path: Path) -> dict:
 def _interactive_pair(config_path: Path) -> dict:
     import tkinter as tk
     from tkinter import messagebox, simpledialog
+    import secrets
+    import time
 
     root = tk.Tk()
     root.withdraw()
-    server_url = OFFICIAL_SERVER
-    code = simpledialog.askstring("Nexus Local Agent", "Código temporário de pareamento:", parent=root)
-    if not server_url or not code:
-        raise RuntimeError("Pareamento cancelado.")
     try:
-        config = pair(server_url, code, config_path)
-    except Exception as exc:
-        messagebox.showerror("Nexus Local Agent", "Falha no pareamento. Confira a rede e o código.", parent=root)
+        usuario = simpledialog.askstring("Nexus Local Agent", "Usuário SSW (ROD):", parent=root)
+        if not usuario:
+            raise RuntimeError("Pareamento cancelado.")
+        token = secrets.token_urlsafe(48)
+        session = _proxy_session()
+        url = OFFICIAL_SERVER + "/api/local-agent/v1/enrollment"
+        response = session.post(url, json={"usuario":usuario.strip(),"machine_name":(platform.node() or "windows")[:64],"token":token}, timeout=30)
+        response.raise_for_status()
+        ref = response.json()["id"]
+        # Persist the private proof before polling so a lost response can be recovered.
+        pending = config_path.with_name("enrollment.json")
+        save_config(pending, {"id":ref,"proof_dpapi":protect_token(token)})
+        messagebox.showinfo("Nexus Local Agent", "Informe esta referência à TI para aprovação:\n" + ref, parent=root)
+        return _finish_enrollment(config_path, pending, session, root)
+    except Exception:
+        messagebox.showerror("Nexus Local Agent", "Falha na autorização. Confira a rede e consulte a TI.", parent=root)
         raise
-    messagebox.showinfo("Nexus Local Agent", "Computador pareado com sucesso.", parent=root)
-    root.destroy()
-    return config
+    finally:
+        root.destroy()
+
+
+def _finish_enrollment(config_path, pending, session, root=None):
+    import json
+    import time
+    data = json.loads(pending.read_text(encoding="utf-8"))
+    token = unprotect_token(data["proof_dpapi"])
+    deadline = time.monotonic() + 900
+    while time.monotonic() < deadline:
+        response = session.post(OFFICIAL_SERVER + "/api/local-agent/v1/enrollment/" + data["id"] + "/poll", json={"token":token}, timeout=30)
+        response.raise_for_status()
+        result = response.json()
+        if result["state"] == "ISSUED":
+            config = {"server_url":OFFICIAL_SERVER,"agent_id":result["agent_id"],"token_dpapi":protect_token(token),"tasks":result["tasks"]}
+            save_config(config_path, config)
+            pending.unlink()
+            return config
+        if result["state"] not in {"PENDING","APPROVED"}:
+            pending.unlink()
+            raise RuntimeError("Solicitação encerrada pela TI ou expirada.")
+        time.sleep(5)
+    raise RuntimeError("Prazo de autorização encerrado.")
 
 
 def _apply_config(config: dict) -> None:
@@ -236,6 +268,8 @@ def main() -> int:
         config = pair(args.server_url, args.pair_code, args.config)
     elif args.config.is_file():
         config = load_config(args.config)
+    elif args.config.with_name("enrollment.json").is_file():
+        config = _finish_enrollment(args.config, args.config.with_name("enrollment.json"), _proxy_session())
     else:
         config = _interactive_pair(args.config)
     _apply_config(config)

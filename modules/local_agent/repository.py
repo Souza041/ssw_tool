@@ -178,6 +178,15 @@ class LocalAgentRepository:
                     expires_at TEXT NOT NULL,
                     used_at TEXT
                 );
+                CREATE TABLE IF NOT EXISTS local_agent_enrollment (
+                    id TEXT PRIMARY KEY, identity_key TEXT NOT NULL,
+                    machine_name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+                    state TEXT NOT NULL, decided_by TEXT, decided_at TEXT,
+                    agent_id TEXT, source TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_enrollment_source
+                    ON local_agent_enrollment(source, created_at);
                 CREATE TABLE IF NOT EXISTS local_agent_bootstrap_audit (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     occurred_at TEXT NOT NULL,
@@ -806,6 +815,67 @@ class LocalAgentRepository:
         ):
             raise ValueError("Identidade de pareamento inválida.")
         return "/".join(parts)
+
+    def request_enrollment(self, *, usuario, machine_name, token, source):
+        identity = self._identity_key(f"rod/{usuario}")
+        machine = re.sub(r"[^A-Za-z0-9._-]", "-", machine_name)[:64] or "windows"
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        now = utc_now()
+        with self._transaction(immediate=True) as db:
+            if db.execute("SELECT COUNT(*) FROM local_agent_enrollment WHERE created_at>=?", (utc_text(now-timedelta(minutes=10)),)).fetchone()[0] >= 100:
+                raise RuntimeError("Limite temporário de solicitações atingido.")
+            if db.execute("SELECT COUNT(*) FROM local_agent_enrollment WHERE source=? AND created_at>=?", (source, utc_text(now-timedelta(minutes=10)))).fetchone()[0] >= 20:
+                raise RuntimeError("Limite temporário de solicitações atingido.")
+            if db.execute("SELECT 1 FROM local_agent_user_bindings WHERE identity_key=? AND revoked_at IS NULL", (identity,)).fetchone():
+                raise RuntimeError("Usuário já possui agente autorizado.")
+            if db.execute("SELECT 1 FROM local_agent_enrollment WHERE identity_key=? AND state IN ('PENDING','APPROVED') AND expires_at>=?", (identity, utc_text(now))).fetchone():
+                raise RuntimeError("Já existe solicitação em andamento.")
+            ref = secrets.token_hex(12)
+            db.execute("INSERT INTO local_agent_enrollment (id,identity_key,machine_name,token_hash,created_at,expires_at,state,source) VALUES (?,?,?,?,?,?,?,?)", (ref,identity,machine,digest,utc_text(now),utc_text(now+timedelta(minutes=15)),"PENDING",source))
+        return ref
+
+    def decide_enrollment(self, ref, *, approve, actor):
+        now = utc_text(utc_now())
+        with self._transaction(immediate=True) as db:
+            row = db.execute("SELECT * FROM local_agent_enrollment WHERE id=? AND state='PENDING' AND expires_at>=?", (ref,now)).fetchone()
+            if row is None:
+                raise LookupError("Solicitação indisponível.")
+            if approve and db.execute("SELECT 1 FROM local_agent_user_bindings WHERE identity_key=? AND revoked_at IS NULL", (row['identity_key'],)).fetchone():
+                raise RuntimeError("Usuário já possui agente autorizado.")
+            db.execute("UPDATE local_agent_enrollment SET state=?, decided_by=?, decided_at=? WHERE id=?", ("APPROVED" if approve else "REJECTED",actor[:80],now,ref))
+
+    def collect_enrollment(self, ref, *, token, tasks):
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        now = utc_text(utc_now())
+        with self._transaction(immediate=True) as db:
+            row = db.execute("SELECT * FROM local_agent_enrollment WHERE id=? AND token_hash=?", (ref,digest)).fetchone()
+            if row is None:
+                raise LookupError("Solicitação indisponível.")
+            if row['state'] == 'ISSUED':
+                cred = db.execute("SELECT tasks_json FROM local_agent_credentials WHERE agent_id=? AND revoked_at IS NULL", (row['agent_id'],)).fetchone()
+                if cred is None:
+                    return {"state":"REVOKED"}
+                return {"state":"ISSUED","agent_id":row['agent_id'],"tasks":json.loads(cred['tasks_json'])}
+            if row['expires_at'] < now:
+                return {"state":"EXPIRED"}
+            if row['state'] != 'APPROVED':
+                return {"state":row['state']}
+            if db.execute("SELECT 1 FROM local_agent_user_bindings WHERE identity_key=? AND revoked_at IS NULL", (row['identity_key'],)).fetchone():
+                raise RuntimeError("Usuário já possui agente autorizado.")
+            checked = sorted({checked_task(t) for t in tasks})
+            if not checked:
+                raise RuntimeError("Nenhuma tarefa autorizada.")
+            agent = 'windows-' + secrets.token_hex(12)
+            db.execute("INSERT INTO local_agent_credentials (agent_id,token_hash,tasks_json,machine_name,created_at) VALUES (?,?,?,?,?)", (agent,digest,json.dumps(checked),row['machine_name'],now))
+            db.execute("INSERT INTO local_agent_user_bindings (identity_key,agent_id,created_at) VALUES (?,?,?) ON CONFLICT(identity_key) DO UPDATE SET agent_id=excluded.agent_id,created_at=excluded.created_at,revoked_at=NULL WHERE local_agent_user_bindings.revoked_at IS NOT NULL", (row['identity_key'],agent,now))
+            db.execute("UPDATE local_agent_enrollment SET state='ISSUED',agent_id=? WHERE id=?", (agent,ref))
+            return {"state":"ISSUED","agent_id":agent,"tasks":checked}
+
+    def enrollment_overview(self):
+        with self._connect() as db:
+            requests = db.execute("SELECT id,identity_key,machine_name,created_at,expires_at,state,decided_by,decided_at FROM local_agent_enrollment ORDER BY created_at DESC LIMIT 200").fetchall()
+            agents = db.execute("SELECT c.agent_id,c.machine_name,c.revoked_at,b.identity_key,a.last_seen_at FROM local_agent_credentials c LEFT JOIN local_agent_user_bindings b ON b.agent_id=c.agent_id LEFT JOIN local_agent_agents a ON a.agent_id=c.agent_id ORDER BY c.created_at DESC LIMIT 200").fetchall()
+        return [dict(r) for r in requests], [dict(r) for r in agents]
 
     def create_pairing(
         self,

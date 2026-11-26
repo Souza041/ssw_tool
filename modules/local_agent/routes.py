@@ -5,7 +5,7 @@ import hashlib
 import secrets
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException, Path as ApiPath, Query, Request
+from fastapi import Form, APIRouter, Header, HTTPException, Path as ApiPath, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from modules.local_agent.bootstrap import (
@@ -601,3 +601,64 @@ def admin_cancel(
     except LookupError:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada.") from None
     return {"job_id": job_id, "status": status}
+
+
+class EnrollmentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    usuario: str = Field(pattern=r"^[A-Za-z0-9._-]{1,80}$")
+    machine_name: str = Field(min_length=1,max_length=64)
+    token: str = Field(pattern=r"^[A-Za-z0-9_-]{64}$")
+
+class EnrollmentPoll(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    token: str = Field(pattern=r"^[A-Za-z0-9_-]{64}$")
+
+@router.post("/api/local-agent/v1/enrollment", status_code=201)
+def enrollment_request(body: EnrollmentRequest, request: Request):
+    settings = _settings()
+    if not settings.pairing_enabled:
+        raise HTTPException(503, "Pareamento desativado.")
+    try:
+        ref = _repository(settings).request_enrollment(usuario=body.usuario, machine_name=body.machine_name, token=body.token, source=request.client.host if request.client else "unknown")
+    except (ValueError, RuntimeError):
+        raise HTTPException(409, "Solicitação indisponível ou limite atingido.") from None
+    return {"id":ref}
+
+@router.post("/api/local-agent/v1/enrollment/{ref}/poll")
+def enrollment_poll(ref: str, body: EnrollmentPoll):
+    settings = _settings()
+    if not settings.pairing_enabled:
+        raise HTTPException(503, "Pareamento desativado.")
+    try:
+        return _repository(settings).collect_enrollment(ref, token=body.token, tasks=settings.paired_tasks & settings.allowed_tasks)
+    except LookupError:
+        raise HTTPException(404, "Solicitação indisponível.") from None
+    except RuntimeError:
+        raise HTTPException(409, "Solicitação indisponível.") from None
+
+@router.get("/admin/agent-manager")
+def agent_manager(request: Request):
+    from fastapi.templating import Jinja2Templates
+    from modules.local_agent.repository import utc_text, utc_now
+    settings, repo = _admin(request)
+    requests, agents = repo.enrollment_overview()
+    for agent in agents:
+        agent['online'] = not agent['revoked_at'] and repo.agent_online(agent['agent_id'], offline_seconds=settings.agent_offline_seconds)
+    return Jinja2Templates(directory="web/templates").TemplateResponse("agent_manager.html", {"request":request,"is_admin":True,"requests":requests,"agents":agents,"now":utc_text(utc_now()),"csrf":request.session.setdefault("local_agent_csrf", secrets.token_urlsafe(32))})
+
+@router.post("/admin/agent-manager/decision")
+def agent_manager_decision(request: Request, ref: str = Form(...), action: str = Form(...), csrf: str = Form(...)):
+    from fastapi.responses import RedirectResponse
+    settings, repo = _admin(request)
+    _csrf(request, csrf)
+    if not settings.pairing_enabled or action not in {"approve","reject","revoke"}:
+        raise HTTPException(409, "Ação indisponível.")
+    try:
+        if action == "revoke":
+            if not repo.revoke_agent(ref):
+                raise LookupError()
+        else:
+            repo.decide_enrollment(ref, approve=action=="approve", actor=str(obter_client(request).usuario))
+    except (LookupError, RuntimeError):
+        raise HTTPException(409, "Registro indisponível.") from None
+    return RedirectResponse("/admin/agent-manager", status_code=303)

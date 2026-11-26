@@ -301,6 +301,7 @@
         </div>
         {% if request.session.get("ssw_session_id") %}
         <div class="nexus-nav-group"><div class="nexus-nav-label">MONITORAMENTO</div>
+          {% if is_admin|default(false) %}<a href="/admin/agent-manager">◉ <span>Nexus Agent Manager</span></a>{% endif %}
           {% if is_admin|default(false) %}<a href="/admin/observabilidade" data-nexus-path="/admin/observabilidade">◉ <span>Observabilidade geral</span></a>{% endif %}
           {% if request.session.get("oc73_observabilidade") %}
           <a href="/oc73/observabilidade" data-nexus-path="/oc73/observabilidade">◉ <span>OC73 · Observabilidade</span></a>{% endif %}
