@@ -65,7 +65,7 @@ def _single_instance():
     return handle
 
 
-def _proxy_session() -> requests.Session:
+def _proxy_session(server_url: str = OFFICIAL_SERVER) -> requests.Session:
     """Usa proxy do usuário Windows ou PROXY_* privado, sem registrar credenciais."""
     session = requests.Session()
     session.proxies.update({
@@ -83,6 +83,13 @@ def _proxy_session() -> requests.Session:
             raise ValueError("Proxy Nexus inválido.")
         session.trust_env = False
         session.proxies = {"http": explicit, "https": explicit}
+        return session
+    from modules.local_agent.windows_proxy import resolve_pac
+    automatic = resolve_pac(server_url)
+    if automatic is not None:
+        session.trust_env = False
+        session.proxies = {"http": automatic, "https": automatic} if automatic else {}
+        logging.getLogger(__name__).info("Nexus proxy mode: %s", "PAC" if automatic else "PAC_DIRECT")
         return session
     server = os.getenv("PROXY_SERVER", "").strip().rstrip("/")
     username = os.getenv("PROXY_USER", "").strip()
@@ -105,7 +112,7 @@ def pair(server_url: str, code: str, config_path: Path) -> dict:
     parsed = urlparse(server_url.strip().rstrip("/"))
     if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment:
         raise ValueError("Informe a URL HTTPS oficial do Nexus.")
-    response = _proxy_session().post(
+    response = _proxy_session(server_url).post(
         server_url.strip().rstrip("/") + "/api/local-agent/v1/pair",
         json={"code": code.strip().upper(), "machine_name": platform.node() or "windows"},
         timeout=30,
@@ -203,7 +210,7 @@ class AgentRuntime:
         register_builtin_handlers(registry)
         register_ssw_handlers(registry)
         self.stop_event = threading.Event()
-        self.client = AgentClient(settings, session=_proxy_session())
+        self.client = AgentClient(settings, session=_proxy_session(settings.server_url))
         self.executor = LocalAgentExecutor(self.client, registry)
         self.remote_auth = WindowsRemoteAuthExecutor(self.client)
         self.poll_seconds = settings.poll_seconds
@@ -213,7 +220,7 @@ class AgentRuntime:
         while not self.stop_event.is_set():
             try:
                 worked = self.remote_auth.run_once()
-                if not worked:
+                if not worked and not self.stop_event.is_set():
                     worked = self.executor.run_once()
                 self.status = "Conectado"
             except (AgentProtocolError, RemoteAuthError, requests.RequestException):
@@ -228,7 +235,7 @@ class AgentRuntime:
                 self.stop_event.wait(self.poll_seconds)
 
 
-def _run_tray(runtime: AgentRuntime) -> None:
+def _run_tray(runtime: AgentRuntime) -> bool:
     import pystray
     from PIL import Image, ImageDraw
 
@@ -240,16 +247,33 @@ def _run_tray(runtime: AgentRuntime) -> None:
     def title(_item):
         return runtime.status
 
+    repair = False
+
     def stop(icon, _item):
         runtime.stop_event.set()
         icon.stop()
 
+    def repair_pairing(icon, _item):
+        nonlocal repair
+        # The worker must finish its current operation before enrollment starts.
+        repair = True
+        stop(icon, _item)
+
+    def diagnostic(icon, _item):
+        os.startfile(str(default_config_path().with_name("agent.log")))
+
     icon = pystray.Icon(
         "NexusLocalAgent", image, "Nexus Local Agent",
-        menu=pystray.Menu(pystray.MenuItem(title, None, enabled=False), pystray.MenuItem("Sair", stop)),
+        menu=pystray.Menu(pystray.MenuItem(title, None, enabled=False), pystray.MenuItem("Abrir diagnóstico", diagnostic), pystray.MenuItem("Refazer pareamento (após concluir tarefas)", repair_pairing), pystray.MenuItem("Sair", stop)),
     )
-    threading.Thread(target=runtime.run, name="nexus-agent", daemon=True).start()
-    icon.run()
+    worker = threading.Thread(target=runtime.run, name="nexus-agent", daemon=False)
+    worker.start()
+    try:
+        icon.run()
+    finally:
+        runtime.stop_event.set()
+        worker.join()
+    return repair
 
 
 def main() -> int:
@@ -277,7 +301,27 @@ def main() -> int:
     if args.once:
         runtime.remote_auth.run_once() or runtime.executor.run_once()
         return 0
-    _run_tray(runtime)
+    if _run_tray(runtime):
+        import tkinter as tk
+        from tkinter import messagebox
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            messagebox.showinfo("Nexus Local Agent", "Tarefas encerradas. Solicite à TI a revogação da autorização anterior antes de parear novamente. A configuração atual será preservada até a nova aprovação.", parent=root)
+        finally:
+            root.destroy()
+        pending = args.config.with_name("enrollment.json")
+        if pending.is_file():
+            _finish_enrollment(args.config, pending, _proxy_session())
+        else:
+            _interactive_pair(args.config)
+        # Restart manually to avoid sharing browser sessions across identities.
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            messagebox.showinfo("Nexus Local Agent", "Autorização salva. Abra o agente novamente.", parent=root)
+        finally:
+            root.destroy()
     _ = mutex
     return 0
 
