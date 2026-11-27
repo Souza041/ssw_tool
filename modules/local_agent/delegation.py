@@ -6,13 +6,17 @@ from datetime import datetime
 import os
 from typing import Any
 
-from modules.local_agent.config import load_server_settings
+from modules.local_agent.config import (
+    GCE_PIPELINE_TASK, GCE_QUERY_TASK, individual_task_grants, load_server_settings,
+    remote_auth_agent_for,
+)
 from modules.local_agent.repository import LocalAgentRepository
 from modules.local_agent.ssw_tasks import validate_ssw_payload
 
 
 SSW_TASKS = frozenset({
-    "ssw.documentos_gce",
+    GCE_PIPELINE_TASK,
+    GCE_QUERY_TASK,
     "ssw.metricas_op455",
     "ssw.op001.nfd",
     "ssw.op001.transporte",
@@ -70,12 +74,28 @@ def enqueue_ssw_task(
         raise RuntimeError("Nexus Local Agent está desativado.")
     if task not in settings.allowed_tasks:
         raise RuntimeError("Tarefa SSW fora da allowlist da VPS.")
+    if task == GCE_PIPELINE_TASK and target_agent_id != gce_central_agent():
+        raise RuntimeError("Pipeline GCE completo restrito ao agente central.")
+    if task == GCE_QUERY_TASK and not target_agent_id:
+        raise RuntimeError("Consulta GCE exige agente vinculado à sessão.")
+    if task == GCE_QUERY_TASK and target_agent_id == settings.remote_auth_agent_id:
+        raise RuntimeError("O GCE manual exige uma sessão em agente individual.")
     repository = LocalAgentRepository(
         settings.database_path,
         max_payload_bytes=settings.max_payload_bytes,
         max_result_bytes=settings.max_result_bytes,
         max_log_bytes=settings.max_log_bytes,
     )
+    if task == GCE_QUERY_TASK:
+        identity = {key: clean_payload[key] for key in ("dominio", "usuario")}
+        bound_agent = repository.bound_agent(**identity)
+        if bound_agent is None and target_agent_id in settings.tokens:
+            try:
+                bound_agent = remote_auth_agent_for(settings, **identity)
+            except LookupError:
+                pass
+        if bound_agent != target_agent_id:
+            raise RuntimeError("Agente da consulta GCE não está vinculado ao usuário SSW.")
 
     if target_agent_id is not None:
         if target_agent_id in settings.tokens:
@@ -88,7 +108,7 @@ def enqueue_ssw_task(
             )
 
             authorized_tasks = (
-                frozenset(dynamic_tasks or ())
+                individual_task_grants(frozenset(dynamic_tasks or ()))
                 & frozenset(settings.paired_tasks)
             )
         else:

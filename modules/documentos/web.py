@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 import secrets
 import threading
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
@@ -16,7 +18,7 @@ from modules.documentos.execution import execute_daily_documents
 from modules.documentos.services.daily_pipeline import acquire_execution_lock
 from web.admin_access import is_admin
 from web.jobs import JOBS, add_log, criar_job, executar_job, set_progress
-from web.session_store import obter_client
+from web.session_store import RemoteAuthenticatedClient, obter_client
 
 from datetime import date, datetime
 from io import BytesIO
@@ -29,8 +31,7 @@ router = APIRouter()
 templates = Jinja2Templates(directory="web/templates")
 _manual_job_guard = threading.Lock()
 _latest_manual_job_id: str | None = None
-_manual_job_ids: set[str] = set()
-_manual_remote_job_ids: set[str] = set()
+_manual_job_owners: dict[str, str] = {}
 
 
 def _require_documents_admin(request: Request) -> None:
@@ -45,7 +46,7 @@ def _job_logs(job) -> list[str]:
         return list(job.logs.queue)
 
 
-def _run_manual_job(job, *, execution_lease):
+def _run_manual_job(job, *, execution_lease, remote_client):
     set_progress(job, 0, 6)
 
     def progress(message: str) -> None:
@@ -54,11 +55,19 @@ def _run_manual_job(job, *, execution_lease):
         if match:
             set_progress(job, max(job.progress, int(match.group(1)) - 1), 6)
 
-    result = execute_daily_documents(
-        triggered_by="MANUAL",
-        progress=progress,
-        execution_lease=execution_lease,
-    )
+    from modules.documentos.remote_ssw import remote_downloader
+
+    try:
+        with TemporaryDirectory(prefix="nexus-gce-import-") as temporary:
+            result = execute_daily_documents(
+                triggered_by="MANUAL", progress=progress, execution_lease=execution_lease,
+                ssw_download=remote_downloader(
+                    client=remote_client, root=Path(temporary),
+                    execution_id=job.id, progress=progress,
+                ),
+            )
+    finally:
+        execution_lease.release()
     set_progress(job, 6, 6)
     return result
 
@@ -115,32 +124,22 @@ def documentos_executar(
     if not expected or not csrf_token or not secrets.compare_digest(expected, csrf_token):
         raise HTTPException(status_code=403, detail="Token CSRF inválido. Recarregue a página.")
 
-    from modules.local_agent.delegation import delegation_enabled, enqueue_ssw_task, gce_central_agent
-    if delegation_enabled("ssw.documentos_gce"):
-        try:
-            job_id = enqueue_ssw_task(
-                "ssw.documentos_gce",
-                {
-                    "origin": "MANUAL",
-                    "send_notifications": False,
-                    "preview_notifications": False,
-                },
-                idempotency_key=None,
-                concurrency_key="ssw.documentos_gce",
-                priority=50,
-                coalesce_active=True,
-                target_agent_id=gce_central_agent(),
-            )
-        except (RuntimeError, ValueError) as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from None
-        with _manual_job_guard:
-            _latest_manual_job_id = job_id
-            _manual_remote_job_ids.add(job_id)
-        return {
-            "accepted": True,
-            "job_id": job_id,
-            "message": "Execução enviada com segurança ao agente Windows.",
-        }
+    from modules.local_agent.config import GCE_QUERY_TASK
+    from modules.local_agent.delegation import delegation_enabled
+
+    client = obter_client(request)
+    if not isinstance(client, RemoteAuthenticatedClient):
+        raise HTTPException(409, "Entre no Nexus pelo agente deste computador antes de executar GCE.")
+    if not delegation_enabled(GCE_QUERY_TASK):
+        raise HTTPException(503, "A coleta GCE no agente individual está desativada.")
+    status = client.session_status()
+    if status["state"] != "authenticated":
+        raise HTTPException(409, status["message"])
+
+    from modules.documentos.remote_ssw import queue_repository
+    repo = queue_repository()
+    if not repo.agent_has_capability(client.agent_id, GCE_QUERY_TASK):
+        raise HTTPException(409, "Atualize ou autorize a coleta GCE no Nexus Local Agent deste computador.")
 
     try:
         execution_lease = acquire_execution_lock()
@@ -151,14 +150,17 @@ def documentos_executar(
         ) from exc
 
     try:
+        if repo.gce_pipeline_running():
+            raise HTTPException(409, "O Documentos GCE agendado está em execução.")
         with _manual_job_guard:
             job = criar_job("Documentos GCE · manual")
             _latest_manual_job_id = job.id
-            _manual_job_ids.add(job.id)
+            _manual_job_owners[job.id] = request.session["ssw_session_id"]
             executar_job(
                 job,
                 _run_manual_job,
                 execution_lease=execution_lease,
+                remote_client=client,
             )
     except BaseException:
         execution_lease.release()
@@ -175,44 +177,8 @@ def documentos_executar(
 def documentos_execution_status(request: Request, job_id: str = ""):
     _require_documents_admin(request)
     selected_id = job_id or _latest_manual_job_id or ""
-    from modules.local_agent.delegation import delegation_enabled
-    if selected_id and (
-        selected_id in _manual_remote_job_ids
-        or delegation_enabled("ssw.documentos_gce")
-    ):
-        from modules.local_agent.config import load_server_settings
-        from modules.local_agent.repository import LocalAgentRepository
-
-        settings = load_server_settings()
-        remote = LocalAgentRepository(
-            settings.database_path,
-            max_payload_bytes=settings.max_payload_bytes,
-            max_result_bytes=settings.max_result_bytes,
-            max_log_bytes=settings.max_log_bytes,
-        ).get_job(selected_id)
-        if remote is not None:
-            state = {
-                "QUEUED": "running", "LEASED": "running", "SUCCEEDED": "done",
-                "FAILED": "error", "CANCELLED": "error",
-            }.get(remote["status"], "error")
-            total = int(remote.get("progress_total") or 0)
-            progress = int(remote.get("progress_current") or 0)
-            return {
-                "available": True,
-                "job_id": selected_id,
-                "status": state,
-                "progress": progress,
-                "total": total,
-                "percent": round(progress * 100 / total) if total else 0,
-                "logs": [item["message"] for item in remote.get("logs", [])],
-                "error": remote.get("error_message"),
-                "message": {
-                    "running": "Execução aguardando ou em andamento no Windows.",
-                    "done": "Execução concluída no Windows. Indicadores atualizados.",
-                    "error": "A execução remota falhou ou foi cancelada.",
-                }[state],
-            }
-    job = JOBS.get(selected_id) if selected_id in _manual_job_ids else None
+    owner = _manual_job_owners.get(selected_id)
+    job = JOBS.get(selected_id) if owner == request.session.get("ssw_session_id") else None
     if job is None:
         return {
             "available": False,

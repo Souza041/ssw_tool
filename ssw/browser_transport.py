@@ -636,6 +636,17 @@ def authenticated_browser_transport(
         return transport
 
 
+def require_browser_session(*, domain: str, user: str, session_binding: str) -> BrowserSessionTransport:
+    identity = BrowserIdentity.checked(domain, user, session_binding)
+    with _registry_lock:
+        transport = _registry.get(identity)
+        if transport is None or not transport.valid:
+            raise SSWBrowserAuthenticationError(
+                "Sessão SSW expirada. Faça login novamente no Nexus."
+            )
+        return transport
+
+
 def discard_browser_transport(transport: BrowserSessionTransport) -> None:
     with _registry_lock:
         if _registry.get(transport.identity) is transport:

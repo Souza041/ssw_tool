@@ -183,6 +183,9 @@ def _finish_enrollment(config_path, pending, session, root=None):
 
 
 def _apply_config(config: dict) -> None:
+    from modules.local_agent.config import individual_task_grants
+
+    tasks = individual_task_grants(frozenset(config["tasks"]))
     os.environ.update({
         "NEXUS_LOCAL_AGENT_SERVER_URL": str(config["server_url"]),
         "NEXUS_LOCAL_AGENT_ID": str(config["agent_id"]),
@@ -192,7 +195,7 @@ def _apply_config(config: dict) -> None:
         "NEXUS_LOCAL_AGENT_ALLOW_INSECURE_HTTP": "false",
         "NEXUS_SSW_REMOTE_AUTH_ENABLED": "true",
         "NEXUS_LOCAL_AGENT_SSW_HANDLERS_ENABLED": "true",
-        "NEXUS_LOCAL_AGENT_SSW_TASKS": ",".join(str(item) for item in config["tasks"] if str(item) != "system.ping"),
+        "NEXUS_LOCAL_AGENT_SSW_TASKS": ",".join(sorted(tasks - {"system.ping"})),
     })
     runtime = default_config_path().with_name("runtime.env")
     if runtime.is_file():

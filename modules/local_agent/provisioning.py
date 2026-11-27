@@ -95,7 +95,7 @@ def provision_values(
         "NEXUS_LOCAL_AGENT_OFFLINE_SECONDS": "30",
         "NEXUS_LOCAL_AGENT_PAIRING_ENABLED": "false",
         "NEXUS_LOCAL_AGENT_PAIRING_TTL_SECONDS": "600",
-        "NEXUS_LOCAL_AGENT_PAIRED_TASKS": "system.ping,ssw.documentos_gce,ssw.op001.nfd,ssw.op001.transporte,ssw.session.close",
+        "NEXUS_LOCAL_AGENT_PAIRED_TASKS": "system.ping,ssw.op001.nfd,ssw.op001.transporte,ssw.session.close",
         "NEXUS_LOCAL_AGENT_BOOTSTRAP_ENABLED": "false",
         "NEXUS_LOCAL_AGENT_BOOTSTRAP_KEY_ID": str(
             current.get("NEXUS_LOCAL_AGENT_BOOTSTRAP_KEY_ID") or "homologacao-admin"

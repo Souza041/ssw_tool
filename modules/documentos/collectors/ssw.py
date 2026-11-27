@@ -49,7 +49,8 @@ class SSWDocumentsCollector:
         op455_dir.mkdir(parents=True, exist_ok=True)
         op930_dir.mkdir(parents=True, exist_ok=True)
 
-        self.config.validate_ssw()
+        if self.client_factory is None:
+            self.config.validate_ssw()
 
         client = self.client_factory() if self.client_factory else SSWClient(
             dominio=self.config.ssw_dominio, cpf=self.config.ssw_cpf,
@@ -86,4 +87,5 @@ class SSWDocumentsCollector:
 
             return SSWDownloads(Path(op455), Path(op930))
         finally:
-            client.session.close()
+            if self.client_factory is None:
+                client.session.close()

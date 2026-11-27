@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = "0.1.0",
+    [string]$Version = "0.2.0",
     [string]$Python = "py",
     [string]$Iscc = ""
 )
@@ -19,12 +19,21 @@ $env:PLAYWRIGHT_BROWSERS_PATH = $browserRoot
 $agentExe = Join-Path $root "dist\NexusAgent.exe"
 if (-not (Test-Path $agentExe)) { throw "PyInstaller não gerou NexusAgent.exe." }
 if ([string]::IsNullOrWhiteSpace($Iscc)) {
-    $candidates = @(
-        "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
-        "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-        "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
-    )
-    $Iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    $command = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+
+    if ($command) {
+        $Iscc = $command.Source
+    } else {
+        $candidates = @(
+            "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+        )
+
+        $Iscc = $candidates |
+            Where-Object { Test-Path $_ } |
+            Select-Object -First 1
+    }
 }
 if ([string]::IsNullOrWhiteSpace($Iscc) -or -not (Test-Path $Iscc)) {
     throw "Inno Setup 6 (ISCC.exe) não encontrado. O NexusAgent.exe foi gerado; instale o Inno Setup e execute novamente."

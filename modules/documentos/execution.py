@@ -24,7 +24,7 @@ def execute_daily_documents(
     preview_notifications: bool = False,
     notification_limit: int | None = None,
     execution_lease: ExecutionLease | None = None,
-    ssw_client_factory=None,
+    ssw_download=None,
 ) -> dict:
     """Executa o pipeline existente uma única vez, com auditoria opcional."""
     origin = str(triggered_by or "MANUAL").strip().upper()
@@ -32,8 +32,8 @@ def execute_daily_documents(
         raise ValueError("Origem da execução inválida.")
 
     pipeline_options = {"progress": progress}
-    if ssw_client_factory is not None:
-        pipeline_options["ssw_client_factory"] = ssw_client_factory
+    if ssw_download is not None:
+        pipeline_options["ssw_download"] = ssw_download
     pipeline = DailyDocumentsPipeline(**pipeline_options)
     return run_monitored(
         bot=BOT,

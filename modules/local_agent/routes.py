@@ -3,10 +3,13 @@ from __future__ import annotations
 import hmac
 import hashlib
 import secrets
+import sqlite3
 from typing import Any
 
 from fastapi import Form, APIRouter, Header, HTTPException, Path as ApiPath, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.concurrency import run_in_threadpool
+from starlette.responses import Response
 
 from modules.local_agent.bootstrap import (
     canonical_ping_body,
@@ -18,6 +21,10 @@ from modules.local_agent.bootstrap import (
 
 from modules.local_agent.config import (
     AGENT_ID_RE,
+    GCE_MAX_REPORT_BYTES,
+    GCE_PIPELINE_TASK,
+    GCE_QUERY_TASK,
+    individual_task_grants,
     LocalAgentConfigurationError,
     ServerSettings,
     load_server_settings,
@@ -139,11 +146,17 @@ def _agent(
     token = authorization[len(prefix):] if authorization.startswith(prefix) else ""
     expected = settings.tokens.get(agent_id, "")
     if token and expected and hmac.compare_digest(token, expected):
-        return agent_id, settings.agent_tasks.get(agent_id, frozenset())
+        tasks = settings.agent_tasks.get(agent_id, frozenset())
+        central_only = agent_id == settings.remote_auth_agent_id
+        tasks = tasks - {GCE_QUERY_TASK if central_only else GCE_PIPELINE_TASK}
+        return agent_id, tasks
     dynamic_tasks = repository.authenticate_dynamic_agent(agent_id=agent_id, token=token)
     if not token or dynamic_tasks is None:
         raise HTTPException(status_code=401, detail="Credenciais do agente inválidas ou revogadas.")
-    return agent_id, dynamic_tasks
+    tasks = individual_task_grants(dynamic_tasks)
+    if GCE_QUERY_TASK not in settings.paired_tasks:
+        tasks = tasks - {GCE_QUERY_TASK}
+    return agent_id, tasks
 
 
 def _agent_context(
@@ -255,6 +268,10 @@ def _lease_error(call):
         raise HTTPException(status_code=409, detail="Lease inexistente, expirado ou substituído.") from None
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
+    except sqlite3.OperationalError as exc:
+        if (getattr(exc, "sqlite_errorcode", 0) & 255) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
+            raise HTTPException(503, "Fila Local Agent temporariamente ocupada.") from None
+        raise
 
 
 @router.post("/api/local-agent/v1/claim")
@@ -271,13 +288,56 @@ def claim(
     )
     if not capabilities:
         raise HTTPException(status_code=422, detail="Executor sem capacidades autorizadas.")
-    job = _lease_error(lambda: repository.claim(
-        agent_id=agent_id,
-        capabilities=capabilities,
-        lease_seconds=settings.lease_seconds,
-        sessions=[item.model_dump() for item in body.sessions],
-    ))
+    gce_lease = None
+    if GCE_PIPELINE_TASK in capabilities:
+        from modules.documentos.services.daily_pipeline import acquire_execution_lock
+
+        try:
+            gce_lease = acquire_execution_lock()
+        except RuntimeError:
+            pass
+    try:
+        job = _lease_error(lambda: repository.claim(
+            agent_id=agent_id,
+            capabilities=capabilities,
+            lease_seconds=settings.lease_seconds,
+            claim_gce_pipeline=gce_lease is not None,
+            sessions=[item.model_dump() for item in body.sessions],
+        ))
+    finally:
+        if gce_lease is not None:
+            gce_lease.release()
     return {"job": job, "lease_seconds": settings.lease_seconds}
+
+
+@router.put("/api/local-agent/v1/gce-reports/{job_id}/{kind}", status_code=204)
+async def upload_gce_report(
+    request: Request,
+    job_id: str = ApiPath(pattern=r"^[0-9a-f-]{36}$"),
+    kind: str = ApiPath(pattern=r"^(op455|op930)$"),
+    x_nexus_agent_id: str = Header("", alias="X-Nexus-Agent-Id"),
+    authorization: str = Header("", alias="Authorization"),
+    lease: str = Header(alias="X-Nexus-Lease", min_length=32, max_length=128),
+    digest: str = Header(alias="X-Nexus-SHA256", pattern=r"^[a-f0-9]{64}$"),
+):
+    settings, repository, agent_id, tasks = await run_in_threadpool(
+        _agent_context, x_nexus_agent_id, authorization
+    )
+    if GCE_QUERY_TASK not in tasks or GCE_QUERY_TASK not in settings.allowed_tasks:
+        raise HTTPException(403, "Transferência GCE não autorizada.")
+    size = request.headers.get("content-length", "")
+    if size.isdecimal() and int(size) > GCE_MAX_REPORT_BYTES:
+        raise HTTPException(413, "Relatório GCE acima do limite permitido.")
+    content = bytearray()
+    async for chunk in request.stream():
+        if len(content) + len(chunk) > GCE_MAX_REPORT_BYTES:
+            raise HTTPException(413, "Relatório GCE acima do limite permitido.")
+        content.extend(chunk)
+    await run_in_threadpool(lambda: _lease_error(lambda: repository.store_gce_report(
+        job_id=job_id, agent_id=agent_id, lease_token=lease, kind=kind,
+        digest=digest, content=bytes(content),
+    )))
+    return Response(status_code=204)
 
 
 @router.post("/api/local-agent/v1/heartbeat")
@@ -560,6 +620,8 @@ def admin_enqueue(
     _csrf(request, x_csrf_token)
     if body.task not in settings.allowed_tasks:
         raise HTTPException(status_code=422, detail="Tarefa fora da allowlist do servidor.")
+    if body.task in {GCE_PIPELINE_TASK, GCE_QUERY_TASK}:
+        raise HTTPException(422, "Use a interface Documentos GCE ou o agendamento autorizado.")
     try:
         job_id = repository.enqueue(
             task=body.task,

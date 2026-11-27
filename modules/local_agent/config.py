@@ -9,6 +9,10 @@ from urllib.parse import urlparse
 
 
 AGENT_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{2,63}$")
+GCE_PIPELINE_TASK = "ssw.documentos_gce"
+GCE_QUERY_TASK = "ssw.documentos_gce.collect_ssw"
+GCE_REPORTS = ("op455", "op930")
+GCE_MAX_REPORT_BYTES = 16 * 1024 * 1024
 TASK_RE = re.compile(r"^[a-z][a-z0-9_.-]{2,99}$")
 TRUE_VALUES = {"1", "true", "yes", "sim", "on"}
 
@@ -221,8 +225,8 @@ def load_server_settings() -> ServerSettings:
         ),
         paired_tasks=_tasks(os.getenv(
             "NEXUS_LOCAL_AGENT_PAIRED_TASKS",
-            "system.ping,ssw.documentos_gce,ssw.op001.nfd,ssw.op001.transporte,ssw.session.close",
-        )),
+            "system.ping,ssw.op001.nfd,ssw.op001.transporte,ssw.session.close",
+        )) - {GCE_PIPELINE_TASK},
         remote_auth_timeout_seconds=_bounded_int(
             "NEXUS_SSW_REMOTE_AUTH_TIMEOUT_SECONDS", 960, 30, 1200
         ),
@@ -302,6 +306,13 @@ def remote_auth_agent_for(settings: ServerSettings, *, dominio: str, usuario: st
     if settings.remote_auth_agent_id:
         return settings.remote_auth_agent_id
     raise LookupError("Usuário sem computador Nexus autorizado.")
+
+
+def individual_task_grants(tasks: frozenset[str]) -> frozenset[str]:
+    """Converte somente o grant GCE legado. O backend ainda aplica a allowlist atual."""
+    if GCE_PIPELINE_TASK in tasks:
+        return (tasks - {GCE_PIPELINE_TASK}) | {GCE_QUERY_TASK}
+    return tasks
 
 
 @dataclass(frozen=True)

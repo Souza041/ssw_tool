@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import secrets
 import sqlite3
+import threading
 import re
 from typing import Any, Iterator
 import uuid
@@ -18,6 +19,11 @@ from modules.local_agent.contracts import (
     checked_task,
     decoded_object,
 )
+from modules.local_agent.config import GCE_MAX_REPORT_BYTES, GCE_PIPELINE_TASK, GCE_QUERY_TASK, GCE_REPORTS
+
+
+_schema_lock = threading.Lock()
+_initialized_databases: dict[Path, tuple[int, int]] = {}
 
 
 def utc_now() -> datetime:
@@ -47,7 +53,7 @@ class LocalAgentRepository:
         max_result_bytes: int = 65536,
         max_log_bytes: int = 4096,
     ) -> None:
-        self.database_path = Path(database_path)
+        self.database_path = Path(database_path).absolute()
         self.max_payload_bytes = max_payload_bytes
         self.max_result_bytes = max_result_bytes
         self.max_log_bytes = max_log_bytes
@@ -64,38 +70,46 @@ class LocalAgentRepository:
                 pass
             else:
                 os.close(descriptor)
-        self._initialize()
-
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(str(self.database_path), timeout=10)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA busy_timeout=10000")
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.execute("PRAGMA foreign_keys=ON")
-        if os.name != "nt":
-            os.chmod(self.database_path, 0o600)
-            for suffix in ("-wal", "-shm"):
-                sidecar = Path(str(self.database_path) + suffix)
-                if sidecar.exists():
-                    os.chmod(sidecar, 0o600)
-        return connection
+        stat = self.database_path.stat()
+        file_identity = (stat.st_dev, stat.st_ino)
+        if _initialized_databases.get(self.database_path) != file_identity:
+            with _schema_lock:
+                if _initialized_databases.get(self.database_path) != file_identity:
+                    self._initialize()
+                    _initialized_databases[self.database_path] = file_identity
 
     @contextmanager
-    def _transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
-        connection = self._connect()
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        # SQLite só espera pelo lock até 2s. Nenhum corpo de transação é repetido.
+        connection = sqlite3.connect(str(self.database_path), timeout=2)
         try:
-            connection.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute("PRAGMA synchronous=FULL")
             yield connection
-            connection.commit()
-        except BaseException:
-            connection.rollback()
-            raise
         finally:
             connection.close()
 
+    @contextmanager
+    def _transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
+        with self._connect() as connection, connection:
+            connection.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
+            yield connection
+
     def _initialize(self) -> None:
-        with self._connect() as db:
+        if os.name != "nt":
+            os.chmod(self.database_path, 0o600)
+            for suffix in ("-wal", "-shm"):
+                try:
+                    Path(str(self.database_path) + suffix).chmod(0o600)
+                except FileNotFoundError:
+                    pass
+        with self._connect() as db, db:
+            if db.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
+                if db.execute("PRAGMA journal_mode=WAL").fetchone()[0] != "wal":
+                    raise RuntimeError("O SQLite do Local Agent exige WAL.")
             db.executescript("""
+                BEGIN IMMEDIATE;
                 CREATE TABLE IF NOT EXISTS local_agent_jobs (
                     id TEXT PRIMARY KEY,
                     task TEXT NOT NULL,
@@ -201,6 +215,23 @@ class LocalAgentRepository:
                 );
                 CREATE INDEX IF NOT EXISTS idx_local_agent_bootstrap_rate
                     ON local_agent_bootstrap_audit(occurred_at, key_id, remote_address);
+                CREATE TABLE IF NOT EXISTS local_agent_gce_reports (
+                    job_id TEXT NOT NULL REFERENCES local_agent_jobs(id) ON DELETE CASCADE,
+                    kind TEXT NOT NULL CHECK(kind IN ('op455','op930')),
+                    digest TEXT NOT NULL,
+                    content BLOB NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    PRIMARY KEY(job_id, kind)
+                );
+                CREATE INDEX IF NOT EXISTS idx_gce_reports_expiry
+                    ON local_agent_gce_reports(expires_at);
+                CREATE TRIGGER IF NOT EXISTS discard_failed_gce_reports
+                    AFTER UPDATE OF status ON local_agent_jobs
+                    WHEN NEW.task='ssw.documentos_gce.collect_ssw'
+                      AND NEW.status IN ('FAILED','CANCELLED')
+                BEGIN
+                    DELETE FROM local_agent_gce_reports WHERE job_id=NEW.id;
+                END;
             """)
             columns = {
                 row["name"] for row in db.execute("PRAGMA table_info(local_agent_jobs)")
@@ -443,6 +474,8 @@ class LocalAgentRepository:
             raise ValueError("Prioridade fora do intervalo permitido.")
         if not 1 <= max_attempts <= 10:
             raise ValueError("Número máximo de tentativas inválido.")
+        if task == GCE_QUERY_TASK and (not target_agent_id or max_attempts != 1):
+            raise ValueError("Consulta GCE exige agente de destino e tentativa única.")
         for label, value in (
             ("Chave de idempotência", idempotency_key),
             ("Chave de concorrência", concurrency_key),
@@ -463,7 +496,14 @@ class LocalAgentRepository:
         job_id = str(uuid.uuid4())
         timestamp = utc_text(now or utc_now())
         with self._transaction(immediate=True) as db:
-            if task == "ssw.documentos_gce":
+            self._recover_expired(db, timestamp)
+            if idempotency_key:
+                existing = db.execute(
+                    "SELECT id FROM local_agent_jobs WHERE idempotency_key=?", (idempotency_key,)
+                ).fetchone()
+                if existing is not None:
+                    return str(existing["id"])
+            if task == GCE_PIPELINE_TASK:
                 active_gce = db.execute("""
                     SELECT id
                     FROM local_agent_jobs
@@ -506,6 +546,14 @@ class LocalAgentRepository:
         return job_id
 
     def _recover_expired(self, db: sqlite3.Connection, now_text: str) -> None:
+        db.execute("DELETE FROM local_agent_gce_reports WHERE expires_at < ?", (now_text,))
+        queue_cutoff = utc_text(datetime.fromisoformat(now_text) - timedelta(minutes=65))
+        db.execute("""
+            UPDATE local_agent_jobs
+            SET status='CANCELLED', cancellation_requested=1, finished_at=?, updated_at=?,
+                error_message='Consulta GCE expirou na fila.'
+            WHERE task=? AND status='QUEUED' AND created_at < ?
+        """, (now_text, now_text, GCE_QUERY_TASK, queue_cutoff))
         db.execute("""
             UPDATE local_agent_agents SET current_job_id=NULL
             WHERE current_job_id IN (
@@ -540,6 +588,7 @@ class LocalAgentRepository:
         agent_id: str,
         capabilities: set[str] | frozenset[str],
         lease_seconds: int,
+        claim_gce_pipeline: bool = True,
         sessions: list[dict[str, str]] | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any] | None:
@@ -588,6 +637,7 @@ class LocalAgentRepository:
                   AND attempts < max_attempts
                   AND (target_agent_id IS NULL OR target_agent_id = ?)
                   AND task IN ({placeholders})
+                  AND (? OR task != ?)
                   AND (
                     concurrency_key IS NULL OR NOT EXISTS (
                         SELECT 1 FROM local_agent_jobs active
@@ -597,7 +647,7 @@ class LocalAgentRepository:
                   )
                 ORDER BY priority ASC, created_at ASC
                 LIMIT 1
-            """, [agent_id, *checked_capabilities]).fetchone()
+            """, [agent_id, *checked_capabilities, claim_gce_pipeline, GCE_PIPELINE_TASK]).fetchone()
             if row is None:
                 return None
             updated = db.execute("""
@@ -721,7 +771,7 @@ class LocalAgentRepository:
         timestamp = utc_text(now or utc_now())
         with self._transaction(immediate=True) as db:
             row = db.execute("""
-                SELECT cancellation_requested FROM local_agent_jobs
+                SELECT task, cancellation_requested FROM local_agent_jobs
                 WHERE id=? AND status='LEASED' AND agent_id=? AND lease_token=?
                   AND lease_expires_at >= ?
             """, (job_id, agent_id, lease_token, timestamp)).fetchone()
@@ -731,6 +781,23 @@ class LocalAgentRepository:
                 "CANCELLED" if row["cancellation_requested"]
                 else "SUCCEEDED" if succeeded else "FAILED"
             )
+            if status == "SUCCEEDED" and row["task"] == GCE_QUERY_TASK:
+                reports = db.execute(
+                    """SELECT kind, digest, length(content) AS size
+                       FROM local_agent_gce_reports WHERE job_id=? AND expires_at>=?""",
+                    (job_id, timestamp),
+                ).fetchall()
+                if len(reports) != len(GCE_REPORTS):
+                    status = "FAILED"
+                    safe_error = "Transferência OP455/OP930 incompleta."
+                    result_json = "{}"
+                else:
+                    result_json = checked_json_object({
+                        "reports": {
+                            report["kind"]: {"sha256": report["digest"], "bytes": report["size"]}
+                            for report in reports
+                        },
+                    }, maximum_bytes=self.max_result_bytes, label="Auditoria GCE")
             db.execute("""
                 UPDATE local_agent_jobs
                 SET status=?, result_json=?, error_message=?, finished_at=?, updated_at=?,
@@ -742,6 +809,62 @@ class LocalAgentRepository:
                 (timestamp, agent_id),
             )
         return status
+
+    def gce_pipeline_running(self) -> bool:
+        with self._connect() as db:
+            return db.execute(
+                "SELECT 1 FROM local_agent_jobs WHERE task=? AND status='LEASED' LIMIT 1",
+                (GCE_PIPELINE_TASK,),
+            ).fetchone() is not None
+
+    def agent_has_capability(self, agent_id: str, task: str) -> bool:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT capabilities_json FROM local_agent_agents WHERE agent_id=?", (agent_id,)
+            ).fetchone()
+        return row is not None and task in json.loads(row["capabilities_json"])
+
+    def store_gce_report(self, *, job_id: str, agent_id: str, lease_token: str,
+                         kind: str, digest: str, content: bytes) -> None:
+        if kind not in GCE_REPORTS or not 0 < len(content) <= GCE_MAX_REPORT_BYTES:
+            raise ValueError("Relatório GCE vazio ou acima do limite permitido.")
+        if not secrets.compare_digest(hashlib.sha256(content).hexdigest(), digest):
+            raise ValueError("Integridade do relatório GCE inválida.")
+        current = utc_now()
+        with self._transaction(immediate=True) as db:
+            row = db.execute("""
+                SELECT 1 FROM local_agent_jobs
+                WHERE id=? AND agent_id=? AND target_agent_id=? AND lease_token=?
+                  AND task=? AND status='LEASED' AND lease_expires_at>=?
+                  AND cancellation_requested=0
+            """, (job_id, agent_id, agent_id, lease_token, GCE_QUERY_TASK, utc_text(current))).fetchone()
+            if row is None:
+                raise LookupError("Lease inválido para transferência GCE.")
+            existing = db.execute(
+                "SELECT digest FROM local_agent_gce_reports WHERE job_id=? AND kind=?",
+                (job_id, kind),
+            ).fetchone()
+            if existing is not None:
+                if existing["digest"] != digest:
+                    raise ValueError("Relatório GCE já recebido com outro conteúdo.")
+                return
+            db.execute(
+                "INSERT INTO local_agent_gce_reports VALUES (?, ?, ?, ?, ?)",
+                (job_id, kind, digest, content, utc_text(current + timedelta(hours=2))),
+            )
+
+    def take_gce_reports(self, *, job_id: str, agent_id: str) -> dict[str, tuple[str, bytes]]:
+        with self._transaction(immediate=True) as db:
+            rows = db.execute("""
+                SELECT r.kind, r.digest, r.content FROM local_agent_gce_reports r
+                JOIN local_agent_jobs j ON j.id=r.job_id
+                WHERE r.job_id=? AND j.agent_id=? AND j.target_agent_id=?
+                  AND j.task=? AND j.status='SUCCEEDED' AND r.expires_at>=?
+            """, (job_id, agent_id, agent_id, GCE_QUERY_TASK, utc_text(utc_now()))).fetchall()
+            if {row["kind"] for row in rows} != set(GCE_REPORTS):
+                raise LookupError("Relatórios GCE indisponíveis ou já consumidos.")
+            db.execute("DELETE FROM local_agent_gce_reports WHERE job_id=?", (job_id,))
+        return {row["kind"]: (row["digest"], row["content"]) for row in rows}
 
     def request_cancel(self, job_id: str, *, now: datetime | None = None) -> str:
         timestamp = utc_text(now or utc_now())
@@ -1045,6 +1168,15 @@ class LocalAgentRepository:
                 WHERE target_agent_id=? AND status='QUEUED'
             """, (timestamp, timestamp, agent_id))
             db.execute("DELETE FROM local_agent_sessions WHERE agent_id=?", (agent_id,))
+            db.execute("""
+                UPDATE local_agent_jobs SET cancellation_requested=1, updated_at=?
+                WHERE target_agent_id=? AND task=? AND status='LEASED'
+            """, (timestamp, agent_id, GCE_QUERY_TASK))
+            db.execute("""
+                DELETE FROM local_agent_gce_reports WHERE job_id IN (
+                    SELECT id FROM local_agent_jobs WHERE target_agent_id=? AND task=?
+                )
+            """, (agent_id, GCE_QUERY_TASK))
         return True
 
     def session_status(

@@ -13,7 +13,9 @@ import re
 from modules.local_agent.executor import ExecutionContext, HandlerRegistry
 
 
-TASK_DOCUMENTOS = "ssw.documentos_gce"
+from modules.local_agent.config import GCE_MAX_REPORT_BYTES, GCE_PIPELINE_TASK, GCE_QUERY_TASK
+
+TASK_DOCUMENTOS = GCE_PIPELINE_TASK
 TASK_METRICAS = "ssw.metricas_op455"
 TASK_OC73 = "ssw.ocorrencia_73"
 TASK_OC73_RECHECK = "ssw.ocorrencia_73.recheck_big"
@@ -101,11 +103,25 @@ def validate_ssw_payload(task: str, payload: dict[str, Any]) -> dict[str, Any]:
             "days": days, "origin": origin, "mode": mode,
             "correlation_id": correlation_id or None,
         }
+    if task == GCE_QUERY_TASK:
+        _exact(payload, {"period_start", "period_end", "cnpj", "group", "timeout", *_IDENTITY_FIELDS})
+        start = _iso_date(payload.get("period_start"), "Data inicial", optional=False)
+        end = _iso_date(payload.get("period_end"), "Data final", optional=False)
+        cnpj, group, timeout = (payload.get(key) for key in ("cnpj", "group", "timeout"))
+        if start > end or (date.fromisoformat(end) - date.fromisoformat(start)).days > 366:
+            raise ValueError("Período da consulta GCE inválido.")
+        if (not isinstance(cnpj, str) or not re.fullmatch(r"[0-9]{14}", cnpj)
+                or not isinstance(group, str) or not re.fullmatch(r"[\w .-]{1,64}", group)
+                or type(timeout) is not int or not 1 <= timeout <= 1800):
+            raise ValueError("Parâmetros da consulta GCE inválidos.")
+        return {
+            **_identity(payload), "period_start": start, "period_end": end,
+            "cnpj": cnpj, "group": group, "timeout": timeout,
+        }
     if task == TASK_DOCUMENTOS:
         _exact(payload, {
             "origin", "reference_date", "period_start", "period_end",
             "send_notifications", "preview_notifications", "notification_limit",
-            *_IDENTITY_FIELDS,
         })
         origin = str(payload.get("origin") or "SCHEDULED").strip().upper()
         if origin not in {"MANUAL", "SCHEDULED"}:
@@ -130,11 +146,6 @@ def validate_ssw_payload(task: str, payload: dict[str, Any]) -> dict[str, Any]:
             "preview_notifications": preview,
             "notification_limit": limit,
         }
-        present = _IDENTITY_FIELDS & set(payload)
-        if present and present != _IDENTITY_FIELDS:
-            raise ValueError("Identidade remota incompleta.")
-        if present:
-            result.update(_identity(payload))
         return result
     if task in {TASK_OP001_NFD, TASK_OP001_TRANSPORTE}:
         _exact(payload, {"filename", "workbook_base64", *_IDENTITY_FIELDS})
@@ -179,27 +190,16 @@ def _documents(payload: dict[str, Any], context: ExecutionContext) -> dict[str, 
                 pass
 
     context.set_progress(0, 6)
-    client_factory = None
-    operation_lease = None
-    if "session_binding" in clean:
-        remote_client = _authenticated_client(clean)
-        operation_lease = remote_client.acquire_operation("Documentos GCE")
-        client_factory = lambda: remote_client
-    try:
-        result = execute_daily_documents(
-            triggered_by=clean["origin"],
-            progress=progress,
-            reference_date=_date(clean["reference_date"]),
-            period_start=_date(clean["period_start"]),
-            period_end=_date(clean["period_end"]),
-            send_notifications=clean["send_notifications"],
-            preview_notifications=clean["preview_notifications"],
-            notification_limit=clean["notification_limit"],
-            ssw_client_factory=client_factory,
-        )
-    finally:
-        if operation_lease is not None:
-            operation_lease.release()
+    result = execute_daily_documents(
+        triggered_by=clean["origin"],
+        progress=progress,
+        reference_date=_date(clean["reference_date"]),
+        period_start=_date(clean["period_start"]),
+        period_end=_date(clean["period_end"]),
+        send_notifications=clean["send_notifications"],
+        preview_notifications=clean["preview_notifications"],
+        notification_limit=clean["notification_limit"],
+    )
     context.set_progress(6, 6)
     matching = result.get("matching") or {}
     return {
@@ -209,6 +209,53 @@ def _documents(payload: dict[str, Any], context: ExecutionContext) -> dict[str, 
         "period": result.get("period"),
         "matching": _summary(matching, ("total", "matched", "ambiguous", "not_found", "errors")),
     }
+
+
+def _collect_gce_ssw(payload: dict[str, Any], context: ExecutionContext) -> dict[str, Any]:
+    from dataclasses import replace
+    from modules.documentos.collectors.ssw import SSWDocumentsCollector
+    from modules.documentos.config import settings
+    from ssw.browser_transport import require_browser_session
+    from ssw.client import SSWClient
+
+    clean = validate_ssw_payload(GCE_QUERY_TASK, payload)
+    transport = require_browser_session(
+        domain=clean["dominio"], user=clean["usuario"],
+        session_binding=clean["session_binding"],
+    )
+    lease = transport.acquire_operation("Documentos GCE")
+    try:
+        context.raise_if_cancelled()
+        client = SSWClient(
+            dominio=clean["dominio"], usuario=clean["usuario"], unidade=clean["unidade"],
+            auth_mode="browser", session_binding=clean["session_binding"],
+        )
+        client.session.close()  # Descarta apenas o requests.Session recém-criado.
+        client.session = transport
+        client.authenticated_unit = transport.observed_unit
+        config = replace(settings, op930_cnpj=clean["cnpj"], op930_group=clean["group"],
+                         ssw_report_timeout=clean["timeout"])
+
+        def progress(message: str) -> None:
+            context.raise_if_cancelled()
+            context.log(message)
+
+        context.set_progress(0, 2)
+        with TemporaryDirectory(prefix="nexus-gce-") as temporary:
+            root = Path(temporary).resolve()
+            reports = SSWDocumentsCollector(config, client_factory=lambda: client, progress=progress).download(
+                root, _date(clean["period_start"]), _date(clean["period_end"]),
+            )
+            for position, (kind, path) in enumerate((("op455", reports.op455), ("op930", reports.op930)), 1):
+                if not path.resolve().is_relative_to(root) or not path.is_file():
+                    raise ValueError("Caminho de relatório GCE inválido.")
+                with path.open("rb") as report:
+                    content = report.read(GCE_MAX_REPORT_BYTES + 1)
+                context.upload_gce_report(kind, content)
+                context.set_progress(position, 2)
+    finally:
+        lease.release()
+    return {"success": True}
 
 
 def _authenticated_client(clean: dict[str, Any]):
@@ -385,7 +432,7 @@ def _metrics(payload: dict[str, Any], context: ExecutionContext) -> dict[str, An
 def selected_ssw_tasks() -> frozenset[str]:
     raw = os.getenv("NEXUS_LOCAL_AGENT_SSW_TASKS", "")
     selected = frozenset(item.strip() for item in raw.split(",") if item.strip())
-    known = {TASK_DOCUMENTOS, TASK_METRICAS, TASK_OP001_NFD, TASK_OP001_TRANSPORTE, TASK_SESSION_CLOSE}
+    known = {TASK_DOCUMENTOS, GCE_QUERY_TASK, TASK_METRICAS, TASK_OP001_NFD, TASK_OP001_TRANSPORTE, TASK_SESSION_CLOSE}
     unknown = selected - known
     if unknown:
         raise RuntimeError("Allowlist de handlers SSW contém tarefa desconhecida.")
@@ -400,6 +447,7 @@ def register_ssw_handlers(registry: HandlerRegistry) -> None:
         return
     handlers = {
         TASK_DOCUMENTOS: _documents,
+        GCE_QUERY_TASK: _collect_gce_ssw,
         TASK_METRICAS: _metrics,
         TASK_OP001_NFD: lambda payload, context: _op001(payload, context, task=TASK_OP001_NFD),
         TASK_OP001_TRANSPORTE: lambda payload, context: _op001(payload, context, task=TASK_OP001_TRANSPORTE),

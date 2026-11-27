@@ -118,7 +118,7 @@ class DailyDocumentsPipeline:
         self,
         config: "DocumentosSettings | None" = None,
         progress: Callable[[str], None] = print,
-        ssw_client_factory=None,
+        ssw_download=None,
     ) -> None:
         if config is None:
             from modules.documentos.config import settings
@@ -126,7 +126,7 @@ class DailyDocumentsPipeline:
             config = settings
         self.config = config
         self.progress = progress
-        self.ssw_client_factory = ssw_client_factory
+        self.ssw_download = ssw_download
 
     def _log(self, message: str) -> None:
         self.progress(message)
@@ -212,9 +212,10 @@ class DailyDocumentsPipeline:
                     f"{period.start.isoformat()} até {period.end.isoformat()}..."
                 )
 
-                ssw = SSWDocumentsCollector(
-                    self.config, client_factory=self.ssw_client_factory, progress=self._log
-                ).download(
+                download = self.ssw_download or SSWDocumentsCollector(
+                    self.config, progress=self._log
+                ).download
+                ssw = download(
                     day_dir / "ssw",
                     period.start,
                     period.end,

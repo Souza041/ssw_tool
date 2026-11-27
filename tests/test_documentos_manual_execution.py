@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -13,18 +14,7 @@ from modules.health_center.privacy import (
 )
 import modules.documentos.web as documentos_web
 from web.jobs import Job
-
-
-class FakeClient:
-    usuario = "admin_teste"
-    agent_id = "windows-admin-teste"
-    session_binding = "s" * 48
-
-    def identity_payload(self):
-        return {
-            "dominio": "ROD", "usuario": self.usuario, "unidade": "CWB",
-            "session_binding": self.session_binding,
-        }
+from web.session_store import RemoteAuthenticatedClient
 
 
 class FakeLease:
@@ -37,7 +27,14 @@ class FakeLease:
 
 @pytest.fixture
 def web_request(monkeypatch):
-    monkeypatch.setattr(documentos_web, "obter_client", lambda request: FakeClient())
+    client = RemoteAuthenticatedClient("ROD", "admin_teste", "CWB", "s" * 48, "windows-admin-teste")
+    monkeypatch.setattr(client, "session_status", lambda: {"state": "authenticated"})
+    monkeypatch.setattr(documentos_web, "obter_client", lambda request: client)
+    monkeypatch.setenv("NEXUS_SSW_DELEGATION_ENABLED", "true")
+    monkeypatch.setenv("NEXUS_SSW_DELEGATED_TASKS", "ssw.documentos_gce.collect_ssw")
+    monkeypatch.setattr("modules.documentos.remote_ssw.queue_repository", lambda: SimpleNamespace(
+        agent_has_capability=lambda *_: True, gce_pipeline_running=lambda: False,
+    ))
     monkeypatch.setattr(documentos_web, "is_admin", lambda request: True)
     return type("RequestStub", (), {"session": {
         "ssw_session_id": "sessao-teste",
@@ -80,30 +77,24 @@ def test_manual_endpoint_starts_background_job_without_running_pipeline(
     assert response["accepted"] is True
     assert captured["func"] is documentos_web._run_manual_job
     assert captured["kwargs"]["execution_lease"] is lease
+    assert captured["kwargs"]["remote_client"].agent_id == "windows-admin-teste"
     assert lease.released is False
 
 
-def test_manual_endpoint_delegates_gce_without_notifications(web_request, monkeypatch):
-    calls = []
-    monkeypatch.setattr("modules.local_agent.delegation.gce_central_agent", lambda: "windows-central")
-    monkeypatch.setenv("NEXUS_SSW_DELEGATION_ENABLED", "true")
+def test_manual_endpoint_never_falls_back_to_the_central_job(web_request, monkeypatch):
     monkeypatch.setenv("NEXUS_SSW_DELEGATED_TASKS", "ssw.documentos_gce")
-    monkeypatch.setattr(
-        "modules.local_agent.delegation.enqueue_ssw_task",
-        lambda task, payload, **kwargs: calls.append((task, payload, kwargs)) or "remote-job",
-    )
-    monkeypatch.setattr(
-        documentos_web, "acquire_execution_lock",
-        lambda: pytest.fail("execução local não deve reservar trava"),
-    )
-    response = documentos_web.documentos_executar(web_request, "csrf-teste")
-    assert response["job_id"] == "remote-job"
-    assert calls[0][0] == "ssw.documentos_gce"
-    assert calls[0][1]["send_notifications"] is False
-    assert calls[0][1]["preview_notifications"] is False
-    assert calls[0][2]["target_agent_id"] == "windows-central"
-    assert calls[0][2]["concurrency_key"] == "ssw.documentos_gce"
-    assert not {"dominio", "usuario", "unidade", "session_binding"} & calls[0][1].keys()
+    with pytest.raises(HTTPException) as error:
+        documentos_web.documentos_executar(web_request, "csrf-teste")
+    assert error.value.status_code == 503
+
+
+def test_manual_status_is_scoped_to_the_owner_session(web_request, monkeypatch):
+    monkeypatch.setattr(documentos_web, "acquire_execution_lock", FakeLease)
+    monkeypatch.setattr(documentos_web, "executar_job", lambda *_args, **_kwargs: None)
+    job_id = documentos_web.documentos_executar(web_request, "csrf-teste")["job_id"]
+    assert documentos_web.documentos_execution_status(web_request, job_id)["available"]
+    web_request.session["ssw_session_id"] = "outro-admin"
+    assert not documentos_web.documentos_execution_status(web_request, job_id)["available"]
 
 
 def test_manual_endpoint_reports_scheduled_or_manual_conflict(web_request, monkeypatch):
@@ -142,7 +133,7 @@ def test_manual_worker_exposes_real_progress_and_logs_without_real_pipeline(monk
         return {"success": True}
 
     monkeypatch.setattr(documentos_web, "execute_daily_documents", fake_execute)
-    result = documentos_web._run_manual_job(job, execution_lease=lease)
+    result = documentos_web._run_manual_job(job, execution_lease=lease, remote_client=object())
 
     assert result == {"success": True}
     assert (job.progress, job.total) == (6, 6)

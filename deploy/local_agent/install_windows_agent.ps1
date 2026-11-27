@@ -51,6 +51,7 @@ if ($sswHandlers) {
     }
     $knownTasks = @(
         'ssw.documentos_gce',
+        'ssw.documentos_gce.collect_ssw',
         'ssw.metricas_op455',
         'ssw.op001.nfd',
         'ssw.op001.transporte',

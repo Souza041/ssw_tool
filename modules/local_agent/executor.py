@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import platform
 import threading
 import time
@@ -8,7 +9,7 @@ from typing import Any, Callable
 
 import requests
 
-from modules.local_agent.config import ExecutorSettings
+from modules.local_agent.config import ExecutorSettings, GCE_MAX_REPORT_BYTES, GCE_QUERY_TASK
 from modules.local_agent.contracts import checked_log_message, checked_task
 from modules.local_agent.remote_auth import response_proof
 
@@ -90,6 +91,25 @@ class AgentClient:
     def remote_auth_claim(self) -> dict[str, Any]:
         return self._post("/api/local-agent/v1/remote-auth/claim", {})
 
+    def upload_gce_report(self, job_id: str, lease_token: str, kind: str, content: bytes) -> None:
+        if not 0 < len(content) <= GCE_MAX_REPORT_BYTES:
+            raise ValueError("Relatório GCE vazio ou acima do limite.")
+        try:
+            response = self.session.put(
+                f"{self.settings.server_url}/api/local-agent/v1/gce-reports/{job_id}/{kind}",
+                headers={
+                    **self.headers, "Content-Type": "application/octet-stream",
+                    "X-Nexus-Lease": lease_token,
+                    "X-Nexus-SHA256": hashlib.sha256(content).hexdigest(),
+                },
+                data=content, timeout=max(60, self.settings.request_timeout_seconds),
+                allow_redirects=False,
+            )
+            if response.status_code != 204:
+                raise AgentProtocolError("A VPS rejeitou a transferência do relatório GCE.")
+        except requests.RequestException:
+            raise AgentProtocolError("Falha de comunicação durante a transferência GCE.") from None
+
     def remote_auth_complete(
         self,
         *,
@@ -145,10 +165,12 @@ class Progress:
 
 
 class ExecutionContext:
-    def __init__(self, log_callback: Callable[[str, str], None]) -> None:
+    def __init__(self, log_callback: Callable[[str, str], None],
+                 gce_upload: Callable[[str, bytes], None] | None = None) -> None:
         self.progress = Progress()
         self.cancel_event = threading.Event()
         self._log_callback = log_callback
+        self._gce_upload = gce_upload
         self._lock = threading.Lock()
 
     def log(self, message: str, level: str = "INFO") -> None:
@@ -174,6 +196,12 @@ class ExecutionContext:
     def raise_if_cancelled(self) -> None:
         if self.cancelled():
             raise RuntimeError("Execução cancelada pelo servidor.")
+
+    def upload_gce_report(self, kind: str, content: bytes) -> None:
+        self.raise_if_cancelled()
+        if self._gce_upload is None:
+            raise RuntimeError("Transferência GCE não autorizada para esta tarefa.")
+        self._gce_upload(kind, content)
 
 
 class _Heartbeat:
@@ -243,7 +271,10 @@ class LocalAgentExecutor:
                 self.client.logs(job_id, lease_token, list(buffered_logs))
                 buffered_logs.clear()
 
-        context = ExecutionContext(log_callback)
+        def upload(kind: str, content: bytes) -> None:
+            self.client.upload_gce_report(job_id, lease_token, kind, content)
+
+        context = ExecutionContext(log_callback, gce_upload=upload if task == GCE_QUERY_TASK else None)
         heartbeat = _Heartbeat(
             self.client,
             job_id,
