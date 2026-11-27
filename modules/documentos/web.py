@@ -115,21 +115,8 @@ def documentos_executar(
     if not expected or not csrf_token or not secrets.compare_digest(expected, csrf_token):
         raise HTTPException(status_code=403, detail="Token CSRF inválido. Recarregue a página.")
 
-    from modules.local_agent.delegation import delegation_enabled, enqueue_ssw_task
+    from modules.local_agent.delegation import delegation_enabled, enqueue_ssw_task, gce_central_agent
     if delegation_enabled("ssw.documentos_gce"):
-        client = obter_client(request)
-        identity_payload = (
-            client.identity_payload()
-            if client is not None and callable(getattr(client, "identity_payload", None))
-            else {}
-        )
-        target_agent_id = getattr(client, "agent_id", None)
-        session_binding = getattr(client, "session_binding", None)
-        if not identity_payload or not target_agent_id or not session_binding:
-            raise HTTPException(
-                status_code=409,
-                detail="Documentos GCE remoto exige uma sessão autenticada no agente deste computador.",
-            )
         try:
             job_id = enqueue_ssw_task(
                 "ssw.documentos_gce",
@@ -137,13 +124,12 @@ def documentos_executar(
                     "origin": "MANUAL",
                     "send_notifications": False,
                     "preview_notifications": False,
-                    **identity_payload,
                 },
                 idempotency_key=None,
-                concurrency_key=f"ssw.session:{session_binding}",
+                concurrency_key="ssw.documentos_gce",
                 priority=50,
                 coalesce_active=True,
-                target_agent_id=target_agent_id,
+                target_agent_id=gce_central_agent(),
             )
         except (RuntimeError, ValueError) as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from None

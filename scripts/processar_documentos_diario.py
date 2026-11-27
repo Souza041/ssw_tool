@@ -61,6 +61,7 @@ def main() -> None:
         parser.error("Use --data-inicial e --data-final juntas.")
 
     if delegation_enabled("ssw.documentos_gce"):
+        from modules.local_agent.delegation import gce_central_agent
         reference = args.data_referencia or datetime.now(
             ZoneInfo("America/Sao_Paulo")
         ).date()
@@ -80,6 +81,7 @@ def main() -> None:
             concurrency_key="ssw.documentos_gce",
             priority=50,
             coalesce_active=True,
+            target_agent_id=gce_central_agent(),
         )
         print(dump_result({"success": True, "delegated": True, "job_id": job_id}))
         return

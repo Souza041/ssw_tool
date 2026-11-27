@@ -40,6 +40,16 @@ def delegation_enabled(task: str | None = None) -> bool:
     return task in delegated_tasks()
 
 
+def gce_central_agent() -> str:
+    """GCE usa exclusivamente o agente estático com ambiente privado."""
+    settings = load_server_settings()
+    agent_id = settings.remote_auth_agent_id
+    if (not agent_id or agent_id not in settings.tokens
+            or "ssw.documentos_gce" not in settings.agent_tasks.get(agent_id, ())):
+        raise RuntimeError("Agente central do Documentos GCE não configurado ou autorizado.")
+    return agent_id
+
+
 def enqueue_ssw_task(
     task: str,
     payload: dict[str, Any],

@@ -313,6 +313,7 @@ def test_scheduled_gce_script_delegates_without_notifications(monkeypatch, capsy
     from scripts import processar_documentos_diario as script
 
     calls = []
+    monkeypatch.setattr("modules.local_agent.delegation.gce_central_agent", lambda: "windows-central")
     monkeypatch.setattr(
         script, "delegation_enabled", lambda task=None: task == TASK_DOCUMENTOS
     )
@@ -331,6 +332,7 @@ def test_scheduled_gce_script_delegates_without_notifications(monkeypatch, capsy
     script.main()
     assert calls[0][0] == TASK_DOCUMENTOS
     assert calls[0][1]["origin"] == "SCHEDULED"
+    assert calls[0][2]["target_agent_id"] == "windows-central"
     assert calls[0][1]["send_notifications"] is False
     assert calls[0][1]["preview_notifications"] is False
     assert "scheduled-job" in capsys.readouterr().out

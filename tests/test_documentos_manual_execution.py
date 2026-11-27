@@ -85,6 +85,7 @@ def test_manual_endpoint_starts_background_job_without_running_pipeline(
 
 def test_manual_endpoint_delegates_gce_without_notifications(web_request, monkeypatch):
     calls = []
+    monkeypatch.setattr("modules.local_agent.delegation.gce_central_agent", lambda: "windows-central")
     monkeypatch.setenv("NEXUS_SSW_DELEGATION_ENABLED", "true")
     monkeypatch.setenv("NEXUS_SSW_DELEGATED_TASKS", "ssw.documentos_gce")
     monkeypatch.setattr(
@@ -100,8 +101,9 @@ def test_manual_endpoint_delegates_gce_without_notifications(web_request, monkey
     assert calls[0][0] == "ssw.documentos_gce"
     assert calls[0][1]["send_notifications"] is False
     assert calls[0][1]["preview_notifications"] is False
-    assert calls[0][2]["target_agent_id"] == "windows-admin-teste"
-    assert calls[0][2]["concurrency_key"] == f"ssw.session:{'s' * 48}"
+    assert calls[0][2]["target_agent_id"] == "windows-central"
+    assert calls[0][2]["concurrency_key"] == "ssw.documentos_gce"
+    assert not {"dominio", "usuario", "unidade", "session_binding"} & calls[0][1].keys()
 
 
 def test_manual_endpoint_reports_scheduled_or_manual_conflict(web_request, monkeypatch):
@@ -194,3 +196,17 @@ def test_health_contract_accepts_sanitized_gce_catalog_and_outcome():
     assert checked_metadata(outcome.metadata) == "{}"
     assert outcome.processed == 8
     assert outcome.succeeded == 6
+
+
+def test_gce_central_agent_requires_static_authorization(monkeypatch):
+    from types import SimpleNamespace
+    from modules.local_agent import delegation
+    settings = SimpleNamespace(remote_auth_agent_id="windows-central", tokens={}, agent_tasks={})
+    monkeypatch.setattr(delegation, "load_server_settings", lambda: settings)
+    with pytest.raises(RuntimeError, match="Agente central"):
+        delegation.gce_central_agent()
+    settings.tokens = {"windows-central": "test"}
+    with pytest.raises(RuntimeError, match="Agente central"):
+        delegation.gce_central_agent()
+    settings.agent_tasks = {"windows-central": {"ssw.documentos_gce"}}
+    assert delegation.gce_central_agent() == "windows-central"
