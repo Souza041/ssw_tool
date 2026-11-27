@@ -18,8 +18,11 @@ from modules.local_agent.contracts import (
     checked_log_message,
     checked_task,
     decoded_object,
+    permission_revision,
 )
-from modules.local_agent.config import GCE_MAX_REPORT_BYTES, GCE_PIPELINE_TASK, GCE_QUERY_TASK, GCE_REPORTS
+from modules.local_agent.config import (
+    GCE_MAX_REPORT_BYTES, GCE_PIPELINE_TASK, GCE_QUERY_TASK, GCE_REPORTS, individual_task_grants,
+)
 
 
 _schema_lock = threading.Lock()
@@ -176,6 +179,15 @@ class LocalAgentRepository:
                     created_at TEXT NOT NULL,
                     revoked_at TEXT
                 );
+                CREATE TABLE IF NOT EXISTS local_agent_permission_audit (
+                    id INTEGER PRIMARY KEY,
+                    occurred_at TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    identity_key TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    task TEXT NOT NULL,
+                    action TEXT NOT NULL CHECK(action IN ('grant','remove'))
+                );
                 CREATE TABLE IF NOT EXISTS local_agent_user_bindings (
                     identity_key TEXT PRIMARY KEY,
                     agent_id TEXT NOT NULL UNIQUE,
@@ -242,6 +254,11 @@ class LocalAgentRepository:
                 db.execute("ALTER TABLE local_agent_jobs ADD COLUMN concurrency_key TEXT")
             if "target_agent_id" not in columns:
                 db.execute("ALTER TABLE local_agent_jobs ADD COLUMN target_agent_id TEXT")
+            agent_columns = {row["name"] for row in db.execute("PRAGMA table_info(local_agent_agents)")}
+            if "agent_version" not in agent_columns:
+                db.execute("ALTER TABLE local_agent_agents ADD COLUMN agent_version TEXT")
+            if "permission_ack" not in agent_columns:
+                db.execute("ALTER TABLE local_agent_agents ADD COLUMN permission_ack TEXT")
             db.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_local_agent_jobs_idempotency
                 ON local_agent_jobs(idempotency_key)
@@ -464,6 +481,7 @@ class LocalAgentRepository:
         concurrency_key: str | None = None,
         coalesce_active: bool = False,
         target_agent_id: str | None = None,
+        paired_ceiling: frozenset[str] | None = None,
         now: datetime | None = None,
     ) -> str:
         task = checked_task(task)
@@ -496,6 +514,10 @@ class LocalAgentRepository:
         job_id = str(uuid.uuid4())
         timestamp = utc_text(now or utc_now())
         with self._transaction(immediate=True) as db:
+            if paired_ceiling is not None:
+                row = self._active_binding(db, target_agent_id)
+                if row is None or task not in self._effective_tasks(row, paired_ceiling):
+                    raise RuntimeError("O agente não tem permissão para esta tarefa.")
             self._recover_expired(db, timestamp)
             if idempotency_key:
                 existing = db.execute(
@@ -582,7 +604,10 @@ class LocalAgentRepository:
             WHERE status = 'LEASED' AND lease_expires_at < ?
         """, (now_text, now_text, now_text))
 
-    def claim(
+    def claim(self, **options) -> dict[str, Any] | None:
+        return self.poll(**options)["job"]
+
+    def poll(
         self,
         *,
         agent_id: str,
@@ -590,8 +615,11 @@ class LocalAgentRepository:
         lease_seconds: int,
         claim_gce_pipeline: bool = True,
         sessions: list[dict[str, str]] | None = None,
+        paired_ceiling: frozenset[str] | None = None,
+        agent_version: str | None = None,
+        revision_ack: str | None = None,
         now: datetime | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> dict[str, Any]:
         checked_capabilities = sorted({checked_task(task) for task in capabilities})
         if not checked_capabilities:
             raise ValueError("Executor sem capacidades registradas.")
@@ -599,18 +627,34 @@ class LocalAgentRepository:
         now_text = utc_text(current)
         expires_text = utc_text(current + timedelta(seconds=lease_seconds))
         lease_token = secrets.token_urlsafe(32)
-        placeholders = ",".join("?" for _ in checked_capabilities)
         with self._transaction(immediate=True) as db:
+            eligible = checked_capabilities
+            response: dict[str, Any] = {"job": None}
+            ack = None
+            if paired_ceiling is not None:
+                binding = self._active_binding(db, agent_id)
+                if binding is None:
+                    raise LookupError("Agente sem vínculo ativo.")
+                permissions = self._effective_tasks(binding, paired_ceiling)
+                eligible = sorted(set(checked_capabilities) & permissions)
+                if agent_version is not None:
+                    revision = permission_revision(permissions)
+                    response["permissions"] = {"tasks": sorted(permissions), "revision": revision}
+                    if revision_ack == revision:
+                        ack = revision
+                    else:
+                        eligible = []
             self._recover_expired(db, now_text)
             capabilities_json = json.dumps(checked_capabilities, separators=(",", ":"))
             db.execute("""
                 INSERT INTO local_agent_agents (
-                    agent_id, capabilities_json, first_seen_at, last_seen_at, current_job_id
-                ) VALUES (?, ?, ?, ?, NULL)
+                    agent_id, capabilities_json, first_seen_at, last_seen_at, agent_version, permission_ack
+                ) VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(agent_id) DO UPDATE SET
                     capabilities_json=excluded.capabilities_json,
-                    last_seen_at=excluded.last_seen_at
-            """, (agent_id, capabilities_json, now_text, now_text))
+                    last_seen_at=excluded.last_seen_at,
+                    agent_version=excluded.agent_version, permission_ack=excluded.permission_ack
+            """, (agent_id, capabilities_json, now_text, now_text, agent_version, ack))
             db.execute("DELETE FROM local_agent_sessions WHERE agent_id=?", (agent_id,))
             for session in sessions or []:
                 binding = str(session.get("session_binding") or "")
@@ -629,6 +673,9 @@ class LocalAgentRepository:
                         session_digest, agent_id, state, operation, observed_unit, last_seen_at
                     ) VALUES (?, ?, ?, ?, ?, ?)
                 """, (digest, agent_id, state, operation, observed_unit, now_text))
+            if not eligible:
+                return response
+            placeholders = ",".join("?" for _ in eligible)
             row = db.execute(f"""
                 SELECT id, task, payload_json, attempts, max_attempts
                 FROM local_agent_jobs
@@ -647,9 +694,9 @@ class LocalAgentRepository:
                   )
                 ORDER BY priority ASC, created_at ASC
                 LIMIT 1
-            """, [agent_id, *checked_capabilities, claim_gce_pipeline, GCE_PIPELINE_TASK]).fetchone()
+            """, [agent_id, *eligible, claim_gce_pipeline, GCE_PIPELINE_TASK]).fetchone()
             if row is None:
-                return None
+                return response
             updated = db.execute("""
                 UPDATE local_agent_jobs
                 SET status='LEASED', agent_id=?, lease_token=?, lease_expires_at=?,
@@ -657,12 +704,12 @@ class LocalAgentRepository:
                 WHERE id=? AND status='QUEUED'
             """, (agent_id, lease_token, expires_text, now_text, now_text, row["id"]))
             if updated.rowcount != 1:
-                return None
+                return response
             db.execute(
                 "UPDATE local_agent_agents SET current_job_id=? WHERE agent_id=?",
                 (row["id"], agent_id),
             )
-            return {
+            response["job"] = {
                 "id": row["id"],
                 "task": row["task"],
                 "payload": decoded_object(row["payload_json"]),
@@ -671,6 +718,7 @@ class LocalAgentRepository:
                 "attempt": int(row["attempts"]) + 1,
                 "max_attempts": int(row["max_attempts"]),
             }
+            return response
 
     def heartbeat(
         self,
@@ -997,8 +1045,91 @@ class LocalAgentRepository:
     def enrollment_overview(self):
         with self._connect() as db:
             requests = db.execute("SELECT id,identity_key,machine_name,created_at,expires_at,state,decided_by,decided_at FROM local_agent_enrollment ORDER BY created_at DESC LIMIT 200").fetchall()
-            agents = db.execute("SELECT c.agent_id,c.machine_name,c.revoked_at,b.identity_key,a.last_seen_at FROM local_agent_credentials c LEFT JOIN local_agent_user_bindings b ON b.agent_id=c.agent_id LEFT JOIN local_agent_agents a ON a.agent_id=c.agent_id ORDER BY c.created_at DESC LIMIT 200").fetchall()
+            agents = db.execute("""
+                SELECT c.agent_id, c.machine_name, c.revoked_at, c.tasks_json, b.identity_key,
+                       a.last_seen_at, a.capabilities_json, a.agent_version, a.permission_ack
+                FROM local_agent_credentials c
+                LEFT JOIN local_agent_user_bindings b ON b.agent_id=c.agent_id
+                LEFT JOIN local_agent_agents a ON a.agent_id=c.agent_id
+                ORDER BY c.created_at DESC LIMIT 200
+            """).fetchall()
         return [dict(r) for r in requests], [dict(r) for r in agents]
+
+    @staticmethod
+    def _active_binding(db: sqlite3.Connection, agent_id: str) -> sqlite3.Row | None:
+        return db.execute("""
+            SELECT c.tasks_json, c.token_hash, b.identity_key
+            FROM local_agent_credentials c
+            JOIN local_agent_user_bindings b ON b.agent_id=c.agent_id
+            WHERE c.agent_id=? AND c.revoked_at IS NULL AND b.revoked_at IS NULL
+        """, (agent_id,)).fetchone()
+
+    @staticmethod
+    def _effective_tasks(row, ceiling: frozenset[str]) -> frozenset[str]:
+        return individual_task_grants(frozenset(json.loads(row["tasks_json"]))) & ceiling
+
+    def permission_state(self, agent_id: str, ceiling: frozenset[str]) -> dict[str, Any] | None:
+        with self._connect() as db, db:
+            db.execute("BEGIN")
+            binding = self._active_binding(db, agent_id)
+            if binding is None:
+                return None
+            agent = db.execute("""
+                SELECT capabilities_json, agent_version, permission_ack
+                FROM local_agent_agents WHERE agent_id=?
+            """, (agent_id,)).fetchone()
+            tasks = self._effective_tasks(binding, ceiling)
+        return {
+            "identity_key": binding["identity_key"],
+            "permissions": tasks,
+            "capabilities": frozenset(json.loads(agent["capabilities_json"])) if agent else frozenset(),
+            "version": agent["agent_version"] if agent else None,
+            "synchronized": bool(agent and agent["permission_ack"] == permission_revision(tasks)),
+        }
+
+    def change_permission(self, *, agent_id: str, identity_key: str, actor: str,
+                          task: str, grant: bool, ceiling: frozenset[str]) -> bool:
+        checked_task(task)
+        if grant and task not in ceiling:
+            raise ValueError("Tarefa fora das allowlists para agentes individuais.")
+        identity_key = self._identity_key(identity_key)
+        timestamp = utc_text(utc_now())
+        with self._transaction(immediate=True) as db:
+            binding = self._active_binding(db, agent_id)
+            if binding is None or binding["identity_key"] != identity_key:
+                raise LookupError("O agente não pertence à identidade indicada.")
+            stored = frozenset(json.loads(binding["tasks_json"]))
+            if (task in individual_task_grants(stored)) == grant:
+                return False
+            updated = set(stored)
+            if grant:
+                updated.add(task)
+            else:
+                updated.discard(task)
+                if task == GCE_QUERY_TASK:
+                    updated.discard(GCE_PIPELINE_TASK)
+            db.execute("UPDATE local_agent_credentials SET tasks_json=? WHERE agent_id=?",
+                       (json.dumps(sorted(updated)), agent_id))
+            db.execute("""
+                INSERT INTO local_agent_permission_audit (occurred_at, agent_id, identity_key, actor, task, action)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (timestamp, agent_id, identity_key, actor[:120], task, "grant" if grant else "remove"))
+            if not grant:
+                db.execute("""
+                    UPDATE local_agent_jobs
+                    SET status='CANCELLED', cancellation_requested=1, finished_at=?, updated_at=?,
+                        error_message='Permissão removida no Agent Manager.'
+                    WHERE status='QUEUED' AND target_agent_id=? AND task=?
+                """, (timestamp, timestamp, agent_id, task))
+        return True
+
+    def permission_audit(self) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("""
+                SELECT occurred_at, agent_id, identity_key, actor, task, action
+                FROM local_agent_permission_audit ORDER BY id DESC LIMIT 100
+            """).fetchall()
+        return [dict(row) for row in rows]
 
     def create_pairing(
         self,
@@ -1040,6 +1171,7 @@ class LocalAgentRepository:
         *,
         code: str,
         machine_name: str,
+        grant_ceiling: frozenset[str] | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         normalized = str(code or "").strip().upper()
@@ -1059,6 +1191,9 @@ class LocalAgentRepository:
             """, (code_hash, timestamp)).fetchone()
             if pairing is None:
                 raise LookupError("Código de pareamento inválido, expirado ou já utilizado.")
+            tasks = frozenset(json.loads(pairing["tasks_json"]))
+            if grant_ceiling is not None:
+                tasks &= grant_ceiling
             active = db.execute("""
                 SELECT 1 FROM local_agent_user_bindings
                 WHERE identity_key=? AND revoked_at IS NULL
@@ -1073,7 +1208,7 @@ class LocalAgentRepository:
                 INSERT INTO local_agent_credentials (
                     agent_id, token_hash, tasks_json, machine_name, created_at
                 ) VALUES (?, ?, ?, ?, ?)
-            """, (agent_id, token_hash, pairing["tasks_json"], machine, timestamp))
+            """, (agent_id, token_hash, json.dumps(sorted(tasks)), machine, timestamp))
             db.execute("""
                 INSERT INTO local_agent_user_bindings (
                     identity_key, agent_id, created_at
@@ -1083,14 +1218,11 @@ class LocalAgentRepository:
                 "UPDATE local_agent_pairings SET used_at=? WHERE code_hash=? AND used_at IS NULL",
                 (timestamp, code_hash),
             )
-        return {"agent_id": agent_id, "token": token, "tasks": json.loads(pairing["tasks_json"])}
+        return {"agent_id": agent_id, "token": token, "tasks": sorted(tasks)}
 
     def authenticate_dynamic_agent(self, *, agent_id: str, token: str) -> frozenset[str] | None:
         with self._connect() as db:
-            row = db.execute("""
-                SELECT token_hash, tasks_json FROM local_agent_credentials
-                WHERE agent_id=? AND revoked_at IS NULL
-            """, (agent_id,)).fetchone()
+            row = self._active_binding(db, agent_id)
         if row is None:
             return None
         supplied = hashlib.sha256(str(token).encode("utf-8")).hexdigest()

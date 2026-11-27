@@ -1,19 +1,26 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
+import re
 import hashlib
 import json
 import sqlite3
+import os
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.middleware.sessions import SessionMiddleware
 import pytest
 
 from modules.documentos import remote_ssw
 from modules.local_agent import routes, ssw_tasks
-from modules.local_agent.config import GCE_PIPELINE_TASK, GCE_QUERY_TASK
+from modules.local_agent.config import GCE_PIPELINE_TASK, GCE_QUERY_TASK, load_server_settings
+from modules.local_agent.delegation import individual_permission_ceiling
+from modules.local_agent import windows_app
 from modules.local_agent.executor import AgentClient, ExecutionContext
 from modules.local_agent.repository import LocalAgentRepository, utc_now
+from modules.local_agent.windows_credentials import load_config, protect_token, save_config
 from ssw import browser_transport
 from ssw.client import SSWClient
 from web.session_store import RemoteAuthenticatedClient
@@ -35,7 +42,7 @@ class TestAgentHTTP:
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
     path = tmp_path / "queue.sqlite"
-    tasks = f"system.ping,{GCE_PIPELINE_TASK},{GCE_QUERY_TASK},ssw.op001.nfd,ssw.op001.transporte"
+    tasks = f"system.ping,{GCE_PIPELINE_TASK},{GCE_QUERY_TASK},ssw.op001.nfd,ssw.op001.transporte,ssw.session.close"
     central = "windows-central"
     environments = {
         "NEXUS_LOCAL_AGENT_DB": str(path),
@@ -44,7 +51,7 @@ def setup(tmp_path, monkeypatch):
         "NEXUS_LOCAL_AGENT_ALLOWED_TASKS": tasks,
         "NEXUS_LOCAL_AGENT_PAIRED_TASKS": tasks,
         "NEXUS_SSW_DELEGATION_ENABLED": "true",
-        "NEXUS_SSW_DELEGATED_TASKS": f"{GCE_PIPELINE_TASK},{GCE_QUERY_TASK}",
+        "NEXUS_SSW_DELEGATED_TASKS": tasks.removeprefix("system.ping,"),
         "NEXUS_SSW_REMOTE_AUTH_AGENT_ID": central,
         "NEXUS_LOCAL_AGENT_TOKENS_JSON": json.dumps({central: "c" * 48}),
         "NEXUS_LOCAL_AGENT_AGENT_TASKS_JSON": json.dumps({central: [GCE_PIPELINE_TASK]}),
@@ -53,13 +60,17 @@ def setup(tmp_path, monkeypatch):
         monkeypatch.setenv(key, value)
     repo = LocalAgentRepository(path)
     app = FastAPI()
+    app.add_middleware(SessionMiddleware, secret_key="synthetic-test-key")
     app.include_router(routes.router)
     http = TestClient(app)
     agents = []
     for user in ("alice", "bob"):
+        grants = {"system.ping", "ssw.op001.nfd", "ssw.op001.transporte", "ssw.session.close"}
+        if user == "bob":
+            grants.add(GCE_PIPELINE_TASK)
         code = repo.create_pairing(
             identity_key=f"rod/{user}",
-            tasks=frozenset({GCE_PIPELINE_TASK, "ssw.op001.nfd", "ssw.op001.transporte"}),
+            tasks=frozenset(grants),
             created_by="admin", ttl_seconds=120,
         )
         agent = repo.redeem_pairing(code=code, machine_name=f"note-{user}")
@@ -70,6 +81,119 @@ def setup(tmp_path, monkeypatch):
         browser = RemoteAuthenticatedClient("ROD", user, "CWB", user * 12, agent["agent_id"])
         agents.append((browser, AgentClient(settings, session=TestAgentHTTP(http))))
     return repo, http, agents
+
+
+def test_manager_security_revokes_future_claims_without_canceling_existing_lease(setup, monkeypatch):
+    repo, http, ((alice, legacy), (bob, _)) = setup
+    admin = SimpleNamespace(dominio="ROD", usuario="admin")
+    monkeypatch.setattr(routes, "is_admin", lambda _: True)
+    monkeypatch.setattr(routes, "obter_client", lambda _: admin)
+    page = http.get("/admin/agent-manager")
+    assert page.status_code == 200
+    csrf = re.search(r'name="csrf" value="([^"]+)"', page.text)[1]
+    form = {"agent_id": alice.agent_id, "identity": "rod/alice", "task": GCE_QUERY_TASK,
+            "action": "grant", "csrf": csrf}
+    endpoint = "/admin/agent-manager/permissions"
+    assert http.post(endpoint, data={**form, "csrf": "wrong"}).status_code == 403
+    assert http.post(endpoint, data={**form, "identity": "rod/bob"}).status_code == 409
+    assert http.post(endpoint, data={**form, "task": GCE_PIPELINE_TASK}).status_code == 422
+    monkeypatch.setattr(routes, "is_admin", lambda _: False)
+    assert http.post(endpoint, data=form).status_code == 403
+    monkeypatch.setattr(routes, "is_admin", lambda _: True)
+
+    older = legacy._post("/api/local-agent/v1/claim", {"capabilities": ["system.ping"]})
+    assert older == {"job": None, "lease_seconds": 120}
+    modern = AgentClient(legacy.settings, session=legacy.session, agent_version="0.2.1")
+    assert GCE_QUERY_TASK not in modern.claim(["system.ping", GCE_QUERY_TASK])["permissions"]["tasks"]
+    assert http.post(endpoint, data=form, follow_redirects=False).status_code == 303
+    assert "Sincronização pendente" in http.get("/admin/agent-manager").text
+
+    def enqueue():
+        return repo.enqueue(task=GCE_QUERY_TASK, payload={}, target_agent_id=alice.agent_id, max_attempts=1)
+
+    running = enqueue()
+    assert modern.claim(["system.ping", GCE_QUERY_TASK])["job"] is None
+    offer = modern.claim(["system.ping", GCE_QUERY_TASK])["job"]
+    assert offer["id"] == running
+    waiting = enqueue()
+    assert "Sincronizado" in http.get("/admin/agent-manager").text
+    assert http.post(endpoint, data={**form, "action": "remove"}, follow_redirects=False).status_code == 303
+    assert repo.get_job(waiting)["status"] == "CANCELLED"
+    assert repo.get_job(running)["status"] == "LEASED"
+    assert repo.authenticate_dynamic_agent(agent_id=alice.agent_id, token=legacy.settings.token) is not None
+    assert GCE_PIPELINE_TASK in repo.dynamic_agent_tasks(agent_id=bob.agent_id)
+    for kind in ("op455", "op930"):
+        modern.upload_gce_report(running, offer["lease_token"], kind, b"synthetic")
+    assert modern.complete(running, offer["lease_token"], succeeded=True)["status"] == "SUCCEEDED"
+    assert modern.claim(["system.ping", GCE_QUERY_TASK])["job"] is None
+    assert modern.claim(["system.ping", GCE_QUERY_TASK])["job"] is None
+    assert [event["action"] for event in repo.permission_audit()] == ["remove", "grant"]
+
+
+def test_agent_handles_bad_network_restart_and_unauthorized_response(setup, monkeypatch):
+    from modules.local_agent.executor import AgentProtocolError
+
+    repo, _, ((alice, legacy), _) = setup
+    modern = AgentClient(legacy.settings, session=legacy.session, agent_version="0.2.1")
+    tasks = ["system.ping", GCE_QUERY_TASK]
+    first = modern.claim(tasks)
+    assert first["job"] is None and modern.permission_revision
+    real_post = modern._post
+
+    def offline(*_):
+        raise AgentProtocolError("offline")
+
+    monkeypatch.setattr(modern, "_post", offline)
+    with pytest.raises(AgentProtocolError, match="offline"):
+        modern.claim(tasks)
+    monkeypatch.setattr(modern, "_post", real_post)
+    assert modern.claim(tasks)["job"] is None
+    restarted = AgentClient(legacy.settings, session=legacy.session, agent_version="0.2.1")
+    assert restarted.permission_revision is None
+    assert restarted.claim(tasks)["job"] is None
+    assert restarted.claim(tasks)["job"] is None
+    state = repo.permission_state(alice.agent_id, individual_permission_ceiling(load_server_settings()))
+    assert state["version"] == "0.2.1" and state["synchronized"]
+    assert GCE_QUERY_TASK in state["capabilities"] and GCE_QUERY_TASK not in state["permissions"]
+    monkeypatch.setattr(restarted, "_post", lambda *_: {**first, "job": {"task": GCE_QUERY_TASK}})
+    with pytest.raises(AgentProtocolError, match="permissões sincronizadas"):
+        restarted.claim(tasks)
+
+
+def test_claim_rechecks_permissions_after_concurrent_revocation(setup, monkeypatch):
+    repo, http, ((_, _), (bob, agent)) = setup
+    job_id = repo.enqueue(task=GCE_QUERY_TASK, payload={}, target_agent_id=bob.agent_id, max_attempts=1)
+    identify = routes._agent
+
+    def revoke_between_authentication_and_claim(settings, repository, agent_id, auth):
+        result = identify(settings, repository, agent_id, auth)
+        assert GCE_QUERY_TASK in result[1]
+        ceiling = individual_permission_ceiling(settings)
+        with ThreadPoolExecutor(max_workers=1) as thread:
+            assert thread.submit(
+                repo.change_permission, agent_id=bob.agent_id, identity_key="rod/bob",
+                actor="rod/admin", task=GCE_QUERY_TASK, grant=False, ceiling=ceiling,
+            ).result()
+        with pytest.raises(RuntimeError, match="não tem permissão"):
+            repo.enqueue(task=GCE_QUERY_TASK, payload={}, target_agent_id=bob.agent_id,
+                         max_attempts=1, paired_ceiling=ceiling)
+        return result
+
+    monkeypatch.setattr(routes, "_agent", revoke_between_authentication_and_claim)
+    response = http.post("/api/local-agent/v1/claim", headers=agent.headers, json={
+        "capabilities": [GCE_QUERY_TASK],
+    })
+    assert response.status_code == 200 and response.json()["job"] is None
+    assert (repo.get_job(job_id)["status"], repo.get_job(job_id)["attempts"]) == ("CANCELLED", 0)
+
+
+def test_new_pairing_does_not_inherit_gce_from_old_pending_code(setup):
+    repo, http, _ = setup
+    code = repo.create_pairing(identity_key="rod/carol", tasks=frozenset({"system.ping", GCE_QUERY_TASK}),
+                               created_by="old-server", ttl_seconds=120)
+    response = http.post("/api/local-agent/v1/pair", json={"code": code, "machine_name": "carol-pc"})
+    assert response.status_code == 201
+    assert response.json()["tasks"] == ["system.ping"]
 
 
 def test_pipeline_adapter_reuses_one_session_and_transfers_only_reports(setup, tmp_path, monkeypatch):
@@ -109,21 +233,57 @@ def test_pipeline_adapter_reuses_one_session_and_transfers_only_reports(setup, t
     monkeypatch.setattr("operations.op455.report.OP455Report.gerar_e_baixar_documentos", stub_report("op455"))
     monkeypatch.setattr("operations.op930.report.OP930Report.gerar_e_baixar_por_cnpj", stub_report("op930"))
 
+    # Formato persistido pelo agente anterior. O grant de GCE nunca existiu no disco ou na VPS.
+    legacy = ["system.ping", "ssw.op001.nfd", "ssw.op001.transporte", "ssw.session.close"]
+    assert alice_agent._post("/api/local-agent/v1/claim", {"capabilities": legacy})["job"] is None
+    config_path = tmp_path / "config.json"
+    protected = protect_token(alice_agent.settings.token) if os.name == "nt" else "stored-dpapi"
+    save_config(config_path, {
+        "agent_id": alice.agent_id, "server_url": "https://testserver",
+        "token_dpapi": protected, "tasks": legacy,
+    })
+    before = config_path.read_bytes()
+    if os.name != "nt":
+        monkeypatch.setattr(windows_app, "unprotect_token", lambda blob: (
+            alice_agent.settings.token if blob == protected else pytest.fail("DPAPI alterado")
+        ))
+    monkeypatch.setattr(windows_app, "default_config_path", lambda: config_path)
+    monkeypatch.setattr(windows_app, "_proxy_session", lambda url: alice_agent.session)
+    # A confirmação de configuração pode usar um browser previamente autenticado.
+    monkeypatch.setattr(browser_transport, "browser_session_snapshot", lambda: [])
+    with patch.dict(os.environ):
+        windows_app._apply_config(load_config(config_path))
+        runtime = windows_app.AgentRuntime()
+    assert config_path.read_bytes() == before
+    assert GCE_QUERY_TASK in runtime.executor.registry.capabilities()
+    assert not runtime.executor.run_once()
+    assert not runtime.executor.run_once()
+
+    admin = SimpleNamespace(dominio="ROD", usuario="admin")
+    request = SimpleNamespace(session={"local_agent_csrf": "csrf"})
+    monkeypatch.setattr(routes, "is_admin", lambda _: True)
+    monkeypatch.setattr(routes, "obter_client", lambda _: admin)
+    assert routes.agent_manager_permission(
+        request, alice.agent_id, "rod/alice", GCE_QUERY_TASK, "grant", "csrf",
+    ).status_code == 303
+    assert not runtime.executor.run_once()
+    assert not runtime.executor.run_once()
+    assert config_path.read_bytes() == before
+
     def run_agent(_seconds):
         assert bob_agent._post("/api/local-agent/v1/claim", {"capabilities": [GCE_QUERY_TASK]})["job"] is None
-        job = alice_agent._post("/api/local-agent/v1/claim", {"capabilities": [GCE_QUERY_TASK]})["job"]
+        job_id = repo.list_jobs()[0]["id"]
+        job = repo.get_job(job_id)
         assert job["task"] == GCE_QUERY_TASK
         assert set(job["payload"]) == {
             "dominio", "usuario", "unidade", "session_binding", "period_start", "period_end",
             "cnpj", "group", "timeout",
         }
-        upload = lambda kind, data: alice_agent.upload_gce_report(job["id"], job["lease_token"], kind, data)
-        result = ssw_tasks._collect_gce_ssw(job["payload"], ExecutionContext(lambda *_: None, upload))
-        assert result == {"success": True}
-        assert alice_agent.complete(job["id"], job["lease_token"], succeeded=True)["status"] == "SUCCEEDED"
+        assert runtime.executor.run_once()
+        assert repo.get_job(job_id)["status"] == "SUCCEEDED"
         with pytest.raises(LookupError):
-            repo.take_gce_reports(job_id=job["id"], agent_id=bob_agent.settings.agent_id)
-        events.append(job["id"])
+            repo.take_gce_reports(job_id=job_id, agent_id=bob_agent.settings.agent_id)
+        events.append(job_id)
 
     monkeypatch.setattr(remote_ssw, "time", SimpleNamespace(monotonic=lambda: 0, sleep=run_agent))
     download = remote_ssw.remote_downloader(client=alice, root=tmp_path, execution_id="execution-1", progress=lambda *_: None)

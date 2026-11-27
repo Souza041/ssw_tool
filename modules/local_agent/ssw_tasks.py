@@ -439,11 +439,11 @@ def selected_ssw_tasks() -> frozenset[str]:
     return selected
 
 
-def register_ssw_handlers(registry: HandlerRegistry) -> None:
+def register_ssw_handlers(registry: HandlerRegistry, *, supported_tasks: frozenset[str] | None = None) -> None:
     enabled = os.getenv(
         "NEXUS_LOCAL_AGENT_SSW_HANDLERS_ENABLED", "false"
     ).strip().casefold() in {"1", "true", "yes", "sim", "on"}
-    if not enabled:
+    if supported_tasks is None and not enabled:
         return
     handlers = {
         TASK_DOCUMENTOS: _documents,
@@ -453,7 +453,8 @@ def register_ssw_handlers(registry: HandlerRegistry) -> None:
         TASK_OP001_TRANSPORTE: lambda payload, context: _op001(payload, context, task=TASK_OP001_TRANSPORTE),
         TASK_SESSION_CLOSE: _close_session,
     }
-    for task in sorted(selected_ssw_tasks()):
+    tasks = selected_ssw_tasks() if supported_tasks is None else supported_tasks
+    for task in sorted(tasks):
         registry.register(task, handlers[task])
 
 

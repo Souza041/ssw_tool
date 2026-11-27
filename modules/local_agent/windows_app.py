@@ -183,9 +183,6 @@ def _finish_enrollment(config_path, pending, session, root=None):
 
 
 def _apply_config(config: dict) -> None:
-    from modules.local_agent.config import individual_task_grants
-
-    tasks = individual_task_grants(frozenset(config["tasks"]))
     os.environ.update({
         "NEXUS_LOCAL_AGENT_SERVER_URL": str(config["server_url"]),
         "NEXUS_LOCAL_AGENT_ID": str(config["agent_id"]),
@@ -194,8 +191,6 @@ def _apply_config(config: dict) -> None:
         "NEXUS_LOCAL_AGENT_REQUEST_TIMEOUT_SECONDS": "15",
         "NEXUS_LOCAL_AGENT_ALLOW_INSECURE_HTTP": "false",
         "NEXUS_SSW_REMOTE_AUTH_ENABLED": "true",
-        "NEXUS_LOCAL_AGENT_SSW_HANDLERS_ENABLED": "true",
-        "NEXUS_LOCAL_AGENT_SSW_TASKS": ",".join(sorted(tasks - {"system.ping"})),
     })
     runtime = default_config_path().with_name("runtime.env")
     if runtime.is_file():
@@ -208,12 +203,16 @@ def _apply_config(config: dict) -> None:
 
 class AgentRuntime:
     def __init__(self) -> None:
+        from modules.local_agent.config import INDIVIDUAL_AGENT_VERSION, INDIVIDUAL_TASKS
+
         settings = load_executor_settings()
         registry = HandlerRegistry()
         register_builtin_handlers(registry)
-        register_ssw_handlers(registry)
+        register_ssw_handlers(registry, supported_tasks=INDIVIDUAL_TASKS - {"system.ping"})
         self.stop_event = threading.Event()
-        self.client = AgentClient(settings, session=_proxy_session(settings.server_url))
+        self.client = AgentClient(
+            settings, session=_proxy_session(settings.server_url), agent_version=INDIVIDUAL_AGENT_VERSION,
+        )
         self.executor = LocalAgentExecutor(self.client, registry)
         self.remote_auth = WindowsRemoteAuthExecutor(self.client)
         self.poll_seconds = settings.poll_seconds

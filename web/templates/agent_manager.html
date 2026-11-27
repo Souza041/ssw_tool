@@ -5,7 +5,57 @@
 <table><thead><tr><th>Referência</th><th>Usuário</th><th>Computador</th><th>Estado</th><th>Decisão</th></tr></thead><tbody>
 {% for r in requests %}<tr><td>{{ r.id }}</td><td>{{ r.identity_key }}</td><td>{{ r.machine_name }}</td><td>{{ 'EXPIRED' if r.expires_at < now and r.state in ['PENDING','APPROVED'] else r.state }}</td><td>{{ r.decided_by or '' }} {% if r.state == 'PENDING' and r.expires_at >= now %}<form method="post" action="/admin/agent-manager/decision"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="ref" value="{{ r.id }}"><button name="action" value="approve">Aprovar</button> <button name="action" value="reject">Recusar</button></form>{% endif %}</td></tr>{% endfor %}
 </tbody></table>
-<h2>Computadores pareados</h2><table><thead><tr><th>Computador</th><th>Usuário</th><th>Estado</th><th>Último contato UTC</th><th>Ação</th></tr></thead><tbody>
-{% for a in agents %}<tr><td>{{ a.machine_name }}<small> {{ a.agent_id }}</small></td><td>{{ a.identity_key or '—' }}</td><td>{{ 'Revogado' if a.revoked_at else ('Online' if a.online else 'Offline') }}</td><td>{{ a.last_seen_at or '—' }}</td><td>{% if not a.revoked_at %}<form method="post" action="/admin/agent-manager/decision"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="ref" value="{{ a.agent_id }}"><button name="action" value="revoke">Revogar</button></form>{% endif %}</td></tr>{% endfor %}
-</tbody></table>
+<h2>Computadores pareados</h2>
+<table>
+  <thead><tr><th>Computador</th><th>Usuário</th><th>Versão</th><th>Sincronização</th><th>Capacidades anunciadas</th><th>Permissões efetivas</th><th>Ações</th></tr></thead>
+  <tbody>
+  {% for a in agents %}
+    <tr>
+      <td>{{ a.machine_name }}<br><small>{{ a.agent_id }}</small></td>
+      <td>{{ a.identity_key or '—' }}</td>
+      <td>{{ a.agent_version or 'Não informada' }}</td>
+      <td>{{ a.sync }}<br><small title="Último contato UTC">{{ a.last_seen_at or '—' }}</small></td>
+      <td>{% for task in a.capabilities %}<div><code>{{ task }}</code></div>{% else %}—{% endfor %}</td>
+      <td>{% for task in a.permissions %}<div><code>{{ task }}</code></div>{% else %}—{% endfor %}</td>
+      <td>
+        {% if a.identity_key and not a.revoked_at %}
+          {% for action, label, tasks in [('grant', 'Conceder', a.grantable), ('remove', 'Remover', a.removable)] %}
+            {% if tasks %}
+              <form method="post" action="/admin/agent-manager/permissions">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="agent_id" value="{{ a.agent_id }}">
+                <input type="hidden" name="identity" value="{{ a.identity_key }}">
+                <input type="hidden" name="action" value="{{ action }}">
+                <label>{{ label }} permissão
+                  <select name="task" required>
+                    <option value="">Selecione a tarefa</option>
+                    {% for task in tasks %}<option value="{{ task }}">{{ task }}</option>{% endfor %}
+                  </select>
+                </label>
+                <button type="submit">{{ label }}</button>
+              </form>
+            {% endif %}
+          {% endfor %}
+          <form method="post" action="/admin/agent-manager/decision">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="ref" value="{{ a.agent_id }}">
+            <button name="action" value="revoke">Revogar pareamento</button>
+          </form>
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<h2>Alterações de permissões</h2>
+<table>
+  <thead><tr><th>Data UTC</th><th>Administrador</th><th>Usuário e agente</th><th>Tarefa</th><th>Alteração</th></tr></thead>
+  <tbody>
+  {% for e in permission_audit %}
+    <tr><td>{{ e.occurred_at }}</td><td>{{ e.actor }}</td><td>{{ e.identity_key }}<br><small>{{ e.agent_id }}</small></td><td><code>{{ e.task }}</code></td><td>{{ 'Concedida' if e.action == 'grant' else 'Removida' }}</td></tr>
+  {% else %}
+    <tr><td colspan="5">Nenhuma alteração registrada.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
 {% endblock %}

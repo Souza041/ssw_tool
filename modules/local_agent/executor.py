@@ -10,7 +10,7 @@ from typing import Any, Callable
 import requests
 
 from modules.local_agent.config import ExecutorSettings, GCE_MAX_REPORT_BYTES, GCE_QUERY_TASK
-from modules.local_agent.contracts import checked_log_message, checked_task
+from modules.local_agent.contracts import checked_log_message, checked_task, permission_revision
 from modules.local_agent.remote_auth import response_proof
 
 
@@ -22,9 +22,12 @@ class AgentProtocolError(RuntimeError):
 
 
 class AgentClient:
-    def __init__(self, settings: ExecutorSettings, session: requests.Session | None = None):
+    def __init__(self, settings: ExecutorSettings, session: requests.Session | None = None,
+                 *, agent_version: str | None = None):
         self.settings = settings
         self.session = session or requests.Session()
+        self.agent_version = agent_version
+        self.permission_revision: str | None = None
         self.headers = {
             "Authorization": f"Bearer {settings.token}",
             "X-Nexus-Agent-Id": settings.agent_id,
@@ -51,10 +54,34 @@ class AgentClient:
     def claim(self, capabilities: list[str]) -> dict[str, Any]:
         from ssw.browser_transport import browser_session_snapshot
 
-        return self._post("/api/local-agent/v1/claim", {
+        payload: dict[str, Any] = {
             "capabilities": capabilities,
             "sessions": browser_session_snapshot(),
-        })
+        }
+        if self.agent_version is None:
+            return self._post("/api/local-agent/v1/claim", payload)
+
+        payload.update(agent_version=self.agent_version, permission_revision=self.permission_revision)
+        response = self._post("/api/local-agent/v1/claim", payload)
+        snapshot = response.get("permissions")
+        if not isinstance(snapshot, dict) or not isinstance(snapshot.get("tasks"), list):
+            raise AgentProtocolError("A VPS não oferece sincronização de permissões.")
+        try:
+            tasks = frozenset(checked_task(task) for task in snapshot["tasks"])
+        except ValueError:
+            raise AgentProtocolError("Lista de permissões inválida.") from None
+        revision = permission_revision(tasks)
+        if snapshot.get("revision") != revision:
+            raise AgentProtocolError("Revisão de permissões inválida.")
+        job = response.get("job")
+        if job is not None and (
+            self.permission_revision != revision or not isinstance(job, dict)
+            or not isinstance(job.get("task"), str) or job["task"] not in tasks
+            or job["task"] not in capabilities
+        ):
+            raise AgentProtocolError("A tarefa não pertence às permissões sincronizadas.")
+        self.permission_revision = revision
+        return response
 
     def heartbeat(
         self, job_id: str, lease_token: str, current: int, total: int

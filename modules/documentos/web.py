@@ -124,8 +124,8 @@ def documentos_executar(
     if not expected or not csrf_token or not secrets.compare_digest(expected, csrf_token):
         raise HTTPException(status_code=403, detail="Token CSRF inválido. Recarregue a página.")
 
-    from modules.local_agent.config import GCE_QUERY_TASK
-    from modules.local_agent.delegation import delegation_enabled
+    from modules.local_agent.config import GCE_QUERY_TASK, load_server_settings
+    from modules.local_agent.delegation import delegation_enabled, individual_permission_ceiling
 
     client = obter_client(request)
     if not isinstance(client, RemoteAuthenticatedClient):
@@ -138,8 +138,23 @@ def documentos_executar(
 
     from modules.documentos.remote_ssw import queue_repository
     repo = queue_repository()
-    if not repo.agent_has_capability(client.agent_id, GCE_QUERY_TASK):
-        raise HTTPException(409, "Atualize ou autorize a coleta GCE no Nexus Local Agent deste computador.")
+    settings = load_server_settings()
+    if client.agent_id == settings.remote_auth_agent_id:
+        raise HTTPException(403, "O GCE manual exige sessão no agente individual.")
+    if client.agent_id in settings.tokens:
+        if GCE_QUERY_TASK not in settings.agent_tasks.get(client.agent_id, ()):
+            raise HTTPException(403, "Este agente não tem permissão para a coleta GCE.")
+        if not repo.agent_has_capability(client.agent_id, GCE_QUERY_TASK):
+            raise HTTPException(409, "O agente não anuncia suporte à coleta GCE.")
+    else:
+        state = repo.permission_state(client.agent_id, individual_permission_ceiling(settings))
+        identity = f"{client.dominio}/{client.usuario}".casefold()
+        if state is None or state["identity_key"] != identity or GCE_QUERY_TASK not in state["permissions"]:
+            raise HTTPException(403, "Este agente não tem permissão para a coleta GCE. Solicite autorização no Agent Manager.")
+        if GCE_QUERY_TASK not in state["capabilities"]:
+            raise HTTPException(409, "O agente não suporta a coleta GCE. Atualize para o Nexus Local Agent 0.2.1.")
+        if state["version"] and not state["synchronized"]:
+            raise HTTPException(409, "Sincronização de permissões pendente. Aguarde o próximo contato do agente.")
 
     try:
         execution_lease = acquire_execution_lock()

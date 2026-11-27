@@ -12,6 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from modules.local_agent.config import load_server_settings
+from modules.local_agent.delegation import initial_individual_grants
 from modules.local_agent.private_env import load_private_environment
 from modules.local_agent.repository import LocalAgentRepository
 
@@ -36,7 +37,7 @@ def main() -> int:
             parser.error("NEXUS_LOCAL_AGENT_PAIRING_ENABLED está desativado.")
         code = repository.create_pairing(
             identity_key=args.pair,
-            tasks=settings.paired_tasks,
+            tasks=initial_individual_grants(settings),
             created_by="vps-admin",
             ttl_seconds=settings.pairing_ttl_seconds,
         )

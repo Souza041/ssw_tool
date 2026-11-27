@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 from typing import Any
@@ -10,6 +11,10 @@ from modules.local_agent.config import TASK_RE
 
 FINAL_STATUSES = frozenset({"SUCCEEDED", "FAILED", "CANCELLED"})
 ALL_STATUSES = frozenset({"QUEUED", "LEASED", *FINAL_STATUSES})
+
+
+def permission_revision(tasks: frozenset[str]) -> str:
+    return hashlib.sha256("\n".join(sorted(tasks)).encode("ascii")).hexdigest()
 
 
 def checked_task(value: object) -> str:

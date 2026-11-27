@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import hashlib
+import json
 import secrets
 import sqlite3
 from typing import Any
@@ -24,11 +25,13 @@ from modules.local_agent.config import (
     GCE_MAX_REPORT_BYTES,
     GCE_PIPELINE_TASK,
     GCE_QUERY_TASK,
+    INDIVIDUAL_TASKS,
     individual_task_grants,
     LocalAgentConfigurationError,
     ServerSettings,
     load_server_settings,
 )
+from modules.local_agent.delegation import individual_permission_ceiling, initial_individual_grants
 from modules.local_agent.repository import (
     BootstrapRateLimitError,
     BootstrapReplayError,
@@ -53,6 +56,8 @@ class AgentSessionReport(BaseModel):
 class ClaimRequest(BaseModel):
     capabilities: list[str] = Field(min_length=1, max_length=100)
     sessions: list[AgentSessionReport] = Field(default_factory=list, max_length=20)
+    agent_version: str | None = Field(default=None, pattern=r"^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}$")
+    permission_revision: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
 
 class LeaseRequest(BaseModel):
@@ -153,10 +158,7 @@ def _agent(
     dynamic_tasks = repository.authenticate_dynamic_agent(agent_id=agent_id, token=token)
     if not token or dynamic_tasks is None:
         raise HTTPException(status_code=401, detail="Credenciais do agente inválidas ou revogadas.")
-    tasks = individual_task_grants(dynamic_tasks)
-    if GCE_QUERY_TASK not in settings.paired_tasks:
-        tasks = tasks - {GCE_QUERY_TASK}
-    return agent_id, tasks
+    return agent_id, individual_task_grants(dynamic_tasks) & individual_permission_ceiling(settings)
 
 
 def _agent_context(
@@ -281,12 +283,13 @@ def claim(
     authorization: str = Header("", alias="Authorization"),
 ):
     settings, repository, agent_id, authorized_tasks = _agent_context(x_nexus_agent_id, authorization)
+    paired = agent_id not in settings.tokens
     capabilities = (
         set(body.capabilities)
         & set(settings.allowed_tasks)
         & set(authorized_tasks)
     )
-    if not capabilities:
+    if not capabilities and (not paired or body.agent_version is None):
         raise HTTPException(status_code=422, detail="Executor sem capacidades autorizadas.")
     gce_lease = None
     if GCE_PIPELINE_TASK in capabilities:
@@ -297,17 +300,20 @@ def claim(
         except RuntimeError:
             pass
     try:
-        job = _lease_error(lambda: repository.claim(
+        response = _lease_error(lambda: repository.poll(
             agent_id=agent_id,
-            capabilities=capabilities,
+            capabilities=set(body.capabilities) if paired else capabilities,
             lease_seconds=settings.lease_seconds,
             claim_gce_pipeline=gce_lease is not None,
             sessions=[item.model_dump() for item in body.sessions],
+            paired_ceiling=individual_permission_ceiling(settings) if paired else None,
+            agent_version=body.agent_version if paired else None,
+            revision_ack=body.permission_revision,
         ))
     finally:
         if gce_lease is not None:
             gce_lease.release()
-    return {"job": job, "lease_seconds": settings.lease_seconds}
+    return {**response, "lease_seconds": settings.lease_seconds}
 
 
 @router.put("/api/local-agent/v1/gce-reports/{job_id}/{kind}", status_code=204)
@@ -320,11 +326,11 @@ async def upload_gce_report(
     lease: str = Header(alias="X-Nexus-Lease", min_length=32, max_length=128),
     digest: str = Header(alias="X-Nexus-SHA256", pattern=r"^[a-f0-9]{64}$"),
 ):
-    settings, repository, agent_id, tasks = await run_in_threadpool(
+    _, repository, agent_id, _ = await run_in_threadpool(
         _agent_context, x_nexus_agent_id, authorization
     )
-    if GCE_QUERY_TASK not in tasks or GCE_QUERY_TASK not in settings.allowed_tasks:
-        raise HTTPException(403, "Transferência GCE não autorizada.")
+    # O lease já emitido autoriza o upload mesmo após remoção do grant.
+    # O repositório ainda exige tarefa GCE, destino, token de lease e estado válidos.
     size = request.headers.get("content-length", "")
     if size.isdecimal() and int(size) > GCE_MAX_REPORT_BYTES:
         raise HTTPException(413, "Relatório GCE acima do limite permitido.")
@@ -469,6 +475,7 @@ def redeem_pairing(body: PairingRedeemRequest):
         result = _repository(settings).redeem_pairing(
             code=body.code,
             machine_name=body.machine_name,
+            grant_ceiling=initial_individual_grants(settings),
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from None
@@ -588,7 +595,7 @@ def admin_create_pairing(
     try:
         code = repository.create_pairing(
             identity_key=f"{body.dominio}/{body.usuario}",
-            tasks=settings.paired_tasks,
+            tasks=initial_individual_grants(settings),
             created_by=str(getattr(client, "usuario", "admin") or "admin"),
             ttl_seconds=settings.pairing_ttl_seconds,
         )
@@ -692,7 +699,10 @@ def enrollment_poll(ref: str, body: EnrollmentPoll):
     if not settings.pairing_enabled:
         raise HTTPException(503, "Pareamento desativado.")
     try:
-        return _repository(settings).collect_enrollment(ref, token=body.token, tasks=settings.paired_tasks & settings.allowed_tasks)
+        return _repository(settings).collect_enrollment(
+            ref, token=body.token,
+            tasks=initial_individual_grants(settings),
+        )
     except LookupError:
         raise HTTPException(404, "Solicitação indisponível.") from None
     except RuntimeError:
@@ -701,12 +711,59 @@ def enrollment_poll(ref: str, body: EnrollmentPoll):
 @router.get("/admin/agent-manager")
 def agent_manager(request: Request):
     from fastapi.templating import Jinja2Templates
+    from modules.local_agent.contracts import permission_revision
     from modules.local_agent.repository import utc_text, utc_now
     settings, repo = _admin(request)
     requests, agents = repo.enrollment_overview()
+    ceiling = individual_permission_ceiling(settings)
     for agent in agents:
         agent['online'] = not agent['revoked_at'] and repo.agent_online(agent['agent_id'], offline_seconds=settings.agent_offline_seconds)
-    return Jinja2Templates(directory="web/templates").TemplateResponse("agent_manager.html", {"request":request,"is_admin":True,"requests":requests,"agents":agents,"now":utc_text(utc_now()),"csrf":request.session.setdefault("local_agent_csrf", secrets.token_urlsafe(32))})
+        grants = individual_task_grants(frozenset(json.loads(agent["tasks_json"])))
+        agent["capabilities"] = json.loads(agent["capabilities_json"] or "[]")
+        agent["permissions"] = sorted(grants & ceiling) if agent["identity_key"] and not agent["revoked_at"] else []
+        agent["grantable"] = sorted(ceiling - grants)
+        agent["removable"] = sorted(grants & INDIVIDUAL_TASKS)
+        if not agent["online"]:
+            agent["sync"] = "Offline" if not agent["revoked_at"] else "Revogado"
+        elif agent["agent_version"] is None:
+            agent["sync"] = "Agente legado"
+        elif agent["permission_ack"] == permission_revision(grants & ceiling):
+            agent["sync"] = "Sincronizado"
+        else:
+            agent["sync"] = "Sincronização pendente"
+    return Jinja2Templates(directory="web/templates").TemplateResponse(
+        request, "agent_manager.html", {
+            "is_admin": True, "requests": requests, "agents": agents,
+            "permission_audit": repo.permission_audit(), "now": utc_text(utc_now()),
+            "csrf": request.session.setdefault("local_agent_csrf", secrets.token_urlsafe(32)),
+        },
+    )
+
+
+@router.post("/admin/agent-manager/permissions")
+def agent_manager_permission(
+    request: Request, agent_id: str = Form(..., pattern=AGENT_ID_RE.pattern),
+    identity: str = Form(..., max_length=113), task: str = Form(..., max_length=100),
+    action: str = Form(...), csrf: str = Form(...),
+):
+    from fastapi.responses import RedirectResponse
+
+    settings, repo = _admin(request)
+    _csrf(request, csrf)
+    if action not in {"grant", "remove"} or task not in INDIVIDUAL_TASKS or agent_id in settings.tokens:
+        raise HTTPException(422, "Alteração de permissão indisponível.")
+    actor = obter_client(request)
+    try:
+        repo.change_permission(
+            agent_id=agent_id, identity_key=identity,
+            actor=f"{getattr(actor, 'dominio', '')}/{actor.usuario}",
+            task=task, grant=action == "grant", ceiling=individual_permission_ceiling(settings),
+        )
+    except LookupError as exc:
+        raise HTTPException(409, str(exc)) from None
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+    return RedirectResponse("/admin/agent-manager", status_code=303)
 
 @router.post("/admin/agent-manager/decision")
 def agent_manager_decision(request: Request, ref: str = Form(...), action: str = Form(...), csrf: str = Form(...)):

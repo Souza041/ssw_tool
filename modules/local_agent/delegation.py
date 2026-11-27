@@ -7,7 +7,7 @@ import os
 from typing import Any
 
 from modules.local_agent.config import (
-    GCE_PIPELINE_TASK, GCE_QUERY_TASK, individual_task_grants, load_server_settings,
+    GCE_PIPELINE_TASK, GCE_QUERY_TASK, INDIVIDUAL_TASKS, individual_task_grants, load_server_settings,
     remote_auth_agent_for,
 )
 from modules.local_agent.repository import LocalAgentRepository
@@ -42,6 +42,18 @@ def delegation_enabled(task: str | None = None) -> bool:
     if not global_enabled or task is None:
         return global_enabled
     return task in delegated_tasks()
+
+
+def individual_permission_ceiling(settings) -> frozenset[str]:
+    """As allowlists são tetos de concessão para agentes individuais."""
+    if not settings.pairing_enabled:
+        return frozenset()
+    available = (delegated_tasks() if delegation_enabled() else frozenset()) | {"system.ping"}
+    return INDIVIDUAL_TASKS & settings.allowed_tasks & settings.paired_tasks & available
+
+
+def initial_individual_grants(settings) -> frozenset[str]:
+    return (INDIVIDUAL_TASKS & settings.allowed_tasks & settings.paired_tasks) - {GCE_QUERY_TASK}
 
 
 def gce_central_agent() -> str:
@@ -97,19 +109,21 @@ def enqueue_ssw_task(
         if bound_agent != target_agent_id:
             raise RuntimeError("Agente da consulta GCE não está vinculado ao usuário SSW.")
 
+    paired_ceiling = None
     if target_agent_id is not None:
         if target_agent_id in settings.tokens:
             authorized_tasks = settings.agent_tasks.get(
                 target_agent_id, frozenset()
             )
         elif settings.pairing_enabled:
+            paired_ceiling = individual_permission_ceiling(settings)
             dynamic_tasks = repository.dynamic_agent_tasks(
                 agent_id=target_agent_id
             )
 
             authorized_tasks = (
                 individual_task_grants(frozenset(dynamic_tasks or ()))
-                & frozenset(settings.paired_tasks)
+                & paired_ceiling
             )
         else:
             authorized_tasks = frozenset()
@@ -129,6 +143,7 @@ def enqueue_ssw_task(
         concurrency_key=concurrency_key,
         coalesce_active=coalesce_active,
         target_agent_id=target_agent_id,
+        paired_ceiling=paired_ceiling,
     )
 
 

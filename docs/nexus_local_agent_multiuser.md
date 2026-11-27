@@ -39,7 +39,7 @@ Em uma máquina Windows de build com Python 3.11+ e Inno Setup 6:
 
 ```powershell
 Set-Location C:\fontes\ssw_tool_multiuser
-powershell -ExecutionPolicy Bypass -File .\scripts\build_windows_agent.ps1 -Version 0.2.0
+powershell -ExecutionPolicy Bypass -File .\scripts\build_windows_agent.ps1 -Version 0.2.1
 Get-Content .\dist\installer\SHA256SUMS.txt
 ```
 
@@ -97,11 +97,12 @@ NEXUS_LOCAL_AGENT_MAX_PAYLOAD_BYTES=12582912
 NEXUS_LOCAL_AGENT_MAX_RESULT_BYTES=12582912
 ```
 
-Mescle as listas com as permissões existentes. Administradores também precisam
-de sessão em agente individual para iniciar GCE manual. O grant GCE legado de um
-agente pareado autoriza somente a coleta, se ela estiver na allowlist de pareados
-da VPS. Pareamentos sem grant GCE podem receber autorização via novo pareamento
-aprovado no Agent Manager.
+Mescle as listas com as permissões existentes. As três allowlists habilitam a
+possibilidade de conceder GCE manual. Um administrador abre o Agent Manager,
+confere a identidade SSW e o ID do computador e concede
+`ssw.documentos_gce.collect_ssw` para aquele agente. A concessão usa o pareamento
+existente. Autorizações GCE legadas continuam limitadas à coleta. Pareamentos
+novos começam sem GCE manual.
 
 Configure GCE_LOGIN, GCE_PASSWORD e DOCUMENTOS_DB_HOST, DOCUMENTOS_DB_PORT,
 DOCUMENTOS_DB_USER, DOCUMENTOS_DB_PASSWORD e DOCUMENTOS_DB_NAME no ambiente
@@ -172,6 +173,27 @@ Start-Process -FilePath .\NexusAgentSetup.exe -ArgumentList '/VERYSILENT','/NORE
 Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Nexus Local Agent\NexusAgent.exe" -WindowStyle Hidden
 ```
 
+### Atualização de permissões em 0.2.1
+
+1. Atualize a VPS primeiro. O SQLite recebe colunas e tabela de auditoria
+   aditivas na primeira abertura. Preserve o arquivo da fila e suas permissões.
+   O agente central que processa GCE agendado pode manter o executor atual.
+2. Instale o 0.2.1 sobre a versão individual anterior. A versão nova lê o
+   pareamento existente e conserva o token DPAPI. O campo histórico `tasks`
+   permanece no arquivo para compatibilidade com os instaladores antigos.
+3. Em `/admin/agent-manager`, confira a identidade e o ID antes de conceder
+   GCE. A página mostra separadamente versão, suporte técnico, permissão
+   efetiva e sincronização. O 0.2.1 aplica as permissões em memória e as
+   confirma no polling seguinte, com o Chromium aberto.
+4. Após a instalação, abra o Nexus para estabelecer a sessão SSW no agente
+   atualizado. Em homologação, confira sua reutilização durante o GCE manual
+   e o recebimento dos relatórios OP455/OP930.
+
+Use **Remover permissão** para bloquear novas entregas e cancelar as tarefas
+pendentes direcionadas ao agente. Execuções com lease válido podem concluir,
+incluindo a transferência dos relatórios. **Revogar pareamento** desautoriza
+todo o dispositivo.
+
 ### Primeira instalação
 
 Na VPS, um administrador emite um código para a identidade SSW exata:
@@ -221,6 +243,30 @@ o `AppId` estável atualiza os binários e preserva o pareamento. Revogue e repa
 quando trocar o usuário/computador ou suspeitar de comprometimento.
 
 ## 5. Rollback
+
+Para desfazer uma concessão do 0.2.1, use **Remover permissão** no Agent Manager.
+Para reverter a versão inteira, drene as execuções, encerre os agentes pela
+bandeja e reinstale o 0.2.0 individual por cima do 0.2.1. Em seguida, reverta a
+VPS para `11cb43a`. Clientes 0.2.1 precisam da VPS com sincronização.
+
+```powershell
+Start-Process -FilePath .\NexusAgentSetup-0.2.0.exe -ArgumentList '/VERYSILENT','/NORESTART' -Wait
+Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Nexus Local Agent\NexusAgent.exe" -WindowStyle Hidden
+```
+
+Use o artefato anterior aprovado com esse nome.
+
+```bash
+cd /home/automacao/bots/ssw_tool
+sudo supervisorctl stop ssw_web
+git switch --detach 11cb43a
+sudo supervisorctl start ssw_web
+sudo supervisorctl status ssw_web
+```
+
+Preserve o SQLite com os grants e a auditoria. O 0.2.0 usa a lista histórica
+de handlers local. Grants novos que dependem do 0.2.1 ficam indisponíveis no
+agente antigo.
 
 Para suspender somente GCE manual, retire ssw.documentos_gce.collect_ssw de
 NEXUS_SSW_DELEGATED_TASKS e reinicie ssw_web. O agendamento e OP001 continuam

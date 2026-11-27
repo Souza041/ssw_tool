@@ -33,7 +33,13 @@ def web_request(monkeypatch):
     monkeypatch.setenv("NEXUS_SSW_DELEGATION_ENABLED", "true")
     monkeypatch.setenv("NEXUS_SSW_DELEGATED_TASKS", "ssw.documentos_gce.collect_ssw")
     monkeypatch.setattr("modules.documentos.remote_ssw.queue_repository", lambda: SimpleNamespace(
-        agent_has_capability=lambda *_: True, gce_pipeline_running=lambda: False,
+        permission_state=lambda *_: {
+            "identity_key": "rod/admin_teste",
+            "permissions": {"ssw.documentos_gce.collect_ssw"},
+            "capabilities": {"ssw.documentos_gce.collect_ssw"},
+            "version": "0.2.1", "synchronized": True,
+        },
+        gce_pipeline_running=lambda: False,
     ))
     monkeypatch.setattr(documentos_web, "is_admin", lambda request: True)
     return type("RequestStub", (), {"session": {
@@ -95,6 +101,26 @@ def test_manual_status_is_scoped_to_the_owner_session(web_request, monkeypatch):
     assert documentos_web.documentos_execution_status(web_request, job_id)["available"]
     web_request.session["ssw_session_id"] = "outro-admin"
     assert not documentos_web.documentos_execution_status(web_request, job_id)["available"]
+
+
+@pytest.mark.parametrize(("permissions", "capabilities", "status", "message"), [
+    (set(), {"ssw.documentos_gce.collect_ssw"}, 403, "não tem permissão"),
+    ({"ssw.documentos_gce.collect_ssw"}, set(), 409, "Atualize"),
+    ({"ssw.documentos_gce.collect_ssw"}, {"ssw.documentos_gce.collect_ssw"}, 409, "Sincronização"),
+])
+def test_manual_endpoint_diagnoses_permission_and_agent_support(
+    web_request, monkeypatch, permissions, capabilities, status, message,
+):
+    monkeypatch.setattr("modules.documentos.remote_ssw.queue_repository", lambda: SimpleNamespace(
+        permission_state=lambda *_: {
+            "identity_key": "rod/admin_teste", "permissions": permissions,
+            "capabilities": capabilities, "version": "0.2.1", "synchronized": False,
+        },
+    ))
+    with pytest.raises(HTTPException) as error:
+        documentos_web.documentos_executar(web_request, "csrf-teste")
+    assert error.value.status_code == status
+    assert message in error.value.detail
 
 
 def test_manual_endpoint_reports_scheduled_or_manual_conflict(web_request, monkeypatch):
