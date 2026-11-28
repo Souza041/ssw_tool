@@ -12,7 +12,7 @@ AGENT_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{2,63}$")
 GCE_PIPELINE_TASK = "ssw.documentos_gce"
 GCE_QUERY_TASK = "ssw.documentos_gce.collect_ssw"
 GCE_REPORTS = ("op455", "op930")
-GCE_MAX_REPORT_BYTES = 16 * 1024 * 1024
+GCE_MAX_REPORT_BYTES = 128 * 1024 * 1024
 INDIVIDUAL_TASKS = frozenset({
     "system.ping", GCE_QUERY_TASK, "ssw.op001.nfd", "ssw.op001.transporte", "ssw.session.close",
 })

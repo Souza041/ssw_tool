@@ -20,7 +20,7 @@ entrada no Nexus. O agendamento continua no agente central com o modo SSW e as
 opções de notificação já configurados.
 
 Cada relatório viaja por HTTPS com autenticação do agente e lease da tarefa.
-A VPS confere SHA-256 na entrada e antes de importar. O limite é 16 MiB por
+A VPS confere SHA-256 na entrada e antes de importar. O limite é 128 MiB por
 relatório. A fila elimina as cópias transitórias após consumo, falha ou
 cancelamento. Sobras de uma interrupção abrupta expiram em até duas horas e
 são removidas na próxima atividade da fila. A tarefa conserva apenas tamanho e
@@ -122,12 +122,12 @@ sudo chmod 0600 /home/automacao/bots/ssw_tool/.env
 ```
 
 Confira que o bloco HTTPS existente aceita PUT em /api/local-agent/v1/gce-reports/
-e tem client_max_body_size de pelo menos 16m nesse prefixo. Recarregue o Nginx
+e tem client_max_body_size de pelo menos 128m nesse prefixo. Recarregue o Nginx
 se sua configuração tiver mudado.
 
 ```nginx
 location /api/local-agent/v1/gce-reports/ {
-    client_max_body_size 16m;
+    client_max_body_size 128m;
     proxy_pass http://127.0.0.1:8000;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;

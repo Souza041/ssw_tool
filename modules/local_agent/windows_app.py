@@ -35,7 +35,7 @@ def _configure_logging() -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     handler = RotatingFileHandler(path, maxBytes=512_000, backupCount=2, encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-    for name in (__name__, "modules.local_agent.remote_auth"):
+    for name in (__name__, "modules.local_agent.remote_auth", "modules.local_agent.ssw_tasks.gce"):
         logger = logging.getLogger(name)
         logger.setLevel(logging.INFO)
         logger.addHandler(handler)

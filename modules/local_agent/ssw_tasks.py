@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 import base64
+import logging
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -246,12 +247,42 @@ def _collect_gce_ssw(payload: dict[str, Any], context: ExecutionContext) -> dict
             reports = SSWDocumentsCollector(config, client_factory=lambda: client, progress=progress).download(
                 root, _date(clean["period_start"]), _date(clean["period_end"]),
             )
+            diagnostic = logging.getLogger(f"{__name__}.gce")
             for position, (kind, path) in enumerate((("op455", reports.op455), ("op930", reports.op930)), 1):
-                if not path.resolve().is_relative_to(root) or not path.is_file():
-                    raise ValueError("Caminho de relatório GCE inválido.")
-                with path.open("rb") as report:
-                    content = report.read(GCE_MAX_REPORT_BYTES + 1)
-                context.upload_gce_report(kind, content)
+                stage = "validar_caminho"
+                inside_root = exists = regular = size = bytes_read = None
+                error = None
+                try:
+                    inside_root = path.resolve().is_relative_to(root)
+                    if inside_root:
+                        regular = path.is_file()
+                        exists = regular or path.exists()
+                    if not inside_root or not regular:
+                        raise ValueError("Caminho de relatório GCE inválido.")
+                    stage = "ler_arquivo"
+                    with path.open("rb") as report:
+                        size = os.fstat(report.fileno()).st_size
+                        content = report.read(GCE_MAX_REPORT_BYTES + 1)
+                    bytes_read = len(content)
+                    if bytes_read == 0:
+                        stage = "arquivo_vazio"
+                    elif bytes_read > GCE_MAX_REPORT_BYTES:
+                        stage = "acima_do_limite"
+                    else:
+                        stage = "transferir_https"
+                    context.upload_gce_report(kind, content)
+                    stage = "https_confirmado"
+                except Exception as exc:
+                    error = type(exc).__name__
+                    raise
+                finally:
+                    diagnostic.log(
+                        logging.WARNING if error else logging.INFO,
+                        "GCE manual relatorio=%s etapa=%s dentro_da_raiz=%s existe=%s "
+                        "arquivo_regular=%s tamanho_bytes=%s bytes_lidos=%s limite_bytes=%s erro=%s",
+                        kind, stage, inside_root, exists, regular, size, bytes_read,
+                        GCE_MAX_REPORT_BYTES, error,
+                    )
                 context.set_progress(position, 2)
     finally:
         lease.release()

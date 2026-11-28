@@ -15,7 +15,7 @@ import pytest
 
 from modules.documentos import remote_ssw
 from modules.local_agent import routes, ssw_tasks
-from modules.local_agent.config import GCE_PIPELINE_TASK, GCE_QUERY_TASK, load_server_settings
+from modules.local_agent.config import GCE_MAX_REPORT_BYTES, GCE_PIPELINE_TASK, GCE_QUERY_TASK, load_server_settings
 from modules.local_agent.delegation import individual_permission_ceiling
 from modules.local_agent import windows_app
 from modules.local_agent.executor import AgentClient, ExecutionContext
@@ -196,7 +196,8 @@ def test_new_pairing_does_not_inherit_gce_from_old_pending_code(setup):
     assert response.json()["tasks"] == ["system.ping"]
 
 
-def test_pipeline_adapter_reuses_one_session_and_transfers_only_reports(setup, tmp_path, monkeypatch):
+@pytest.mark.parametrize("op455_size", [46_689_234, 134_217_728], ids=["producao", "limite"])
+def test_pipeline_adapter_reuses_one_session_and_transfers_only_reports(setup, tmp_path, monkeypatch, op455_size):
     repo, _, ((alice, alice_agent), (_, bob_agent)) = setup
     events = []
 
@@ -225,7 +226,11 @@ def test_pipeline_adapter_reuses_one_session_and_transfers_only_reports(setup, t
             assert report.client.session is transport
             assert kwargs["data_inicial"] == "201126"
             path = output_dir / f"{kind}.sswweb"
-            path.write_bytes(kind.encode())
+            if kind == "op455":
+                with path.open("wb") as stream:
+                    stream.truncate(op455_size)
+            else:
+                path.write_bytes(kind.encode())
             events.append(path)
             return path
         return download
@@ -288,7 +293,10 @@ def test_pipeline_adapter_reuses_one_session_and_transfers_only_reports(setup, t
     monkeypatch.setattr(remote_ssw, "time", SimpleNamespace(monotonic=lambda: 0, sleep=run_agent))
     download = remote_ssw.remote_downloader(client=alice, root=tmp_path, execution_id="execution-1", progress=lambda *_: None)
     reports = download(tmp_path, date(2026, 11, 20), date(2026, 11, 26))
-    assert (reports.op455.read_bytes(), reports.op930.read_bytes()) == (b"op455", b"op930")
+    assert reports.op455.stat().st_size == op455_size
+    with reports.op455.open("rb") as report:
+        digest = hashlib.file_digest(report, "sha256").hexdigest()
+    assert reports.op930.read_bytes() == b"op930"
     assert events[2] == "release"
     assert all(not path.exists() for path in events[:2])
     assert browser_transport.require_browser_session(
@@ -296,8 +304,9 @@ def test_pipeline_adapter_reuses_one_session_and_transfers_only_reports(setup, t
     ) is transport
     with pytest.raises(LookupError):
         repo.take_gce_reports(job_id=events[3], agent_id=alice.agent_id)
-    assert repo.get_job(events[3])["result"]["reports"]["op930"] == {
-        "bytes": 5, "sha256": hashlib.sha256(b"op930").hexdigest(),
+    assert repo.get_job(events[3])["result"]["reports"] == {
+        "op455": {"bytes": op455_size, "sha256": digest},
+        "op930": {"bytes": 5, "sha256": hashlib.sha256(b"op930").hexdigest()},
     }
 
 
@@ -318,6 +327,126 @@ def test_upload_rejects_cross_access_invalid_digest_and_partial_completion(setup
     with repo._connect() as db:
         assert db.execute("SELECT COUNT(*) FROM local_agent_gce_reports").fetchone()[0] == 0
     assert repo.claim(agent_id=alice.agent_id, capabilities={GCE_QUERY_TASK}, lease_seconds=60) is None
+
+
+def test_upload_rejects_one_byte_above_128_mib(setup):
+    repo, http, ((alice, agent), _) = setup
+    job_id = repo.enqueue(task=GCE_QUERY_TASK, payload={}, target_agent_id=alice.agent_id, max_attempts=1)
+    job = repo.claim(agent_id=alice.agent_id, capabilities={GCE_QUERY_TASK}, lease_seconds=60)
+    url = f"/api/local-agent/v1/gce-reports/{job_id}/op455"
+    headers = {**agent.headers, "X-Nexus-Lease": job["lease_token"], "X-Nexus-SHA256": "0" * 64}
+    assert GCE_MAX_REPORT_BYTES == 134_217_728
+    assert http.put(url, headers={**headers, "Content-Length": "134217729"}).status_code == 413
+
+    def chunks():
+        chunk = bytes(1024 * 1024)
+        yield from (chunk for _ in range(128))
+        yield b"x"
+
+    assert http.put(url, headers=headers, content=chunks()).status_code == 413
+
+
+@pytest.mark.parametrize(("case", "stage"), [
+    ("vazio", "arquivo_vazio"),
+    ("inexistente", "validar_caminho"),
+    ("fora_da_raiz", "validar_caminho"),
+    ("diretorio", "validar_caminho"),
+    ("exato", "https_confirmado"),
+    ("acima", "acima_do_limite"),
+    ("valido", "https_confirmado"),
+    ("erro_https", "transferir_https"),
+])
+def test_gce_post_download_diagnostics_preserve_the_borrowed_session(
+    case, stage, tmp_path, monkeypatch, caplog,
+):
+    binding = "a" * 48
+    released = []
+    transport = SimpleNamespace(
+        valid=True, observed_unit="CWB",
+        acquire_operation=lambda _: SimpleNamespace(release=lambda: released.append(True)),
+        close=lambda: pytest.fail("sessão emprestada fechada"),
+        shutdown=lambda: pytest.fail("Chromium da sessão emprestada encerrado"),
+    )
+    identity = browser_transport.BrowserIdentity.checked("ROD", "alice", binding)
+    monkeypatch.setattr(browser_transport, "_registry", {identity: transport})
+    monkeypatch.setattr(SSWClient, "login", lambda *_: pytest.fail("novo login"))
+    monkeypatch.setattr(SSWClient, "open_menu", lambda *_: pytest.fail("nova abertura de menu"))
+
+    private_marker = "PRIVATE_REPORT_MARKER"
+    outside = tmp_path / f"{private_marker}.sswweb"
+    outside.write_bytes(b"confidential report")
+    first_size = {
+        "vazio": 0, "exato": GCE_MAX_REPORT_BYTES, "acima": GCE_MAX_REPORT_BYTES + 1,
+    }.get(case, 4)
+
+    def op455(report, *, output_dir, **_):
+        assert report.client.session is transport
+        if case == "fora_da_raiz":
+            return outside
+        path = output_dir / f"{private_marker}.sswweb"
+        if case == "diretorio":
+            path.mkdir()
+        elif case != "inexistente":
+            with path.open("wb") as stream:
+                stream.truncate(first_size)
+        return path
+
+    def op930(report, *, output_dir, **_):
+        assert report.client.session is transport
+        path = output_dir / "op930.sswweb"
+        path.write_bytes(b"op930")
+        return path
+
+    monkeypatch.setattr("operations.op455.report.OP455Report.gerar_e_baixar_documentos", op455)
+    monkeypatch.setattr("operations.op930.report.OP930Report.gerar_e_baixar_por_cnpj", op930)
+    transfers = []
+
+    def put(url, *, headers, data, **_):
+        assert headers["X-Nexus-SHA256"] == hashlib.sha256(data).hexdigest()
+        transfers.append((url.rsplit("/", 1)[-1], len(data)))
+        if case == "erro_https":
+            raise ValueError(private_marker)
+        return SimpleNamespace(status_code=204)
+
+    agent = AgentClient(SimpleNamespace(
+        server_url="https://test.invalid", agent_id="test-agent", token="test", request_timeout_seconds=5,
+    ), session=SimpleNamespace(put=put))
+    queue_logs = []
+    context = ExecutionContext(
+        lambda _, message: queue_logs.append(message),
+        lambda kind, data: agent.upload_gce_report("job", "lease", kind, data),
+    )
+    payload = {
+        "dominio": "ROD", "usuario": "alice", "unidade": "CWB", "session_binding": binding,
+        "period_start": "2026-11-21", "period_end": "2026-11-27",
+        "cnpj": "0" * 14, "group": "TESTE", "timeout": 1,
+    }
+    with caplog.at_level("INFO", logger="modules.local_agent.ssw_tasks.gce"):
+        if case in {"valido", "exato"}:
+            assert ssw_tasks._collect_gce_ssw(payload, context) == {"success": True}
+            assert transfers == [("op455", first_size), ("op930", 5)]
+            assert "relatorio=op930 etapa=https_confirmado" in caplog.text
+        else:
+            with pytest.raises(ValueError):
+                ssw_tasks._collect_gce_ssw(payload, context)
+            assert transfers == ([("op455", first_size)] if case == "erro_https" else [])
+
+    assert "Relatório OP930 baixado com sucesso." in queue_logs[-1]
+    assert all("tamanho_bytes" not in message for message in queue_logs)
+    assert f"relatorio=op455 etapa={stage}" in caplog.text
+    assert f"limite_bytes={GCE_MAX_REPORT_BYTES}" in caplog.text
+    assert private_marker not in caplog.text and "confidential report" not in caplog.text
+    if case == "fora_da_raiz":
+        assert "dentro_da_raiz=False existe=None arquivo_regular=None tamanho_bytes=None" in caplog.text
+    elif case in {"inexistente", "diretorio"}:
+        assert f"dentro_da_raiz=True existe={case == 'diretorio'} arquivo_regular=False" in caplog.text
+    else:
+        assert f"dentro_da_raiz=True existe=True arquivo_regular=True tamanho_bytes={first_size}" in caplog.text
+        assert f"bytes_lidos={min(first_size, GCE_MAX_REPORT_BYTES + 1)}" in caplog.text
+    assert released == [True]
+    assert browser_transport.require_browser_session(
+        domain="ROD", user="alice", session_binding=binding,
+    ) is transport
 
 
 def test_expired_or_cross_session_cannot_start_browser(setup, monkeypatch):
